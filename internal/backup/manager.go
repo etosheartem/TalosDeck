@@ -271,9 +271,12 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 			endpoints := m.talosManager.GetEndpoints()
 			if len(endpoints) > 0 {
 				targetIP = endpoints[0]
-			} else {
-				targetIP = "10.42.0.110"
 			}
+		}
+		// Refusing beats snapshotting some hardcoded address that may belong to a
+		// different cluster — or to nothing at all.
+		if targetIP == "" {
+			return nil, errors.New("no ready control plane node or endpoint available to snapshot etcd")
 		}
 	}
 
@@ -283,8 +286,13 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 	targetPath := filepath.Join(m.storageDir, filename)
 
 	// 2. Call Talos SDK EtcdSnapshot
+	talosClient := m.talosManager.GetClient()
+	if talosClient == nil {
+		return nil, errors.New("talos client is not initialized")
+	}
+
 	nodeCtx := client.WithNode(ctx, targetIP)
-	reader, err := m.talosManager.GetClient().EtcdSnapshot(nodeCtx, &machine.EtcdSnapshotRequest{})
+	reader, err := talosClient.EtcdSnapshot(nodeCtx, &machine.EtcdSnapshotRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("talos etcd snapshot failed on %s: %w", targetIP, err)
 	}
@@ -410,9 +418,12 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		endpoints := m.talosManager.GetEndpoints()
 		if len(endpoints) > 0 {
 			cpIP = endpoints[0]
-		} else {
-			cpIP = "10.42.0.110"
 		}
+	}
+	// Refusing beats snapshotting some hardcoded address that may belong to a
+	// different cluster — or to nothing at all.
+	if cpIP == "" {
+		return nil, errors.New("no ready control plane node or endpoint available to snapshot etcd")
 	}
 
 	// 3. Retrieve active talosconfig
@@ -440,8 +451,13 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	tempSnapshotPath := filepath.Join(m.storageDir, fmt.Sprintf(".temp-etcd-%s-%d.snapshot", sanitizeFilename(cpIP), time.Now().UnixNano()))
 	defer os.Remove(tempSnapshotPath)
 
+	talosClient := m.talosManager.GetClient()
+	if talosClient == nil {
+		return nil, errors.New("talos client is not initialized")
+	}
+
 	nodeCtx := client.WithNode(ctx, cpIP)
-	snapshotReader, err := m.talosManager.GetClient().EtcdSnapshot(nodeCtx, &machine.EtcdSnapshotRequest{})
+	snapshotReader, err := talosClient.EtcdSnapshot(nodeCtx, &machine.EtcdSnapshotRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to stream etcd snapshot from %s: %w", cpIP, err)
 	}

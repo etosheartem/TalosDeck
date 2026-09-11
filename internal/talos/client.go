@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/siderolabs/talos/pkg/machinery/client"
@@ -43,8 +44,6 @@ func NewTalosManager(talosconfigPath string, extraNodes ...string) (*TalosManage
 		nodes = currentCtx.Nodes
 	}
 
-	// Always ensure known cluster nodes are present
-	knownNodes := []string{"10.42.0.110", "10.42.0.111", "10.42.0.112"}
 	nodeSet := make(map[string]bool)
 	for _, n := range nodes {
 		if n != "" {
@@ -56,14 +55,22 @@ func NewTalosManager(talosconfigPath string, extraNodes ...string) (*TalosManage
 			nodeSet[n] = true
 		}
 	}
-	for _, n := range knownNodes {
-		nodeSet[n] = true
+
+	// A talosconfig context may declare only endpoints. Fall back to those rather
+	// than polling an empty node list — or inventing addresses of some other cluster.
+	if len(nodeSet) == 0 {
+		for _, ep := range endpoints {
+			if ep != "" {
+				nodeSet[ep] = true
+			}
+		}
 	}
 
 	nodes = make([]string, 0, len(nodeSet))
 	for n := range nodeSet {
 		nodes = append(nodes, n)
 	}
+	sort.Strings(nodes) // map iteration is randomized; keep node order stable
 
 	return &TalosManager{
 		client:          c,

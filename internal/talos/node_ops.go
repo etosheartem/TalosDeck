@@ -23,12 +23,6 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/resources/perf"
 )
 
-var defaultNodeHostnames = map[string]string{
-	"10.42.0.110": "talos-cp-1",
-	"10.42.0.111": "talos-worker-1",
-	"10.42.0.112": "talos-worker-2",
-}
-
 type cpuSnapshot struct {
 	busy  float64
 	total float64
@@ -78,24 +72,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 	defer cancel()
 	nodeCtx = client.WithNode(nodeCtx, nodeIP)
 
-	defaultHN := defaultNodeHostnames[nodeIP]
-	if defaultHN == "" {
-		defaultHN = nodeIP
-	}
-
-	overview := &NodeOverview{
-		IP:       nodeIP,
-		Hostname: defaultHN,
-		Version:  "unknown",
-		Ready:    false,
-		Role:     "worker",
-		ServicesSummary: &ServicesSummary{
-			Etcd:       "N/A",
-			Kubelet:    "Degraded",
-			Containerd: "Degraded",
-			Apid:       "Degraded",
-		},
-	}
+	overview := newUnreachableNode(nodeIP)
 
 	// 1. Check version & metadata
 	verResp, err := talosClient.Version(nodeCtx)
@@ -111,16 +88,21 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 		if msg.GetMetadata() != nil && msg.GetMetadata().GetHostname() != "" {
 			overview.Hostname = msg.GetMetadata().GetHostname()
 		}
-		overview.Ready = true
 	}
 
-	// Determine role by hostname or IP
-	if strings.Contains(overview.Hostname, "cp") || strings.Contains(overview.Hostname, "master") || strings.HasSuffix(nodeIP, ".110") {
-		overview.Role = "controlplane"
+	// Role comes from the authoritative MachineType resource. Hostname/IP
+	// heuristics misclassify any worker whose name merely contains "cp".
+	if mt, err := safe.StateGet[*talosconfig.MachineType](nodeCtx, talosClient.COSI, resource.NewMetadata(talosconfig.NamespaceName, talosconfig.MachineTypeType, talosconfig.MachineTypeID, resource.VersionUndefined)); err == nil && mt != nil {
+		if mt.MachineType().IsControlPlane() {
+			overview.Role = "controlplane"
+		} else {
+			overview.Role = "worker"
+		}
 	}
 
 	// 2. Fetch service list (handle all chunked messages)
 	svcResp, err := talosClient.ServiceList(nodeCtx)
+	serviceListOK := err == nil
 	if err == nil {
 		for _, msg := range svcResp.GetMessages() {
 			for _, svc := range msg.GetServices() {
@@ -149,6 +131,29 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 		overview.ServicesSummary.Etcd = "N/A"
 	}
 
+	// A reachable Talos API only proves apid is up. Readiness must also require the
+	// services that actually run workloads, otherwise a node with a dead kubelet
+	// reports green. An unreadable service list leaves readiness unproven.
+	overview.Ready = serviceListOK &&
+		overview.ServicesSummary.Kubelet == "Healthy" &&
+		overview.ServicesSummary.Containerd == "Healthy" &&
+		overview.ServicesSummary.Apid == "Healthy"
+	if overview.Role == "controlplane" {
+		overview.Ready = overview.Ready && overview.ServicesSummary.Etcd == "Healthy"
+	}
+
+	// Kubernetes may still mark the node NotReady (CNI down, disk pressure) while
+	// every Talos service is healthy, so honour its verdict when it is available.
+	if nsList, err := safe.StateListAll[*talosk8s.NodeStatus](nodeCtx, talosClient.COSI); err == nil {
+		for ns := range nsList.All() {
+			if ns == nil || ns.TypedSpec() == nil {
+				continue
+			}
+			overview.Ready = overview.Ready && ns.TypedSpec().NodeReady
+			break
+		}
+	}
+
 	// TALOS-18: Query real node runtime metrics (Memory, CPU, Uptime, Kubernetes version) dynamically
 	// 1. Real Memory from Talos machine Memory API
 	if memResp, err := talosClient.Memory(nodeCtx); err == nil && len(memResp.GetMessages()) > 0 {
@@ -158,10 +163,17 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 			if availBytes == 0 && meminfo.GetMemfree() > 0 {
 				availBytes = meminfo.GetMemfree() * 1024
 			}
-			usedBytes := totalBytes - availBytes
-			totalGB := float64(totalBytes) / (1024 * 1024 * 1024)
-			usedGB := float64(usedBytes) / (1024 * 1024 * 1024)
-			overview.MemoryUsage = fmt.Sprintf("%.1f / %.1f GB", usedGB, totalGB)
+			// These are unsigned: a partial or transitional MemInfo where available
+			// exceeds total would otherwise underflow to exabytes of "used" memory.
+			if availBytes > totalBytes {
+				availBytes = totalBytes
+			}
+			if totalBytes > 0 {
+				usedBytes := totalBytes - availBytes
+				totalGB := float64(totalBytes) / (1024 * 1024 * 1024)
+				usedGB := float64(usedBytes) / (1024 * 1024 * 1024)
+				overview.MemoryUsage = fmt.Sprintf("%.1f / %.1f GB", usedGB, totalGB)
+			}
 		}
 	}
 
@@ -187,17 +199,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 		var upSec, idleSec float64
 		if data, err := io.ReadAll(uptimeReader); err == nil {
 			if _, err := fmt.Sscanf(string(data), "%f %f", &upSec, &idleSec); err == nil && upSec > 0 {
-				d := time.Duration(upSec) * time.Second
-				days := int(d.Hours()) / 24
-				hours := int(d.Hours()) % 24
-				mins := int(d.Minutes()) % 60
-				if days > 0 {
-					overview.Uptime = fmt.Sprintf("%dd %dh", days, hours)
-				} else if hours > 0 {
-					overview.Uptime = fmt.Sprintf("%dh %dm", hours, mins)
-				} else {
-					overview.Uptime = fmt.Sprintf("%dm", mins)
-				}
+				overview.Uptime = formatDuration(time.Duration(upSec) * time.Second)
 			}
 		}
 		_ = uptimeReader.Close()
@@ -209,9 +211,8 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 			if ks == nil || ks.TypedSpec() == nil {
 				continue
 			}
-			img := ks.TypedSpec().Image
-			if idx := strings.LastIndex(img, ":"); idx != -1 {
-				overview.KubernetesVersion = img[idx+1:]
+			if version := kubernetesVersionFromImage(ks.TypedSpec().Image); version != "" {
+				overview.KubernetesVersion = version
 				break
 			}
 		}
@@ -235,23 +236,7 @@ func (m *TalosManager) ListNodes(ctx context.Context) ([]*NodeOverview, error) {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Printf("[ERROR] panic recovered in ListNodes for %s: %v", nodeIP, r)
-					defaultHN := defaultNodeHostnames[nodeIP]
-					if defaultHN == "" {
-						defaultHN = nodeIP
-					}
-					results[idx] = &NodeOverview{
-						IP:       nodeIP,
-						Hostname: defaultHN,
-						Version:  "unknown",
-						Ready:    false,
-						Role:     "worker",
-						ServicesSummary: &ServicesSummary{
-							Etcd:       "N/A",
-							Kubelet:    "Degraded",
-							Containerd: "Degraded",
-							Apid:       "Degraded",
-						},
-					}
+					results[idx] = newUnreachableNode(nodeIP)
 				}
 			}()
 
@@ -260,29 +245,9 @@ func (m *TalosManager) ListNodes(ctx context.Context) ([]*NodeOverview, error) {
 
 			status, err := m.GetNodeStatus(nodeCtx, nodeIP)
 			if err != nil {
-				defaultHN := defaultNodeHostnames[nodeIP]
-				if defaultHN == "" {
-					defaultHN = nodeIP
-				}
-				results[idx] = &NodeOverview{
-					IP:       nodeIP,
-					Hostname: defaultHN,
-					Version:  "unknown",
-					Ready:    false,
-					Role:     "worker",
-					ServicesSummary: &ServicesSummary{
-						Etcd:       "N/A",
-						Kubelet:    "Degraded",
-						Containerd: "Degraded",
-						Apid:       "Degraded",
-					},
-				}
-				if strings.Contains(nodeIP, ".110") || strings.Contains(defaultHN, "cp") {
-					results[idx].Role = "controlplane"
-				}
-				if results[idx].Role != "controlplane" {
-					results[idx].ServicesSummary.Etcd = "N/A"
-				}
+				// The role of an unreachable node is genuinely unknown; guessing it
+				// from the IP suffix invented control planes on other clusters.
+				results[idx] = newUnreachableNode(nodeIP)
 				return
 			}
 			results[idx] = status
@@ -311,19 +276,16 @@ func (m *TalosManager) GetClusterInfo(ctx context.Context) (*ClusterInfo, error)
 
 	clusterName := m.GetClusterName()
 
-	endpoint := ""
-	endpoints := m.GetEndpoints()
-	if len(endpoints) > 0 {
-		endpoint = fmt.Sprintf("https://%s:6443", endpoints[0])
-	} else {
-		endpoint = "https://10.42.0.110:6443"
-	}
+	// The Kubernetes endpoint is a property of the cluster config, not something
+	// derivable from the Talos API address: that may use a different port, be a
+	// separate load balancer, or not be the control-plane endpoint at all.
+	endpoint := m.kubernetesEndpoint(ctx, nodes)
 
 	readyCount := 0
 	cpCount := 0
 	workerCount := 0
-	talosVersion := "v1.14.0"
-	k8sVersion := "v1.32.2"
+	talosVersion := ""
+	k8sVersion := ""
 
 	for _, n := range nodes {
 		if n.Ready {
@@ -340,6 +302,14 @@ func (m *TalosManager) GetClusterInfo(ctx context.Context) (*ClusterInfo, error)
 		if n.KubernetesVersion != "" {
 			k8sVersion = n.KubernetesVersion
 		}
+	}
+
+	// Report unknown rather than a plausible-looking guess when no node answered.
+	if talosVersion == "" {
+		talosVersion = "unknown"
+	}
+	if k8sVersion == "" {
+		k8sVersion = "unknown"
 	}
 
 	return &ClusterInfo{
@@ -405,14 +375,16 @@ func (m *TalosManager) ListServices(ctx context.Context, nodeIP string) ([]*Talo
 				desc = fmt.Sprintf("Talos system service %s", s.GetId())
 			}
 
+			uptime, restarts := serviceRuntimeFromEvents(s.GetEvents())
+
 			services = append(services, &TalosService{
 				ID:          s.GetId(),
 				Name:        s.GetId(),
 				State:       s.GetState(),
 				Healthy:     healthy,
 				Description: desc,
-				Uptime:      "14d 6h",
-				Restarts:    0,
+				Uptime:      uptime,
+				Restarts:    restarts,
 			})
 		}
 	}
@@ -658,7 +630,11 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 		return nil, errors.New("talos client is not initialized")
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	// The budget must cover ListNodes plus a failover sweep over every control
+	// plane, twice (members, then status), plus alarms. Each attempt below is
+	// additionally clamped to what is actually left, so one black-holed node can
+	// no longer consume the whole deadline and starve the remaining candidates.
+	reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 
 	nodes, err := m.ListNodes(reqCtx)
@@ -672,13 +648,20 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 			cpCandidates = append(cpCandidates, n.IP)
 		}
 	}
+	// A control plane that is up but NotReady still serves etcd, so fall back to
+	// every known control plane before falling back to the configured endpoints.
 	if len(cpCandidates) == 0 {
-		for _, ep := range m.GetEndpoints() {
-			cpCandidates = append(cpCandidates, ep)
+		for _, n := range nodes {
+			if n.Role == "controlplane" {
+				cpCandidates = append(cpCandidates, n.IP)
+			}
 		}
 	}
 	if len(cpCandidates) == 0 {
-		cpCandidates = []string{"10.42.0.110"}
+		cpCandidates = append(cpCandidates, m.GetEndpoints()...)
+	}
+	if len(cpCandidates) == 0 {
+		return nil, errors.New("no control plane nodes or endpoints configured to query etcd")
 	}
 
 	var memberResp *machine.EtcdMemberListResponse
@@ -686,7 +669,11 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 	var lastErr error
 
 	for _, cp := range cpCandidates {
-		subCtx, subCancel := context.WithTimeout(reqCtx, 4*time.Second)
+		budget, ok := attemptBudget(reqCtx, 4*time.Second)
+		if !ok {
+			break
+		}
+		subCtx, subCancel := context.WithTimeout(reqCtx, budget)
 		nodeCtx := client.WithNode(subCtx, cp)
 		resp, err := talosClient.EtcdMemberList(nodeCtx, &machine.EtcdMemberListRequest{})
 		subCancel()
@@ -731,7 +718,11 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 	var leaderID string
 	var raftTerm, raftIndex uint64
 	for _, cp := range cpCandidates {
-		statusCtx, statusCancel := context.WithTimeout(reqCtx, 3*time.Second)
+		budget, ok := attemptBudget(reqCtx, 3*time.Second)
+		if !ok {
+			break
+		}
+		statusCtx, statusCancel := context.WithTimeout(reqCtx, budget)
 		statusResp, statusErr := talosClient.EtcdStatus(client.WithNode(statusCtx, cp))
 		statusCancel()
 		if statusErr != nil || statusResp == nil {
@@ -783,23 +774,27 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 	alarms := make([]EtcdAlarmInfo, 0)
 	alarmCheckSuccess := false
 
-	alarmCtx, alarmCancel := context.WithTimeout(reqCtx, 4*time.Second)
-	defer alarmCancel()
-	alarmNodeCtx := client.WithNode(alarmCtx, activeCP)
+	if alarmBudget, ok := attemptBudget(reqCtx, 4*time.Second); ok {
+		alarmCtx, alarmCancel := context.WithTimeout(reqCtx, alarmBudget)
+		alarmNodeCtx := client.WithNode(alarmCtx, activeCP)
 
-	alarmResp, alarmErr := talosClient.EtcdAlarmList(alarmNodeCtx)
-	if alarmErr == nil && alarmResp != nil {
-		alarmCheckSuccess = true
-		for _, msg := range alarmResp.GetMessages() {
-			for _, a := range msg.GetMemberAlarms() {
-				alarms = append(alarms, EtcdAlarmInfo{
-					MemberID: fmt.Sprintf("%016x", a.GetMemberId()),
-					Alarm:    a.GetAlarm().String(),
-				})
+		alarmResp, alarmErr := talosClient.EtcdAlarmList(alarmNodeCtx)
+		alarmCancel()
+		if alarmErr == nil && alarmResp != nil {
+			alarmCheckSuccess = true
+			for _, msg := range alarmResp.GetMessages() {
+				for _, a := range msg.GetMemberAlarms() {
+					alarms = append(alarms, EtcdAlarmInfo{
+						MemberID: fmt.Sprintf("%016x", a.GetMemberId()),
+						Alarm:    a.GetAlarm().String(),
+					})
+				}
 			}
+		} else {
+			log.Printf("[WARN] EtcdAlarmList failed on %s: %v", activeCP, alarmErr)
 		}
 	} else {
-		log.Printf("[WARN] EtcdAlarmList failed on %s: %v", activeCP, alarmErr)
+		log.Printf("[WARN] no time budget left to check etcd alarms on %s", activeCP)
 	}
 
 	healthyMembers := len(members) > 0
@@ -851,6 +846,149 @@ func calculateFilesystemUsage(size, available uint64) (uint64, int) {
 	}
 	used := size - available
 	return used, int(float64(used) / float64(size) * 100)
+}
+
+// newUnreachableNode builds the overview used when a node cannot be polled.
+// Everything beyond its address is genuinely unknown at that point.
+func newUnreachableNode(nodeIP string) *NodeOverview {
+	return &NodeOverview{
+		IP:       nodeIP,
+		Hostname: nodeIP,
+		Version:  "unknown",
+		Ready:    false,
+		Role:     "worker",
+		ServicesSummary: &ServicesSummary{
+			Etcd:       "N/A",
+			Kubelet:    "Degraded",
+			Containerd: "Degraded",
+			Apid:       "Degraded",
+		},
+	}
+}
+
+// attemptBudget clamps a per-attempt timeout to the time actually left on ctx,
+// reporting false when too little remains for the attempt to be worth starting.
+func attemptBudget(ctx context.Context, want time.Duration) (time.Duration, bool) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return want, true
+	}
+
+	remaining := time.Until(deadline)
+	if remaining < time.Second {
+		return 0, false
+	}
+	if remaining < want {
+		return remaining, true
+	}
+	return want, true
+}
+
+// formatDuration renders a coarse human-readable duration (e.g. "3d 4h").
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	default:
+		return fmt.Sprintf("%dm", mins)
+	}
+}
+
+// serviceRuntimeFromEvents derives a service's uptime and restart count from its
+// event history. Talos keeps only a bounded window of events, so the restart
+// count is a lower bound rather than a lifetime total.
+func serviceRuntimeFromEvents(events *machine.ServiceEvents) (string, int) {
+	if events == nil {
+		return "", 0
+	}
+
+	runs := 0
+	var lastRun time.Time
+	for _, ev := range events.GetEvents() {
+		if ev == nil || ev.GetState() != "Running" {
+			continue
+		}
+		runs++
+		if ts := ev.GetTs(); ts != nil {
+			lastRun = ts.AsTime()
+		}
+	}
+
+	uptime := ""
+	if !lastRun.IsZero() {
+		uptime = formatDuration(time.Since(lastRun))
+	}
+
+	restarts := 0
+	if runs > 1 {
+		restarts = runs - 1
+	}
+
+	return uptime, restarts
+}
+
+// kubernetesVersionFromImage extracts the tag from an OCI reference. A digest
+// pin carries no version, and neither does an untagged image: both report empty
+// instead of passing a hash fragment off as a version number.
+func kubernetesVersionFromImage(img string) string {
+	if at := strings.IndexByte(img, '@'); at != -1 {
+		img = img[:at]
+	}
+
+	colon := strings.LastIndexByte(img, ':')
+	if colon == -1 {
+		return ""
+	}
+	// A colon preceding the final path separator is a registry port, not a tag.
+	if slash := strings.LastIndexByte(img, '/'); slash > colon {
+		return ""
+	}
+
+	return img[colon+1:]
+}
+
+// kubernetesEndpoint reads the control-plane endpoint from the cluster config of
+// a reachable control-plane node, returning empty when none can be consulted.
+func (m *TalosManager) kubernetesEndpoint(ctx context.Context, nodes []*NodeOverview) string {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return ""
+	}
+
+	for _, n := range nodes {
+		if n == nil || n.Role != "controlplane" {
+			continue
+		}
+
+		nodeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		mc, err := safe.StateGet[*talosconfig.MachineConfig](
+			client.WithNode(nodeCtx, n.IP),
+			talosClient.COSI,
+			resource.NewMetadata(talosconfig.NamespaceName, talosconfig.MachineConfigType, talosconfig.ActiveID, resource.VersionUndefined),
+		)
+		cancel()
+
+		if err != nil || mc == nil || mc.Provider() == nil {
+			continue
+		}
+		k8sCfg := mc.Provider().K8sClusterConfig()
+		if k8sCfg == nil {
+			continue
+		}
+		if ep := k8sCfg.ClusterEndpoint(); ep != nil && ep.String() != "" {
+			return ep.String()
+		}
+	}
+
+	return ""
 }
 
 func formatBytes(bytes uint64) string {

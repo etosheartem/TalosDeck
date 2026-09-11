@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,10 +34,110 @@ type podCacheEntry struct {
 	updatedAt time.Time
 }
 
+// podListPageSize bounds a single List response so large clusters are fetched
+// incrementally instead of in one memory spike.
+const podListPageSize = 500
+
 // K8sManager manages interaction with the Kubernetes cluster workloads.
 type K8sManager struct {
 	clientset kubernetes.Interface
 	cache     podCache
+	inflight  singleflight.Group
+
+	// allowEmptyDirDeletion permits draining pods whose emptyDir data will be
+	// destroyed. Off by default: losing data needs an explicit decision.
+	allowEmptyDirDeletion bool
+}
+
+// SetAllowEmptyDirDeletion allows drain to evict pods backed by emptyDir volumes,
+// accepting that their local data is destroyed.
+func (m *K8sManager) SetAllowEmptyDirDeletion(allow bool) {
+	if m != nil {
+		m.allowEmptyDirDeletion = allow
+	}
+}
+
+// statusPriority ranks pod states so a multi-container pod reports its most
+// serious one, rather than whichever container happens to be listed first.
+func statusPriority(status string) int {
+	switch {
+	case status == "":
+		return 0
+	case status == "Completed", status == "Running":
+		return 1
+	case strings.HasPrefix(status, "Init:"):
+		return 3
+	default:
+		return 2
+	}
+}
+
+// containerStateStatus renders a container state, or "" when it is unremarkable.
+func containerStateStatus(state corev1.ContainerState) string {
+	if state.Waiting != nil && state.Waiting.Reason != "" {
+		return state.Waiting.Reason
+	}
+	if state.Terminated == nil {
+		return ""
+	}
+	switch {
+	case state.Terminated.Reason != "" && state.Terminated.Reason != "Completed":
+		return state.Terminated.Reason
+	case state.Terminated.ExitCode != 0:
+		return fmt.Sprintf("Error:%d", state.Terminated.ExitCode)
+	case state.Terminated.Signal != 0:
+		return fmt.Sprintf("Signal:%d", state.Terminated.Signal)
+	default:
+		return "Completed"
+	}
+}
+
+// podDisplayStatus derives the status shown in the UI, preferring the most severe
+// signal across every container and surfacing the reason Kubernetes already knows.
+func podDisplayStatus(p *corev1.Pod) string {
+	if p.DeletionTimestamp != nil {
+		return "Terminating"
+	}
+
+	status := string(p.Status.Phase)
+
+	// Phase alone hides why: an evicted pod is "Failed", an unschedulable one is
+	// a bare "Pending". The API already carries the reason — show it.
+	if p.Status.Reason != "" {
+		status = p.Status.Reason
+	} else {
+		for _, cond := range p.Status.Conditions {
+			if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse && cond.Reason != "" {
+				status = cond.Reason
+				break
+			}
+		}
+	}
+
+	// Init containers gate the pod, so their failures outrank main containers.
+	for _, cs := range p.Status.InitContainerStatuses {
+		if s := containerStateStatus(cs.State); s != "" && s != "Completed" {
+			candidate := "Init:" + s
+			if statusPriority(candidate) >= statusPriority(status) {
+				status = candidate
+			}
+		}
+	}
+
+	if !strings.HasPrefix(status, "Init:") {
+		for _, cs := range p.Status.ContainerStatuses {
+			s := containerStateStatus(cs.State)
+			if s == "" {
+				continue
+			}
+			// Never let a finished sidecar mask a sibling that is still crashing.
+			if statusPriority(s) > statusPriority(status) {
+				status = s
+			}
+		}
+	}
+
+	return status
 }
 
 // NewK8sManager initializes Kubernetes client using in-cluster config, kubeconfig file, or talos kubeconfig fallback.
@@ -45,7 +146,31 @@ func NewK8sManager(kubeconfigPath string, kubeconfigBytesProvider func(ctx conte
 	var err error
 	var loadErrHistory []string
 
-	// 1. Try In-Cluster config if running inside a Kubernetes Pod
+	// 1. An explicitly selected kubeconfig is an instruction, not a hint: it wins
+	// over in-cluster credentials and fails loudly instead of silently falling
+	// through to some other cluster. Drain and maintenance act on real nodes.
+	if kubeconfigPath != "" {
+		cfg, bErr := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if bErr != nil {
+			return nil, fmt.Errorf("failed to load explicitly configured kubeconfig %s: %w", kubeconfigPath, bErr)
+		}
+		restConfig = cfg
+	}
+
+	// 2. KUBECONFIG may list several files separated by the OS path separator;
+	// merge them the way kubectl does rather than treating the list as one name.
+	if restConfig == nil {
+		if envPaths := os.Getenv("KUBECONFIG"); envPaths != "" {
+			rules := &clientcmd.ClientConfigLoadingRules{Precedence: filepath.SplitList(envPaths)}
+			cfg, bErr := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{}).ClientConfig()
+			if bErr != nil {
+				return nil, fmt.Errorf("failed to load kubeconfig from KUBECONFIG=%s: %w", envPaths, bErr)
+			}
+			restConfig = cfg
+		}
+	}
+
+	// 3. Try In-Cluster config if running inside a Kubernetes Pod
 	if restConfig == nil {
 		inClusterCfg, inClusterErr := rest.InClusterConfig()
 		if inClusterErr == nil {
@@ -55,24 +180,14 @@ func NewK8sManager(kubeconfigPath string, kubeconfigBytesProvider func(ctx conte
 		}
 	}
 
-	// 2. Try explicit or env KUBECONFIG
+	// 4. Standard local fallbacks
 	if restConfig == nil {
-		if kubeconfigPath == "" {
-			kubeconfigPath = os.Getenv("KUBECONFIG")
-		}
-
 		candidatePaths := []string{}
-		if kubeconfigPath != "" {
-			candidatePaths = append(candidatePaths, kubeconfigPath)
-		}
-
-		// Standard local fallbacks
 		homeDir, _ := os.UserHomeDir()
 		if homeDir != "" {
 			candidatePaths = append(candidatePaths, filepath.Join(homeDir, ".kube", "config"))
 		}
 		candidatePaths = append(candidatePaths,
-			"/home/artem/laba-kuber/kubeconfig",
 			"./kubeconfig",
 			"../kubeconfig",
 			"./cluster-config/kubeconfig",
@@ -87,9 +202,8 @@ func NewK8sManager(kubeconfigPath string, kubeconfigBytesProvider func(ctx conte
 				if bErr == nil {
 					restConfig = cfg
 					break
-				} else {
-					loadErrHistory = append(loadErrHistory, fmt.Sprintf("file %s: %v", p, bErr))
 				}
+				loadErrHistory = append(loadErrHistory, fmt.Sprintf("file %s: %v", p, bErr))
 			}
 		}
 	}
@@ -129,6 +243,7 @@ func NewK8sManager(kubeconfigPath string, kubeconfigBytesProvider func(ctx conte
 			entries: make(map[string]podCacheEntry),
 			ttl:     2 * time.Second,
 		},
+		allowEmptyDirDeletion: strings.EqualFold(os.Getenv("TALOSDECK_ALLOW_EMPTYDIR_DELETION"), "true"),
 	}, nil
 }
 
@@ -159,21 +274,48 @@ func (m *K8sManager) ListPods(ctx context.Context, namespace, nodeFilter string)
 	}
 	m.cache.RUnlock()
 
+	// A cache miss from N dashboard sessions must collapse into one API call,
+	// otherwise the TTL expiry itself becomes the polling burst it guards against.
+	shared, err, _ := m.inflight.Do(cacheKey, func() (any, error) {
+		return m.listPodsUncached(ctx, queryNS, nodeFilter, cacheKey)
+	})
+	if err != nil {
+		return []PodInfo{}, err
+	}
+
+	pods, _ := shared.([]PodInfo)
+	return append([]PodInfo(nil), pods...), nil
+}
+
+// listPodsUncached performs the actual paginated API query and refreshes the cache.
+func (m *K8sManager) listPodsUncached(ctx context.Context, queryNS, nodeFilter, cacheKey string) ([]PodInfo, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	listOpts := metav1.ListOptions{}
+	listOpts := metav1.ListOptions{Limit: podListPageSize}
 	if nodeFilter != "" {
 		listOpts.FieldSelector = fmt.Sprintf("spec.nodeName=%s", nodeFilter)
 	}
 
-	podList, err := m.clientset.CoreV1().Pods(queryNS).List(reqCtx, listOpts)
-	if err != nil {
-		return []PodInfo{}, fmt.Errorf("failed to list pods: %w", err)
+	// Page through the collection: a single unbounded List spikes memory on large
+	// clusters and is far likelier to blow the request deadline.
+	var items []corev1.Pod
+	for {
+		podList, err := m.clientset.CoreV1().Pods(queryNS).List(reqCtx, listOpts)
+		if err != nil {
+			return []PodInfo{}, fmt.Errorf("failed to list pods: %w", err)
+		}
+
+		items = append(items, podList.Items...)
+
+		if podList.Continue == "" {
+			break
+		}
+		listOpts.Continue = podList.Continue
 	}
 
-	results := make([]PodInfo, 0, len(podList.Items))
-	for _, p := range podList.Items {
+	results := make([]PodInfo, 0, len(items))
+	for _, p := range items {
 		// Defensive fallback check in case API server does not support field selector for nodeName
 		if nodeFilter != "" && p.Spec.NodeName != nodeFilter {
 			continue
@@ -181,62 +323,18 @@ func (m *K8sManager) ListPods(ctx context.Context, namespace, nodeFilter string)
 
 		readyCount := 0
 		restartCount := int32(0)
-		status := string(p.Status.Phase)
 
-		if p.DeletionTimestamp != nil {
-			status = "Terminating"
-		} else {
-			// 1. Check init container statuses for crash/failure states
-			for _, cs := range p.Status.InitContainerStatuses {
-				restartCount += cs.RestartCount
-				if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-					status = "Init:" + cs.State.Waiting.Reason
-					break
-				}
-				if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-					if cs.State.Terminated.Reason != "" {
-						status = "Init:" + cs.State.Terminated.Reason
-					} else {
-						status = fmt.Sprintf("Init:ExitCode:%d", cs.State.Terminated.ExitCode)
-					}
-					break
-				}
-			}
-
-			// 2. Check main container statuses if not already flagged by init container
-			if !strings.HasPrefix(status, "Init:") {
-				for _, cs := range p.Status.ContainerStatuses {
-					if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-						status = cs.State.Waiting.Reason
-						break
-					}
-					if cs.State.Terminated != nil {
-						if cs.State.Terminated.Reason != "" {
-							status = cs.State.Terminated.Reason
-							break
-						}
-						if cs.State.Terminated.ExitCode != 0 {
-							status = fmt.Sprintf("Error:%d", cs.State.Terminated.ExitCode)
-							break
-						}
-						if cs.State.Terminated.Signal != 0 {
-							status = fmt.Sprintf("Signal:%d", cs.State.Terminated.Signal)
-							break
-						}
-						if status == "" || status == "Running" {
-							status = "Completed"
-						}
-					}
-				}
-			}
+		for _, cs := range p.Status.InitContainerStatuses {
+			restartCount += cs.RestartCount
 		}
-
 		for _, cs := range p.Status.ContainerStatuses {
 			restartCount += cs.RestartCount
 			if cs.Ready {
 				readyCount++
 			}
 		}
+
+		status := podDisplayStatus(&p)
 
 		totalContainers := len(p.Spec.Containers)
 		countStr := fmt.Sprintf("%d/%d", readyCount, totalContainers)
@@ -309,19 +407,27 @@ func (m *K8sManager) ListNamespaces(ctx context.Context) ([]NamespaceInfo, error
 	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	nsList, err := m.clientset.CoreV1().Namespaces().List(reqCtx, metav1.ListOptions{})
-	if err != nil {
-		return []NamespaceInfo{}, fmt.Errorf("failed to list namespaces: %w", err)
-	}
+	results := make([]NamespaceInfo, 0)
+	listOpts := metav1.ListOptions{Limit: podListPageSize}
+	for {
+		nsList, err := m.clientset.CoreV1().Namespaces().List(reqCtx, listOpts)
+		if err != nil {
+			return []NamespaceInfo{}, fmt.Errorf("failed to list namespaces: %w", err)
+		}
 
-	results := make([]NamespaceInfo, 0, len(nsList.Items))
-	for _, ns := range nsList.Items {
-		results = append(results, NamespaceInfo{
-			Name:      ns.Name,
-			Status:    string(ns.Status.Phase),
-			Age:       formatDuration(time.Since(ns.CreationTimestamp.Time)),
-			CreatedAt: ns.CreationTimestamp.Time,
-		})
+		for _, ns := range nsList.Items {
+			results = append(results, NamespaceInfo{
+				Name:      ns.Name,
+				Status:    string(ns.Status.Phase),
+				Age:       formatDuration(time.Since(ns.CreationTimestamp.Time)),
+				CreatedAt: ns.CreationTimestamp.Time,
+			})
+		}
+
+		if nsList.Continue == "" {
+			break
+		}
+		listOpts.Continue = nsList.Continue
 	}
 
 	sort.Slice(results, func(i, j int) bool {
@@ -379,21 +485,25 @@ func (m *K8sManager) CordonAndDrainNode(ctx context.Context, nodeName string) er
 		if skipPodDuringDrain(pod) {
 			continue
 		}
-		if len(pod.OwnerReferences) == 0 {
+		// A bare owner reference is not a controller: only a reference with
+		// Controller=true guarantees something will recreate the pod elsewhere.
+		if metav1.GetControllerOf(&pod) == nil {
 			return fmt.Errorf("cannot safely drain node %s: pod %s/%s has no controller", nodeName, pod.Namespace, pod.Name)
+		}
+		// Evicting a pod with emptyDir destroys that data for good, so refuse by
+		// default and make the operator opt in, the way `kubectl drain` does.
+		if !m.allowEmptyDirDeletion {
+			if vol := podEmptyDirVolume(&pod); vol != "" {
+				return fmt.Errorf(
+					"cannot safely drain node %s: pod %s/%s uses emptyDir volume %q whose data would be lost; set TALOSDECK_ALLOW_EMPTYDIR_DELETION=true to allow",
+					nodeName, pod.Namespace, pod.Name, vol)
+			}
 		}
 		drainable = append(drainable, pod)
 	}
 
 	for _, pod := range drainable {
-		gracePeriod := int64(30)
-		err := m.clientset.PolicyV1().Evictions(pod.Namespace).Evict(ctx, &policyv1.Eviction{
-			ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
-			DeleteOptions: &metav1.DeleteOptions{
-				GracePeriodSeconds: &gracePeriod,
-			},
-		})
-		if err != nil && !apierrors.IsNotFound(err) {
+		if err := m.evictPod(ctx, pod); err != nil {
 			return fmt.Errorf("failed to evict pod %s/%s from node %s: %w", pod.Namespace, pod.Name, nodeName, err)
 		}
 	}
@@ -481,10 +591,54 @@ func skipPodDuringDrain(pod corev1.Pod) bool {
 	if _, mirror := pod.Annotations[corev1.MirrorPodAnnotationKey]; mirror {
 		return true
 	}
-	for _, owner := range pod.OwnerReferences {
-		if owner.Kind == "DaemonSet" {
-			return true
-		}
+	// Only the controlling reference decides: a plain reference naming some
+	// DaemonSet must not exempt an ordinary workload pod from the drain.
+	if owner := metav1.GetControllerOf(&pod); owner != nil && owner.Kind == "DaemonSet" {
+		return true
 	}
 	return false
+}
+
+// podEmptyDirVolume returns the name of the first emptyDir volume, or "".
+func podEmptyDirVolume(pod *corev1.Pod) string {
+	for _, v := range pod.Spec.Volumes {
+		if v.EmptyDir != nil {
+			return v.Name
+		}
+	}
+	return ""
+}
+
+// evictPod evicts one pod, honouring its own termination grace period and
+// retrying while a PodDisruptionBudget temporarily forbids the disruption.
+func (m *K8sManager) evictPod(ctx context.Context, pod corev1.Pod) error {
+	eviction := &policyv1.Eviction{
+		ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
+	}
+	// A workload that asked for 120s to flush state must get it; forcing 30s here
+	// truncated exactly the shutdown the pod author configured.
+	if grace := pod.Spec.TerminationGracePeriodSeconds; grace != nil {
+		eviction.DeleteOptions = &metav1.DeleteOptions{GracePeriodSeconds: grace}
+	}
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		err := m.clientset.PolicyV1().Evictions(pod.Namespace).Evict(ctx, eviction)
+		switch {
+		case err == nil, apierrors.IsNotFound(err):
+			return nil
+		case !apierrors.IsTooManyRequests(err):
+			return err
+		}
+
+		// 429 means a PDB is momentarily blocking us — a rolling update, usually.
+		// Keep trying until the caller's deadline instead of failing the drain.
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("disruption budget still blocking eviction: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }

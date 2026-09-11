@@ -27,10 +27,10 @@ func main() {
 		defaultConfig = "/home/artem/laba-kuber/cluster-config/talosconfig"
 	}
 
-	defaultKubeconfig := os.Getenv("KUBECONFIG")
-	if defaultKubeconfig == "" {
-		defaultKubeconfig = "/home/artem/laba-kuber/kubeconfig"
-	}
+	// Empty means auto-discover (KUBECONFIG, in-cluster, then standard paths).
+	// A machine-specific default silently binds this build to one developer's box
+	// — or, worse, to a stale file that points at the wrong cluster.
+	defaultKubeconfig := ""
 
 	defaultPort := os.Getenv("PORT")
 	if defaultPort == "" {
@@ -40,7 +40,7 @@ func main() {
 	}
 
 	configPath := flag.String("talosconfig", defaultConfig, "Path to talosconfig file")
-	kubeconfigPath := flag.String("kubeconfig", defaultKubeconfig, "Path to kubeconfig file")
+	kubeconfigPath := flag.String("kubeconfig", defaultKubeconfig, "Path to kubeconfig file (empty: auto-discover)")
 	backupDirFlag := flag.String("backups", "./data/backups", "Storage directory for cluster backups and snapshots")
 	port := flag.String("port", defaultPort, "HTTP server port (e.g. :8080)")
 	nodesFlag := flag.String("nodes", "", "Comma-separated list of additional node IPs")
@@ -50,7 +50,11 @@ func main() {
 	log.Printf("         ⚡ TalosDeck Control Plane ⚡        ")
 	log.Printf("══════════════════════════════════════════════")
 	log.Printf("Talosconfig: %s", *configPath)
-	log.Printf("Kubeconfig:  %s", *kubeconfigPath)
+	if *kubeconfigPath != "" {
+		log.Printf("Kubeconfig:  %s", *kubeconfigPath)
+	} else {
+		log.Printf("Kubeconfig:  (auto-discover)")
+	}
 	log.Printf("Listen port: %s", *port)
 
 	var extraNodes []string

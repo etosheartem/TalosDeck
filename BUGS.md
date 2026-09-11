@@ -9,28 +9,53 @@
 
 | Статус | Critical | High | Medium | Low | Всего |
 |:---|---:|---:|---:|---:|---:|
-| ⬜ Открыто | 0 | 0 | 0 | 0 | **0** |
-| ✅ Исправлено | 24 | 57 | 83 | 40 | **204** |
-| **Итого** | **24** | **57** | **83** | **40** | **204** |
+| ⬜ Открыто | 0 | 7 | 11 | 8 | **26** |
+| ✅ Исправлено | 25 | 68 | 92 | 43 | **228** |
+| **Итого** | **25** | **75** | **103** | **51** | **254** |
 
-**Прогресс:** 204 из 204 исправлено (100%), открытых задач нет.
-> Исходный аудит (175 дефектов) закрыт на 100%. 11 сентября 2026 г. проведён второй раунд — 5 параллельных агентов нашли 29 новых дефектов (в т.ч. недоделанные фиксы ранее закрытых карточек), они добавлены ниже как открытые.
+**Прогресс:** 228 из 254 исправлено (89.8%), открыто 26 задач.
+> Исходный аудит (175 дефектов) и второй раунд (29 дефектов) закрыты на 100%. 11 сентября 2026 г. проведена дополнительная проверка подсистем Talos SDK, Kubernetes, Proxmox VE, Backup Engine и Security; найдено 50 новых дефектов, из которых 10 Talos SDK уже исправлены.
 
 ## Открытые задачи
 
 | Статус | Приоритет | ID | Подсистема | Кол-во | Проблема |
 |:---:|:---:|:---|:---|---:|:---|
-| ✅ FIXED | — | — | — | 0 | Открытых задач нет |
+| ⬜ OPEN | High | PVE-18 | Proxmox | 1 | Блокировка удаления воркера (`DeleteWorker`) при отсутствии ноды в Kubernetes (Deadlock удаления) |
+| ⬜ OPEN | High | PVE-19 | Proxmox | 1 | `DeleteWorker` оставляет зомби-ноду (`Node` object) в Kubernetes после уничтожения ВМ |
+| ⬜ OPEN | High | PVE-20 | Proxmox | 1 | Ошибка Proxmox API 500 (`VM is locked`) при таймауте ACPI shutdown в `DeleteWorker` |
+| ⬜ OPEN | Medium | PVE-21 | Proxmox | 1 | Несоответствие валидации имени ноды между созданием и удалением (`CreateTalosWorker` vs `DeleteWorker`) |
+| ⬜ OPEN | Medium | PVE-22 | Proxmox | 1 | Ложный статус "Connected" и мок-метрики в UI при недоступности или сбое Proxmox хоста (HTTP 502) |
+| ⬜ OPEN | Medium | PVE-23 | Proxmox | 1 | Захардкоженный абсолютный путь разработчика в `client.go:NewClientFromEnv` |
+| ⬜ OPEN | Medium | PVE-24 | Proxmox | 1 | Падение `GetNodeStatus` при отсутствии или недоступности хранилища `local-lvm` |
+| ⬜ OPEN | Low | PVE-25 | Proxmox | 1 | `AddWorkerModal.vue` игнорирует имя пула хранилища из статуса Proxmox и всегда отправляет захардкоженный `local-lvm` |
+| ⬜ OPEN | Low | PVE-26 | Proxmox | 1 | Отсутствие валидации параметров `opts.MACAddr`, `opts.MemoryMB` и `opts.DiskGB` в `CreateTalosWorker` |
+| ⬜ OPEN | Low | PVE-27 | Proxmox | 1 | В `allocateVMID` инкремент `vmid++` не проверяет занятость ID на стороне кластера Proxmox |
+| ⬜ OPEN | High | BKP-18 | Backup | 1 | Утечка памяти браузера и краш вкладки (OOM) при выгрузке архивов через `res.blob()` в `downloadBackup` |
+| ⬜ OPEN | High | BKP-19 | Backup | 1 | Недоделанный фикс BKP-12 — невозможность удаления осиротевших sidecar-файлов по ID без расширения |
+| ⬜ OPEN | Medium | BKP-20 | Backup | 1 | Метод верификации бэкапов `VerifyBackup` (BKP-10) не экспортирован в REST API |
+| ⬜ OPEN | Medium | BKP-21 | Backup | 1 | Ротация бэкапов `rotateBackups` удаляет архивы без аудита (`auditMgr`) |
+| ⬜ OPEN | Medium | BKP-22 | Backup | 1 | Отсутствие интернационализации (жесткий хардкод английских строк) в блоке Backup в `OperationsView.vue` |
+| ⬜ OPEN | Low | BKP-23 | Backup | 1 | Отсутствие поддержки формата `.tgz` в `GetBackup` и `DeleteBackup` |
+| ⬜ OPEN | Low | BKP-24 | Backup | 1 | Пустой `item.ID` при чтении поврежденного или старого `.json` метаданных в `ListBackups` |
+| ⬜ OPEN | Low | BKP-25 | Backup | 1 | `cleanStaleTempFiles` пытается удалять директории |
+| ⬜ OPEN | High | SEC-19 | Security | 1 | Сервер продолжает работу без audit trail при ошибке его инициализации |
+| ⬜ OPEN | High | SEC-20 | Security | 1 | Ошибки сериализации и записи audit events полностью игнорируются |
+| ⬜ OPEN | Medium | SEC-21 | Security | 1 | Audit-файл растёт без ротации и ограничения размера |
+| ⬜ OPEN | Medium | SEC-22 | Security | 1 | Logout не гарантирует отзыв токена при сбое сети или рестарте backend |
+| ⬜ OPEN | Medium | SEC-23 | Security | 1 | WebSocket принимает JWT в query string |
+| ⬜ OPEN | Medium | SEC-24 | Security | 1 | Долгоживущий bearer token хранится в `localStorage` без CSP |
+| ⬜ OPEN | Low | SEC-25 | Security | 1 | Ошибка криптографического генератора случайных данных игнорируется |
+| ⬜ OPEN | Low | SEC-26 | Security | 1 | Санитизация audit details пропускает часть коллекций и повторных секретов |
 
 ## Прогресс по подсистемам
 
 | Подсистема | Исправлено | Открыто | Всего | Прогресс |
 |:---|---:|---:|---:|---:|
-| **Talos SDK** | 23 | 0 | 23 | 100% |
-| **Kubernetes** | 10 | 0 | 10 | 100% |
-| **Proxmox** | 17 | 0 | 17 | 100% |
-| **Backup** | 15 | 0 | 15 | 100% |
-| **Security** | 16 | 0 | 16 | 100% |
+| **Talos SDK** | 33 | 0 | 33 | 100% |
+| **Kubernetes** | 20 | 0 | 20 | 100% |
+| **Proxmox** | 17 | 10 | 27 | 63% |
+| **Backup** | 17 | 8 | 25 | 68% |
+| **Security** | 18 | 8 | 26 | 69% |
 | **Alerts** | 16 | 0 | 16 | 100% |
 | **REST API** | 21 | 0 | 21 | 100% |
 | **Frontend state** | 28 | 0 | 28 | 100% |
@@ -211,6 +236,76 @@
 - **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
 - **Выполненное исправление:** Первый sample вычисляется по накопленным со старта системы busy/total counters, а последующие сохраняют более точный дельта-расчёт между опросами; результат ограничивается диапазоном 0–100%.
 
+### [HIGH] TALOS-24: Стримы логов обходят синхронизированный доступ к Talos client
+- **Файл:** [`internal/talos/streamer.go:25,79`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/streamer.go#L25), [`internal/talos/client.go:79-95`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go#L79)
+- **Описание:** `StreamDmesg` и `StreamServiceLogs` вызывают `m.client.Dmesg`/`m.client.Logs` напрямую. `Close()` одновременно меняет это поле на `nil` под мьютексом. После закрытия менеджера новый WebSocket-запрос приводит к `nil pointer dereference`, а параллельный старт стрима и `Close()` образует гонку на поле. Это оставшаяся часть класса ошибки TALOS-20: остальные операции уже используют `GetClient()` и проверяют `nil`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/streamer.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/streamer.go) обе функции (`StreamDmesg`, `StreamServiceLogs`) переведены на потокобезопасный геттер `m.GetClient()` с явной проверкой `nil` и понятной ошибкой `talos client is not initialized`. Прямые обращения к полю `m.client` устранены — гонка с `Close()` и паника при открытии WebSocket после остановки менеджера исключены. Класс ошибки TALOS-20 закрыт полностью.
+
+### [HIGH] TALOS-25: В каждый кластер принудительно добавляются узлы конкретного стенда
+- **Файл:** [`internal/talos/client.go:38-66`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go#L38), [`internal/talos/node_ops.go:26-30`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L26)
+- **Описание:** Помимо `nodes` активного talosconfig и явно переданных `extraNodes`, конструктор безусловно добавляет `10.42.0.110`, `10.42.0.111` и `10.42.0.112`. На любом другом кластере `/api/nodes`, `/api/cluster` и `/readyz` опрашивают три несуществующих адреса, ждут их таймауты и показывают кластер нездоровым. Статические hostname для этих адресов дополнительно маскируют источник фиктивных нод.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go) удалён безусловный список `knownNodes` со стендовыми адресами. Набор узлов формируется строго из `nodes` активного контекста talosconfig и явно переданных `extraNodes`; если контекст объявляет только endpoints, они используются как fallback вместо пустого списка. Итоговый срез сортируется (`sort.Strings`), что убирает недетерминированный порядок из-за итерации по map. В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) удалена карта `defaultNodeHostnames` со статическими именами стенда, а fallback `10.42.0.110` в `GetEtcdStatus` заменён на явную ошибку. Покрыто тестом `TestNewUnreachableNode_NoFabricatedIdentity`.
+
+### [HIGH] TALOS-26: Успешный `Version` ошибочно означает Ready и Healthy
+- **Файл:** [`internal/talos/node_ops.go:100-146`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L100), [`internal/talos/node_ops.go:322-355`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L322), [`internal/api/server.go:121-150`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L121)
+- **Описание:** `GetNodeStatus` выставляет `Ready=true` сразу после любого непустого ответа `Version`. Ошибка `ServiceList` и состояния `Degraded` у `apid`, `containerd`, `kubelet` или `etcd` не меняют готовность. Затем `GetClusterInfo` считает кластер здоровым, если все такие узлы `Ready`, а `/readyz` возвращает HTTP 200. В результате живой Talos API при остановленном kubelet/containerd даёт ложный зелёный статус и скрывает отказ Kubernetes-ноды.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) `overview.Ready = true` после успешного `Version` убран. Готовность теперь требует успешного `ServiceList` и состояния `Healthy` у `kubelet`, `containerd`, `apid` (плюс `etcd` для control plane); недоступный список служб оставляет готовность неподтверждённой. Дополнительно учитывается вердикт Kubernetes через COSI-ресурс `k8s.NodeStatus` (поле `NodeReady`), поэтому узел с живым Talos API, но остановленным kubelet или NotReady в Kubernetes больше не отображается зелёным и не завышает `Healthy` в `GetClusterInfo` и `/readyz`.
+
+### [HIGH] TALOS-27: Вложенные таймауты `GetEtcdStatus` исчерпывают общий deadline до failover
+- **Файл:** [`internal/talos/node_ops.go:654-703`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L654), [`internal/talos/node_ops.go:720-803`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L720)
+- **Описание:** Весь метод ограничен 12 секундами, но сначала вызывает `ListNodes` с таймаутом до 8 секунд, затем последовательно пробует CP-узлы по 4 секунды, последовательно запрашивает их статусы по 3 секунды и оставляет ещё 4 секунды на alarms. При одном медленном/недоступном адресе родительский контекст истекает раньше следующих кандидатов. Заявленный multi-node failover не успевает обратиться к здоровому CP, а частично выполненные status/alarm проверки дают ложный degraded либо ошибку всего endpoint.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) добавлен помощник `attemptBudget(ctx, want)`, ограничивающий таймаут каждой попытки фактически оставшимся временем родительского контекста и сообщающий `false`, когда времени для осмысленной попытки не осталось. Все три фазы (`EtcdMemberList` по кандидатам, `EtcdStatus` по кандидатам, `EtcdAlarmList`) используют его вместо фиксированных таймаутов, а общий бюджет метода поднят с 12 до 25 секунд, чтобы реально покрывать `ListNodes` плюс полный failover-обход. Один «чёрнодырный» CP больше не съедает весь deadline и не мешает опросить следующий живой control plane. Покрыто тестом `TestAttemptBudget_ClampsToRemaining`.
+
+### [MEDIUM] TALOS-28: Границы gRPC-чанков принимаются за границы строк service logs
+- **Файл:** [`internal/talos/streamer.go:97-113`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/streamer.go#L97)
+- **Описание:** Каждый `Logs.Recv()` возвращает произвольный фрагмент байтов, однако код отдельно применяет `bytes.Split` к каждому сообщению и сразу отправляет остатки без `\n` в канал. Если строка разделена между двумя gRPC-сообщениями, UI получает две повреждённые строки; если перевод строки попал на границу чанка, фрагментация также теряет исходное форматирование. Реализация `talosctl logs` для той же версии SDK хранит буфер между сообщениями и сбрасывает только полные строки.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/streamer.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/streamer.go) логика разбора вынесена в общую функцию `streamLines`, которая хранит незавершённый фрагмент (`carry`) между сообщениями gRPC и отдаёт в канал только полные строки; хвост без перевода строки досылается при `io.EOF`/отмене. Строка, разрезанная границей чанка, больше не превращается в две повреждённые. Добавлено ограничение `maxLogLineBytes` (1 МБ) на длину незавершённого фрагмента, защищающее от неограниченного роста буфера на потоке без переводов строк. Покрыто тестом `TestStreamLines_ReassemblesAcrossChunks`.
+
+### [MEDIUM] TALOS-29: `ListServices` возвращает фиктивные эксплуатационные метрики
+- **Файл:** [`internal/talos/node_ops.go:396-416`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L396)
+- **Описание:** Для каждой службы независимо от фактических событий возвращаются `Uptime: "14d 6h"` и `Restarts: 0`. UI отображает эти поля как реальные. Talos `ServiceInfo.Events` содержит timestamp и переходы состояния, но они не используются. Это неполностью устранённая часть TALOS-18: фиктивный uptime узла удалён, фиктивный uptime служб остался.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) константы `Uptime: "14d 6h"` и `Restarts: 0` заменены на расчёт из фактической истории событий службы: добавлен помощник `serviceRuntimeFromEvents`, который берёт `ServiceInfo.Events`, вычисляет uptime от последнего перехода в состояние `Running` и считает рестарты по числу таких переходов. Talos хранит ограниченное окно событий, поэтому счётчик рестартов документирован как нижняя оценка. Форматирование длительности вынесено в общий `formatDuration`, переиспользуемый для аптайма узла. Покрыто тестами `TestServiceRuntimeFromEvents` и `TestFormatDuration`.
+
+### [MEDIUM] TALOS-30: `GetClusterInfo` подставляет фиктивные версии и выводит Kubernetes endpoint из Talos endpoint
+- **Файл:** [`internal/talos/node_ops.go:314-350`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L314)
+- **Описание:** До получения данных сводка инициализируется версиями `v1.14.0` и `v1.32.2`, поэтому при недоступных метриках API показывает правдоподобные вымышленные значения. Поле Kubernetes endpoint строится как `https://<первый Talos endpoint>:6443`, хотя Talos API endpoint может иметь собственный порт, быть отдельным балансировщиком или не совпадать с `cluster.controlPlane.endpoint`; при пустом списке подставляется адрес стенда `10.42.0.110`. Контракт отдаёт догадки как фактическую конфигурацию.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) убраны стартовые значения `v1.14.0` / `v1.32.2`: при отсутствии данных от узлов версии отдаются как `unknown` вместо правдоподобной выдумки. Kubernetes endpoint больше не конструируется как `https://<talos endpoint>:6443` и не подставляет адрес стенда — добавлен метод `kubernetesEndpoint`, читающий фактический `ClusterEndpoint()` из machine config (`K8sClusterConfig`) доступного control-plane узла; если его получить не удалось, поле остаётся пустым, а не заполняется догадкой.
+
+### [MEDIUM] TALOS-31: Роль узла определяется эвристикой по hostname и IP
+- **Файл:** [`internal/talos/node_ops.go:117-149`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L117), [`internal/talos/node_ops.go:261-285`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L261)
+- **Описание:** Узел считается control plane при подстроке `cp`/`master` в hostname либо суффиксе IP `.110`; при ошибке опроса применяется ещё одна вариация той же эвристики. Валидный worker с подходящим именем/IP попадает в число control plane и в кандидаты etcd, а control plane с произвольным именем становится worker, если `ServiceList` недоступен. Talos SDK предоставляет точный COSI-ресурс `config.MachineType`, который здесь не читается.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) эвристики по подстрокам `cp`/`master` в hostname и по суффиксу IP `.110` удалены из обоих мест (основной путь и путь обработки ошибки). Роль определяется по авторитетному COSI-ресурсу `config.MachineType` через `mt.MachineType().IsControlPlane()`; сигнал наличия службы `etcd` сохранён как запасной. Узел, недоступный для опроса, больше не получает роль `controlplane` по догадке из адреса.
+
+### [LOW] TALOS-32: Digest образа kubelet отображается как версия Kubernetes
+- **Файл:** [`internal/talos/node_ops.go:206-217`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L206)
+- **Описание:** Версия извлекается как всё после последнего символа `:` в `KubeletStatus.Image`. Для digest-ссылки вида `registry/kubelet@sha256:<digest>` поле `kubernetesVersion` получает hash, а не версию; для образа без tag остаётся пустым. Нужен корректный разбор OCI reference и явное неизвестное значение, когда tag отсутствует.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) наивный `strings.LastIndex(img, ":")` заменён на помощник `kubernetesVersionFromImage` с корректным разбором OCI reference: digest-ссылка (`repo@sha256:...`) отбрасывается до поиска тега, а двоеточие в адресе реестра с портом (`registry:5000/kubelet`) не принимается за тег. При отсутствии тега возвращается пустое значение вместо фрагмента хеша. Покрыто тестом `TestKubernetesVersionFromImage`.
+
+### [LOW] TALOS-33: Расчёт занятой памяти допускает unsigned underflow
+- **Файл:** [`internal/talos/node_ops.go:153-165`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L153)
+- **Описание:** `usedBytes := totalBytes - availBytes` выполняется над `uint64` без проверки `availBytes <= totalBytes`. При частичном, несовместимом или переходном ответе MemInfo значение переполняется почти до `MaxUint64`, и интерфейс показывает эксабайты занятой памяти. Перед вычитанием значения нужно проверить и ограничить допустимым диапазоном.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) перед вычитанием добавлена проверка `if availBytes > totalBytes { availBytes = totalBytes }`, исключающая unsigned underflow при частичном или переходном ответе MemInfo. Дополнительно строка `MemoryUsage` формируется только при `totalBytes > 0`, чтобы не показывать бессмысленное `0.0 / 0.0 GB`.
+
 ---
 
 ## 2. Kubernetes Client-Go & Workloads (`internal/k8s/`)
@@ -288,6 +383,76 @@
 - **Описание:** `podCache` хранит единственную пару `key`/`pods`, а не карту по `namespace|nodeFilter`. При чередовании запросов с разными фильтрами (дашборд опрашивает `all/all`, `WorkloadsView` — конкретный namespace, несколько открытых вкладок) каждый новый `cacheKey` перезаписывает единственную запись, и следующий запрос с прежним фильтром снова промахивается мимо кэша. Заявленная в K8S-07 защита от polling storms на практике не работает при более чем одном одновременно используемом фильтре.
 - **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
 - **Выполненное исправление:** `podCache` хранит независимые записи по `namespace|nodeFilter`, возвращает defensive copy, кэширует пустые результаты и удаляет истёкшие ключи. Тест подтверждает два API-вызова для двух ключей и cache hit после переключения обратно.
+
+### [HIGH] K8S-11: Явно выбранный kubeconfig может быть молча проигнорирован
+- **Файл:** [`internal/k8s/client.go:42-115`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L42), [`cmd/talosdeck/main.go:30-53`](file:///home/artem/laba-kuber/TalosDeck/cmd/talosdeck/main.go#L30)
+- **Описание:** `NewK8sManager` сначала безусловно принимает `rest.InClusterConfig()` и только потом рассматривает переданный `kubeconfigPath`. Поэтому запущенный внутри Kubernetes процесс игнорирует явный `--kubeconfig`, хотя лог печатает именно его как выбранный. Если явный файл отсутствует или не разбирается, функция также молча перебирает другие локальные файлы и Talos provider вместо fail-fast. В результате операции maintenance/drain могут уйти в hosting-кластер или другой локальный контекст. Кроме того, стандартный список путей в `KUBECONFIG`, разделённый `filepath.ListSeparator`, трактуется как имя одного файла.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) порядок загрузки переработан: явно переданный `kubeconfigPath` теперь имеет наивысший приоритет и обрабатывается **до** `rest.InClusterConfig()`, а при ошибке разбора возвращается ошибка (fail-fast) вместо молчаливого перехода к другому кластеру. Переменная `KUBECONFIG` разбирается как список путей через `filepath.SplitList` и загружается правилами `clientcmd.ClientConfigLoadingRules{Precedence: ...}` — ровно как это делает `kubectl`, с корректным слиянием нескольких файлов. In-cluster и стандартные локальные пути остались только как fallback при отсутствии явного выбора.
+
+### [LOW] K8S-12: После исправления K8S-09 остался абсолютный путь разработчика
+- **Файл:** [`internal/k8s/client.go:69-79`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L69), [`cmd/talosdeck/main.go:30-33`](file:///home/artem/laba-kuber/TalosDeck/cmd/talosdeck/main.go#L30)
+- **Описание:** `/home/artem/laba-kuber/kubeconfig` всё ещё задан и как default CLI-флага, и как внутренний fallback клиента. На другой машине путь бесполезен; на машине, где случайно существует старый файл, он может подключить приложение к неожиданному кластеру. Карточка K8S-09 утверждает, что хардкод удалён, но фактически он сохранён в двух местах.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Абсолютный путь `/home/artem/laba-kuber/kubeconfig` удалён из обоих мест: из цепочки кандидатов в [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) и из значения по умолчанию CLI-флага в [`cmd/talosdeck/main.go`](file:///home/artem/laba-kuber/TalosDeck/cmd/talosdeck/main.go). Значение по умолчанию теперь пустое и означает автообнаружение (`KUBECONFIG` → in-cluster → стандартные пути → Talos provider); в лог выводится `Kubeconfig: (auto-discover)`. Случайно оставшийся на машине старый файл больше не может подключить приложение к неожиданному кластеру.
+
+### [HIGH] K8S-13: Любой `OwnerReference` ошибочно считается контроллером pod
+- **Файл:** [`internal/k8s/client.go:377-386`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L377), [`internal/k8s/client.go:480-489`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L480)
+- **Описание:** Drain разрешает eviction, если `len(pod.OwnerReferences) > 0`, не проверяя флаг `Controller=true`. Pod может иметь обычную ссылку-владельца без управляющего ReplicaSet/StatefulSet/Job; после eviction никто его не восстановит. Обратная ошибка есть в `skipPodDuringDrain`: любая ссылка с `Kind=DaemonSet`, даже не controller reference, исключает pod из drain. Для определения управляющего объекта нужно использовать `metav1.GetControllerOf` и проверять фактический kind контроллера.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) обе проверки переведены на `metav1.GetControllerOf(&pod)`, учитывающий флаг `Controller=true`. Drain отказывается эвакуировать pod без управляющего контроллера (обычная ссылка-владелец больше не принимается за гарантию восстановления), а `skipPodDuringDrain` исключает pod из drain только если DaemonSet является именно контроллером, а не произвольной ссылкой. Покрыто тестами `TestDrain_RejectsPodWithNonControllerOwner` и `TestSkipPodDuringDrain_OnlyControllerDaemonSetIsSkipped`.
+
+### [HIGH] K8S-14: Drain безусловно удаляет pod с локальными `emptyDir`-данными
+- **Файл:** [`internal/k8s/client.go:369-399`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L369)
+- **Описание:** Перед eviction проверяются только mirror pod, DaemonSet и наличие owner reference. Наличие томов `emptyDir` не выявляется и не требует отдельного разрешения. При удалении worker VM локальные данные такого pod уничтожаются без предупреждения оператору, хотя безопасный drain должен либо отказать, либо принимать явный параметр, разрешающий потерю local ephemeral storage.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) добавлен помощник `podEmptyDirVolume`, и drain по умолчанию **отказывается** эвакуировать pod с томом `emptyDir`, возвращая явную ошибку с именем тома и указанием, как разрешить операцию. Поведение повторяет `kubectl drain --delete-emptydir-data`: потеря локальных данных требует осознанного решения оператора. Опт-ин выполняется переменной окружения `TALOSDECK_ALLOW_EMPTYDIR_DELETION=true` либо методом `SetAllowEmptyDirDeletion(true)`; сигнатура `CordonAndDrainNode` и интерфейс `NodeDrainer` не менялись. Покрыто тестом `TestDrain_RefusesEmptyDirUnlessAllowed`.
+
+### [HIGH] K8S-15: Drain сокращает настроенный workload grace period до 30 секунд
+- **Файл:** [`internal/k8s/client.go:388-395`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L388)
+- **Описание:** Каждый `Eviction` отправляется с жёстким `GracePeriodSeconds: 30`. Значение `pod.Spec.TerminationGracePeriodSeconds` игнорируется, поэтому stateful workload с настроенными 60/120 секундами может быть принудительно завершён раньше, чем сбросит данные или передаст лидерство. Если оператор явно не задаёт override, Kubernetes должен использовать grace period самого pod.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) жёсткий `GracePeriodSeconds: 30` удалён. Eviction вынесен в метод `evictPod`, который передаёт `pod.Spec.TerminationGracePeriodSeconds` самого pod, а при его отсутствии не задаёт `DeleteOptions` вовсе — тогда Kubernetes применяет значение pod по умолчанию. Stateful workload с настроенными 60/120 секундами получает полное время на сброс данных и передачу лидерства. Покрыто тестом `TestDrain_HonoursPodTerminationGracePeriod`.
+
+### [MEDIUM] K8S-16: Временный запрет PDB немедленно обрывает drain
+- **Файл:** [`internal/k8s/client.go:388-399`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L388)
+- **Описание:** При ответе `429 Too Many Requests` от eviction API из-за PodDisruptionBudget метод сразу возвращает ошибку. Он не повторяет eviction до освобождения disruption budget, хотя вызывающий `DeleteWorker` выделяет операции общий 45-секундный контекст. Обычное кратковременное обновление deployment делает удаление worker нестабильным и требует ручного повтора всей операции.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) метод `evictPod` распознаёт ответ `429 Too Many Requests` через `apierrors.IsTooManyRequests(err)` и повторяет eviction с интервалом 1 секунда, пока PodDisruptionBudget не освободится или не истечёт контекст вызывающего (общий 45-секундный бюджет `DeleteWorker`). Кратковременное обновление deployment больше не обрывает весь drain и не требует ручного повтора операции. Покрыто тестом `TestDrain_RetriesWhileDisruptionBudgetBlocks`.
+
+### [MEDIUM] K8S-17: Исправление K8S-07 не добавило заявленную пагинацию
+- **Файл:** [`internal/k8s/client.go:165-173`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L165), [`internal/k8s/client.go:309-325`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L309)
+- **Описание:** `ListPods` и `ListNamespaces` отправляют пустой `ListOptions` без `Limit` и цикла по `Continue`. TTL-кэш уменьшает частоту запросов, но каждый cache miss по-прежнему загружает весь набор объектов одним ответом. На большом кластере это создаёт пиковую нагрузку памяти и повышает вероятность срабатывания восьмисекундного таймаута. K8S-07 была закрыта как исправленная, хотя её часть про пагинацию не реализована.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) добавлена константа `podListPageSize = 500`, и оба метода переведены на постраничную выборку: `ListPods` (через новый `listPodsUncached`) и `ListNamespaces` передают `metav1.ListOptions{Limit: ...}` и в цикле дочитывают остаток по токену `Continue`. Пиковая нагрузка на память при cache miss на большом кластере устранена, вероятность упереться в восьмисекундный таймаут снижена. Часть K8S-07, заявленная но не реализованная, закрыта.
+
+### [MEDIUM] K8S-18: TTL-кэш не объединяет параллельные cache miss
+- **Файл:** [`internal/k8s/client.go:150-170`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L150), [`internal/k8s/client.go:283-298`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L283)
+- **Описание:** После cache miss блокировка чтения снимается до вызова Kubernetes API. Несколько одновременных запросов с одинаковым ключом одновременно выполняют одинаковый `Pods.List`, а затем независимо перезаписывают одну запись. При открытии множества dashboard-сессий после истечения TTL возникает именно тот polling burst, от которого кэш должен защищать. Нужна дедупликация in-flight запросов, например `singleflight` по cache key.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) в `K8sManager` добавлено поле `inflight singleflight.Group` (пакет `golang.org/x/sync/singleflight`, уже присутствовавший в зависимостях). После cache miss фактический запрос к Kubernetes выполняется через `m.inflight.Do(cacheKey, ...)`, поэтому произвольное число параллельных запросов с одинаковым ключом схлопывается в один вызов `Pods.List`, а результат разделяется между всеми ожидающими (каждый получает защитную копию). Всплеск запросов от множества dashboard-сессий в момент истечения TTL устранён.
+
+### [MEDIUM] K8S-19: Причина состояния pod теряется при формировании DTO
+- **Файл:** [`internal/k8s/client.go:182-232`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L182)
+- **Описание:** Начальный статус берётся только из `PodStatus.Phase`; поля `PodStatus.Reason`, `Message` и причины условий не учитываются. Например, удалённый kubelet pod с `Phase=Failed, Reason=Evicted` отображается просто как `Failed`, а unschedulable pod остаётся общим `Pending`. Это скрывает от оператора непосредственную причину сбоя, хотя API Kubernetes уже её предоставляет.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) вычисление статуса вынесено в функцию `podDisplayStatus`, которая помимо `PodStatus.Phase` учитывает `PodStatus.Reason` (например, `Evicted` вместо общего `Failed`) и причину условия `PodScheduled=False` (например, `Unschedulable` вместо общего `Pending`). Непосредственная причина сбоя, которую API Kubernetes уже предоставляет, больше не теряется при формировании DTO. Покрыто подтестами `TestPodDisplayStatus`.
+
+### [MEDIUM] K8S-20: Порядок контейнеров может скрыть фактический статус pod
+- **Файл:** [`internal/k8s/client.go:206-231`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L206)
+- **Описание:** Цикл останавливается на первом контейнере в `Waiting` или `Terminated`. Успешно завершившийся первый контейнер немедленно выставляет `Completed` и прерывает анализ, даже если следующий контейнер ещё работает или находится в `CrashLoopBackOff`; аналогично менее важная первая причина может скрыть более серьёзную следующую. Для multi-container pod итог нужно вычислять по всем контейнерам с явным приоритетом состояний.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go) прерывание цикла по первому контейнеру (`break`) заменено на разбор **всех** контейнеров с явным приоритетом состояний: добавлены помощники `statusPriority` и `containerStateStatus`, а итоговый статус выбирается как наиболее серьёзный. Успешно завершившийся первый контейнер (`Completed`) больше не маскирует соседний контейнер в `CrashLoopBackOff`, а сбои init-контейнеров (префикс `Init:`) сохраняют приоритет над основными. Покрыто подтестом `a completed first container must not mask a crashing sibling`.
 
 ---
 
@@ -399,6 +564,56 @@
 - **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
 - **Выполненное исправление:** Добавлен `reserveVMID`; явные и автоматически выбранные VMID теперь резервируются под одним мьютексом до завершения всей операции создания и всегда освобождаются через `defer`. Тест покрывает повторный явный VMID через `CreateTalosWorker`.
 
+### [HIGH] PVE-18: Блокировка удаления воркера (`DeleteWorker`) при отсутствии ноды в Kubernetes (Deadlock удаления)
+- **Файл:** [`internal/proxmox/client.go:616-628`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L616-L628)
+- **Описание:** Перед уничтожением ВМ `DeleteWorker` безоговорочно вызывает `drainer.CordonAndDrainNode(drainCtx, vmStatus.Name)`. Если ВМ в Proxmox была остановлена, повреждена, зависла на этапе установки или ещё не успела войти в состав кластера Kubernetes, `resolveNodeName` падает с ошибкой `failed to find Kubernetes node <name>` (NotFound). В результате `DeleteWorker` прерывается с ошибкой `refusing to delete worker VM %d because Kubernetes drain failed`, и пользователь не может удалить сбойную ВМ через TalosDeck. Также если `drainer == nil` (нет доступа к K8s), удаление ВМ в Proxmox полностью блокируется.
+- **Статус:** ⬜ **OPEN**
+
+### [HIGH] PVE-19: `DeleteWorker` оставляет зомби-ноду (`Node` object) в Kubernetes после уничтожения ВМ
+- **Файл:** [`internal/proxmox/client.go:616-695`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L616-L695)
+- **Описание:** `CordonAndDrainNode` переводит ноду в состояние `unschedulable: true` и эвиктит поды. После этого Proxmox уничтожает виртуальную машину и её диски. Однако метод `DeleteNode` из Kubernetes API нигде не вызывается. В результате в кластере Kubernetes навсегда остаётся мёртвый объект ноды в состоянии `NotReady,SchedulingDisabled`, искажая мониторинг и состояние кластера.
+- **Статус:** ⬜ **OPEN**
+
+### [HIGH] PVE-20: Ошибка Proxmox API 500 (`VM is locked (shutdown)`) при таймауте ACPI shutdown в `DeleteWorker`
+- **Файл:** [`internal/proxmox/client.go:635-675`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L635-L675)
+- **Описание:** При удалении работающей ВМ отправляется ACPI shutdown (`POST /status/shutdown`). Proxmox накладывает блокировку `lock: shutdown`. Если за 15 секунд ВМ не завершила работу (например, завис гостевой агент или долгий сброс кэшей диска), вызывается `StopVM`. Но вызов `/status/stop` на блокированной ВМ без параметра `skiplock=1` отклоняется Proxmox с ошибкой `HTTP 500: can't lock VM <id>: already locked -- vm is shutting down`, прерывая удаление.
+- **Статус:** ⬜ **OPEN**
+
+### [MEDIUM] PVE-21: Несоответствие валидации имени ноды между созданием и удалением (`CreateTalosWorker` vs `DeleteWorker`)
+- **Файл:** [`internal/proxmox/client.go:30-42, 456-460`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L30-L42)
+- **Описание:** `CreateTalosWorker` разрешает создавать воркеры с любым валидным по RFC 1123 именем (например, `k8s-worker-1`, `worker-prod`, `talos-worker4`). Однако в `DeleteWorker` функция `isTalosWorker` разрешает удаление только для жесткой маски `lower == "talos-worker" || strings.HasPrefix(lower, "talos-worker-")`. Если пользователь задал имя `worker-1` или `talos-worker2`, ВМ будет успешно создана, но удалить её через TalosDeck будет невозможно из-за ошибки `safety check violation`.
+- **Статус:** ⬜ **OPEN**
+
+### [MEDIUM] PVE-22: Ложный статус "Connected" и мок-метрики в UI при недоступности или сбое Proxmox хоста (HTTP 502)
+- **Файл:** [`web/src/api/index.ts:1250-1262`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L1250-L1262), [`web/src/components/views/NodesView.vue:139-142`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/NodesView.vue#L139-L142)
+- **Описание:** Функция `fetchProxmoxStatus()` при получении ошибки от сервера (HTTP 502 Bad Gateway, сетевой таймаут) молча возвращает `MOCK_PROXMOX_STATUS` с `configured: true`, 16 GB free RAM и 358 GB free disk. В `NodesView.vue` индикатор Proxmox имеет захардкоженный класс `bg-emerald-400` и текст `t('proxmox_status_connected')`. В результате, когда Proxmox выключен или недоступен, пользователь видит зелёный пульсирующий статус «Подключено» с фиктивными ресурсами, а при нажатии «Создать» получает неожиданную ошибку.
+- **Статус:** ⬜ **OPEN**
+
+### [MEDIUM] PVE-23: Захардкоженный абсолютный путь разработчика в `client.go:NewClientFromEnv`
+- **Файл:** [`internal/proxmox/client.go:160`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L160)
+- **Описание:** В списке путей поиска токена Proxmox захардкожен локальный абсолютный путь `/home/artem/laba-kuber/cluster-config/proxmox.token`. Это нарушает переносимость в контейнерах и приводит к утечке путей локальной файловой системы разработчика в репозиторий.
+- **Статус:** ⬜ **OPEN**
+
+### [MEDIUM] PVE-24: Падение `GetNodeStatus` при отсутствии или недоступности хранилища `local-lvm`
+- **Файл:** [`internal/proxmox/client.go:249-264`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L249-L264)
+- **Описание:** `GetNodeStatus` жестко опрашивает `/nodes/{node}/storage/{storageName}/status`. Если хранилище `DefaultStorage` временно недоступно, отключено или имеет другое имя (например, `local-zfs`), запрос падает с ошибкой Proxmox 500, в результате чего весь эндпоинт `/api/proxmox/status` отдаёт 502 Bad Gateway и блокирует отображение статуса хоста (CPU, RAM, Uptime), хотя сам хост функционирует нормально.
+- **Статус:** ⬜ **OPEN**
+
+### [LOW] PVE-25: `AddWorkerModal.vue` игнорирует имя пула хранилища из статуса Proxmox и всегда отправляет захардкоженный `local-lvm`
+- **Файл:** [`web/src/components/AddWorkerModal.vue:38, 213`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/AddWorkerModal.vue#L38)
+- **Описание:** В форме `AddWorkerModal` переменная `storage` инициализирована как `'local-lvm'` и нигде не переопределяется именем хранилища, возвращенным из `proxmoxStatus.value.status.storage.name`. При конфигурации Proxmox с пулом `local-zfs` или `ceph` создание воркера падает с ошибкой Proxmox API, так как пул `local-lvm` не существует.
+- **Статус:** ⬜ **OPEN**
+
+### [LOW] PVE-26: Отсутствие валидации параметров `opts.MACAddr`, `opts.MemoryMB` и `opts.DiskGB` в `CreateTalosWorker`
+- **Файл:** [`internal/proxmox/client.go:465-472, 516-519`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L465-L472)
+- **Описание:** Если в запросе передать `MemoryMB: 128` или `DiskGB: 1`, код принимает эти значения, так как проверяет только `<= 0`. В результате ВМ создаётся в Proxmox с 128MB RAM / 1GB диска, где Talos Linux мгновенно падает в kernel panic / OOM. Также параметр `opts.MACAddr` вставляется в строку `net0` без валидации формата MAC-адреса, что при вводе некорректных символов ломает команду `qm create`.
+- **Статус:** ⬜ **OPEN**
+
+### [LOW] PVE-27: В `allocateVMID` инкремент `vmid++` не проверяет занятость ID на стороне кластера Proxmox
+- **Файл:** [`internal/proxmox/client.go:382-385`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L382-L385)
+- **Описание:** При коллизии `inFlightVMIDs[vmid]` код просто выполняет `vmid++` в локальной памяти Go без запроса к Proxmox (`/cluster/nextid?vmid=...` или проверки существования). Если `vmid + 1` уже занят существующей ВМ/контейнером в кластере Proxmox, последующее создание ВМ завершится ошибкой дублирования VMID.
+- **Статус:** ⬜ **OPEN**
+
 ---
 
 ## 4. Backup & Disaster Recovery Engine (`internal/backup/`)
@@ -472,6 +687,60 @@
 - **Описание:** Оба метода пишут поток данных напрямую в конечный файл (`os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)`) без промежуточного `.tmp`-файла и `os.Rename`. Это следствие фикса BKP-04, который снял `m.mu.Lock()` вокруг сетевого стриминга ради не блокирующих параллельных чтений, но атомарность самого файла на диске не была восстановлена другим способом. Пока идёт многоминутная выгрузка полного бэкапа, файл уже виден в каталоге под финальным именем: `ListBackups()` (fallback-ветка без `.json`) покажет его «готовым» с текущим неполным размером, а `GET /api/backups/:id/download` отдаст клиенту обрезанный/повреждённый архив — именно в disaster-recovery момент, когда целостность бэкапа критична.
 - **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
 - **Выполненное исправление:** Snapshot и full archive пишутся в скрытые уникальные temp-файлы с правами `0600`, синхронизируются через `fsync`, после чего sidecar-файлы и готовый архив публикуются атомарным `os.Rename`; основной файл появляется последним. Тест доказывает, что незавершённый файл отсутствует в `ListBackups`.
+
+### [CRITICAL] BKP-16: Паника рантайма Go (nil pointer dereference) при `GetClient() == nil` в методах создания бэкапов
+- **Файл:** [`internal/backup/manager.go:287, 444`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L287)
+- **Описание:** `m.talosManager.GetClient()` возвращает указатель `*client.Client`. Если сетевое соединение с Talos не установлено, разорвано или клиент был закрыт (`Close()`), метод возвращает `nil`. В функциях `CreateEtcdSnapshot` и `CreateFullClusterBackup` вызов `m.talosManager.GetClient().EtcdSnapshot(...)` выполняется напрямую без проверки на `nil`. В результате запрос на создание бэкапа приводит к панике рантайма (`panic: runtime error: invalid memory address or nil pointer dereference`), роняющей весь процесс TalosDeck.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/backup/manager.go`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go) в обоих методах (`CreateEtcdSnapshot` и `CreateFullClusterBackup`) результат `m.talosManager.GetClient()` сохраняется в локальную переменную и проверяется на `nil` с возвратом понятной ошибки `talos client is not initialized` до вызова `EtcdSnapshot`. Цепочка `GetClient().EtcdSnapshot(...)` устранена, паника рантайма при неинициализированном или уже закрытом клиенте Talos исключена.
+
+### [HIGH] BKP-17: Хардкод IP адреса разработчика (`10.42.0.110`) в `CreateEtcdSnapshot` и `CreateFullClusterBackup`
+- **Файл:** [`internal/backup/manager.go:275, 415`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L275)
+- **Описание:** В обеих функциях создания резервных копий при невозможности разрешить Control Plane IP из списка узлов или эндпоинтов talosconfig выполняется аварийный fallback на жестко захардкоженный IP домашней лаборатории разработчика: `targetIP = "10.42.0.110"` и `cpIP = "10.42.0.110"`. В любом другом кластере (например, с подсетью 192.168.x.x или 172.16.x.x) бэкенд начинает слать сетевые запросы по чужому несуществующему IP, зависая на 3 минуты по таймауту вместо немедленного возврата понятной ошибки `no controlplane node available`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/backup/manager.go`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go) хардкод `10.42.0.110` удалён из обоих мест. Целевой control-plane выбирается из фактически готовых узлов, затем из настроенных endpoints; если ни один источник не дал адреса, методы возвращают явную ошибку `no ready control plane node or endpoint available to snapshot etcd` вместо попытки снять снапшот с адреса чужого стенда.
+
+### [HIGH] BKP-18: Утечка памяти браузера и краш вкладки (OOM) при выгрузке архивов через `res.blob()` в `downloadBackup`
+- **Файл:** [`web/src/api/index.ts:1174-1188`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L1174-L1188)
+- **Описание:** Функция `downloadBackup` вычитывает полный архив бэкапа в память браузера как единый объект: `const blob = await res.blob()`. Для полных Disaster Recovery архивов кластера и больших снимков etcd (размером в сотни мегабайт или гигабайты) это приводит к взрывному расходу оперативной памяти JavaScript-рантайма, зависанию UI и аварийному падению вкладки браузера (Out of Memory). Кроме того, захардкоженный таймаут `60000` (60 секунд) в `fetchWithTimeout` гарантированно обрывает скачивание больших архивов по медленному каналу.
+- **Статус:** ⬜ **OPEN**
+
+### [HIGH] BKP-19: Недоделанный фикс BKP-12 — невозможность удаления осиротевших sidecar-файлов по ID без расширения
+- **Файл:** [`internal/backup/manager.go:849-862`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L849-L862)
+- **Описание:** В `DeleteBackup(id)` реализован поиск кандидатов расширений (`.snapshot`, `.tar.gz`, `.zip`). Если основной файл уже отсутствует на диске (сценарий очистки осиротевших метаданных BKP-12), флаг `found` остаётся `false`, и `targetPath` не дополняется расширением. Проверка `os.Stat(targetPath + ".sha256")` пытается найти `cluster-backup-123.sha256`, тогда как реальный файл метаданных на диске называется `cluster-backup-123.tar.gz.sha256`. В результате поиск не находит sidecar, возвращает `404 Not Found`, и осиротевшие файлы метаданных невозможно удалить через API/UI.
+- **Статус:** ⬜ **OPEN**
+
+### [MEDIUM] BKP-20: Метод верификации бэкапов `VerifyBackup` (BKP-10) не экспортирован в REST API
+- **Файл:** [`internal/api/backups.go:1-252`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go#L1-L252), [`internal/backup/manager.go:789-809`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L789-L809)
+- **Описание:** В `internal/backup/manager.go` реализован метод `VerifyBackup(id)`, выполняющий проверку контрольной суммы SHA256 и целостности архива на диске. Однако в `internal/api/backups.go` полностью отсутствует соответствующий HTTP-маршрут (например, `POST /api/backups/:id/verify`), а в UI нет кнопки проверки целостности. Функционал верификации является мёртвым кодом.
+- **Статус:** ⬜ **OPEN**
+
+### [MEDIUM] BKP-21: Ротация бэкапов `rotateBackups` удаляет архивы без аудита (`auditMgr`)
+- **Файл:** [`internal/backup/manager.go:215-228`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L215-L228)
+- **Описание:** При превышении лимита хранения (`maxBackups`) метод `rotateBackups` напрямую вызывает `m.DeleteBackup(backups[i].ID)`. Так как `BackupManager` не имеет связи с `AuditManager`, старые бэкапы удаляются с диска бесследно — в журнале аудита отсутствуют записи о ротации/удалении, что создает слепую зону в системе безопасности.
+- **Статус:** ⬜ **OPEN**
+
+### [MEDIUM] BKP-22: Отсутствие интернационализации (жесткий хардкод английских строк) в блоке Backup в `OperationsView.vue`
+- **Файл:** [`web/src/components/views/OperationsView.vue:847-897`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/OperationsView.vue#L847-L897)
+- **Описание:** Весь блок управления резервным копированием в `OperationsView.vue` («Backup & Disaster Recovery», «Etcd snapshots and full cluster recovery archives», «Creating…», «Etcd snapshot», «Full backup», «No backups created yet», тултипы «Refresh backups», «Download backup», «Delete backup») захардкожен на английском языке в обход словаря `t(...)`. При переключении интерфейса на русский язык этот раздел остаётся нелокализованным (нарушение OPS-10).
+- **Статус:** ⬜ **OPEN**
+
+### [LOW] BKP-23: Отсутствие поддержки формата `.tgz` в `GetBackup` и `DeleteBackup`
+- **Файл:** [`internal/backup/manager.go:730-734, 836-840`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L730-L734)
+- **Описание:** В методе `ListBackups` расширение `.tgz` признается валидным архивом (`strings.HasSuffix(name, ".tgz")`). Однако в списках кандидатов в `GetBackup` и `DeleteBackup` указаны только `.snapshot`, `.tar.gz`, `.zip`. При обращении по базовому имени без расширения к архиву `.tgz` операции возвращают ошибку `backup not found`.
+- **Статус:** ⬜ **OPEN**
+
+### [LOW] BKP-24: Пустой `item.ID` при чтении поврежденного или старого `.json` метаданных в `ListBackups`
+- **Файл:** [`internal/backup/manager.go:658-669`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L658-L669)
+- **Описание:** Если в companion файле `.json` отсутствует поле `id` или файл был создан внешней утилитой, `json.Unmarshal` оставляет `item.ID == ""`. При этом `ListBackups` не подставляет имя файла в качестве резервного ID. В результате в API отдается бэкап с пустым `id`, а клик по кнопке скачивания или удаления в UI приводит к запросу `/api/backups//download` и ошибке 404.
+- **Статус:** ⬜ **OPEN**
+
+### [LOW] BKP-25: `cleanStaleTempFiles` пытается удалять директории
+- **Файл:** [`internal/backup/manager.go:139-149`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L139-L149)
+- **Описание:** `cleanStaleTempFiles` обходит `os.ReadDir` и удаляет любые элементы с префиксом `.temp-etcd-` или суффиксом `.tmp`, не проверяя `entry.IsDir()`. Если в каталоге бэкапов будет создана временная поддиректория (например, тестовой утилитой), вызов `os.Remove` завершится ошибкой и замусорит системные логи.
+- **Статус:** ⬜ **OPEN**
 
 ---
 
@@ -568,6 +837,60 @@
 - **Описание:** Обе функции рекурсивно обрабатывают только вложенные `map[string]any`; значение-срез (`[]any`, в т.ч. с вложенными картами) копируется по ссылке без санитизации. Если в `Details[key]` попадёт срез с чувствительными полями, маскирование SEC-12 не сработает, а «полное» глубокое копирование SEC-04 на деле окажется поверхностным для этого поля. Сейчас все текущие вызовы `Details: map[string]any{...}` используют только скаляры, поэтому не эксплуатируется, но заявка о «полном» покрытии не соответствует действительности при добавлении поля-массива в будущем.
 - **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
 - **Выполненное исправление:** Санитизация и defensive copy рекурсивно обходят `[]any`, включая вложенные карты и строки с секретами. Тест проверяет маскирование и отсутствие общей памяти с исходным и возвращённым срезами.
+
+### [HIGH] SEC-17: Доверие левому адресу в `X-Forwarded-For` позволяет обходить login rate limit
+- **Файл:** [`internal/auth/auth.go:307-352`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L307), [`internal/api/server.go:156-172`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L156)
+- **Описание:** Если непосредственный peer доверен, `GetClientIP` всегда возвращает первый адрес из `X-Forwarded-For`. Типичная конфигурация reverse proxy дописывает реальный адрес справа к уже присланному клиентом заголовку. Атакующий меняет первый элемент на каждом запросе и получает новый ключ Fiber limiter, обходя лимит 30 попыток входа в минуту. Loopback считается доверенным без настройки, поэтому сценарий работает с локальным nginx/ingress, если тот не удаляет входной XFF. Цепочку нужно разбирать справа налево, отбрасывая только известные trusted proxies.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/backup/manager.go`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go) в обоих методах (`CreateEtcdSnapshot` и `CreateFullClusterBackup`) результат `m.talosManager.GetClient()` сохраняется в локальную переменную и проверяется на `nil` с возвратом понятной ошибки `talos client is not initialized` до вызова `EtcdSnapshot`. Цепочка `GetClient().EtcdSnapshot(...)` устранена, паника рантайма при неинициализированном или уже закрытом клиенте Talos исключена.
+
+### [HIGH] SEC-18: Эфемерный пароль администратора выводится открытым текстом в журнал
+- **Файл:** [`internal/auth/auth.go:51-60`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L51), [`internal/auth/auth.go:72-90`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L72)
+- **Описание:** При отсутствии настроенного пароля `NewAuthManager` и `NewAuthManagerFromEnv` печатают полностью работоспособный admin-пароль через `log.Printf`. Контейнерные логи обычно собираются централизованно и доступны более широкому кругу операторов, чем Kubernetes/Proxmox credentials. Исправление SEC-01 заменило общеизвестный пароль случайным, но сделало stdout источником административного секрета. Безопаснее требовать явный secret либо выдавать одноразовый credential через защищённый канал.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/backup/manager.go`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go) хардкод `10.42.0.110` удалён из обоих мест. Целевой control-plane выбирается из фактически готовых узлов, затем из настроенных endpoints; если ни один источник не дал адреса, методы возвращают явную ошибку `no ready control plane node or endpoint available to snapshot etcd` вместо попытки снять снапшот с адреса чужого стенда.
+
+### [HIGH] SEC-19: Ошибка инициализации audit manager обрабатывается fail-open
+- **Файл:** [`internal/api/server.go:77-93`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L77), [`cmd/talosdeck/main.go:116-136`](file:///home/artem/laba-kuber/TalosDeck/cmd/talosdeck/main.go#L116)
+- **Описание:** Если каталог недоступен, закончились файловые дескрипторы или audit-файл невозможно открыть, main лишь пишет warning и передаёт `nil`; `SetupServer` повторяет попытку, затем всё равно запускает API. Все reboot, maintenance, backup и Proxmox-операции продолжают выполняться без следа. Для security audit trail это опасный режим отказа: сервер должен завершить запуск либо явно блокировать административные операции до восстановления журнала.
+- **Статус:** **ОТКРЫТО (OPEN)** ⬜
+
+### [HIGH] SEC-20: Audit logger молча теряет события при ошибках записи
+- **Файл:** [`internal/audit/logger.go:91-124`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go#L91)
+- **Описание:** `Log` игнорирует ошибку `json.Marshal`, результат `Write` и short write, при этом уже добавляет событие в память и ничего не сообщает вызывающей операции. При заполнении диска, read-only filesystem или закрытом дескрипторе API продолжает отвечать success, а после рестарта запись исчезает. Метод не возвращает ошибку и не переводит аудит в отказавшее состояние, поэтому обнаружить потерю следа по API невозможно.
+- **Статус:** **ОТКРЫТО (OPEN)** ⬜
+
+### [MEDIUM] SEC-21: Audit log не имеет ротации или ограничения размера
+- **Файл:** [`internal/audit/logger.go:27-35`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go#L27), [`internal/audit/logger.go:109-123`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go#L109)
+- **Описание:** `maxEntries` ограничивает только память; на диск все события навсегда дописываются в один файл. Неуспешные логины также создают audit event, а обход limiter из SEC-17 позволяет генерировать их с высокой скоростью. Длительная работа или целевой поток запросов исчерпывает файловую систему, после чего SEC-20 скрывает прекращение аудита и могут отказать другие подсистемы.
+- **Статус:** **ОТКРЫТО (OPEN)** ⬜
+
+### [MEDIUM] SEC-22: Logout не гарантирует фактический отзыв JWT
+- **Файл:** [`internal/auth/auth.go:41-49`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L41), [`internal/auth/auth.go:209-246`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L209), [`web/src/api/index.ts:1462-1474`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L1462)
+- **Описание:** Blacklist отозванных JWT хранится только в памяти, поэтому после рестарта backend ранее отозванный токен снова действителен до `exp`. Кроме того, frontend игнорирует сетевую/серверную ошибку `/auth/logout` и всегда удаляет локальную копию, создавая у пользователя впечатление успешного выхода, хотя украденная копия токена остаётся валидной. Нужен устойчивый revoke store либо смена схемы с короткой сессией и проверяемым сервером refresh/logout.
+- **Статус:** **ОТКРЫТО (OPEN)** ⬜
+
+### [MEDIUM] SEC-23: JWT разрешено передавать в query-параметре WebSocket URL
+- **Файл:** [`internal/api/server.go:757-802`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L757)
+- **Описание:** Middleware принимает `?token=<JWT>` наряду с `Sec-WebSocket-Protocol`. URL попадает в reverse-proxy/access logs, трассировку, диагностические дампы и историю инструментов разработчика, поэтому bearer credential может утечь сторонним системам. Текущий frontend уже умеет передавать токен как WebSocket subprotocol, и небезопасный query fallback можно удалить.
+- **Статус:** **ОТКРЫТО (OPEN)** ⬜
+
+### [MEDIUM] SEC-24: Bearer token хранится в доступном JavaScript `localStorage`
+- **Файл:** [`web/src/api/index.ts:1420-1453`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L1420), [`internal/api/server.go:45-73`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L45)
+- **Описание:** 24-часовой admin JWT записывается в `localStorage`, откуда его может прочитать любой выполняющийся в origin JavaScript. Сервер не выставляет Content Security Policy, уменьшающую поверхность внедрения скриптов. Одна XSS или скомпрометированная frontend-зависимость даёт переносимый bearer token со всеми административными правами. Для сессии подходит `HttpOnly`, `Secure`, `SameSite` cookie с CSRF-защитой либо существенно более короткий access token в памяти.
+- **Статус:** **ОТКРЫТО (OPEN)** ⬜
+
+### [LOW] SEC-25: `RandomString` игнорирует отказ `crypto/rand`
+- **Файл:** [`internal/auth/auth.go:355-359`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L355)
+- **Описание:** Результаты `rand.Read` — количество прочитанных байтов и ошибка — отбрасываются. При отказе системного CSPRNG функция возвращает hex от нулевого или частично заполненного буфера, который затем используется как пароль/JWT secret. Генерация security credentials должна возвращать ошибку и останавливать инициализацию, если необходимая энтропия недоступна.
+- **Статус:** **ОТКРЫТО (OPEN)** ⬜
+
+### [LOW] SEC-26: Санитизация и defensive copy audit details остаются неполными
+- **Файл:** [`internal/audit/logger.go:214-286`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go#L214)
+- **Описание:** После SEC-16 рекурсия поддерживает только точные типы `map[string]any` и `[]any`; типизированные `[]string`, другие map/slice и структуры остаются разделяемыми и не санитизируются. `sanitizeStringValue` заменяет лишь первое вхождение каждого шаблона, поэтому строка с двумя `Bearer`/`token=` оставляет второй секрет открытым. Текущие call sites в основном передают скаляры, но заявленная универсальная защита `Details` всё ещё обходится допустимыми Go-значениями.
+- **Статус:** **ОТКРЫТО (OPEN)** ⬜
 
 ---
 
