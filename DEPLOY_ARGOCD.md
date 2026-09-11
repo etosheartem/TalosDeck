@@ -238,11 +238,22 @@ stringData:
 EOF
 ```
 
-## 6. Создать Application и выполнить первый sync
+## 6. Создать Application в Argo CD и синхронизировать
 
-Сохрани в `gitops/talosdeck-application.yaml` (вне каталога `gitops/talosdeck`, который читает само приложение):
+### Что такое Application простыми словами:
+`Application` в Argo CD — это задача для GitOps. Вы просто говорите Argo CD:  
+> *«Следи за репозиторием `https://github.com/etosheartem/TalosDeck.git` (ветка `main`, папка `gitops/talosdeck`), и всё, что там написано, разверни в наш кластер в неймспейс `talosdeck`»*.
 
-```yaml
+Создать его можно **любым из двух способов**:
+
+---
+
+### Способ 1. Одной командой в терминале (Рекомендуется)
+
+Выполните одну команду, которая создаст Application напрямую в Argo CD:
+
+```bash
+kubectl apply -n argocd -f - <<'EOF'
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -260,46 +271,50 @@ spec:
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
+EOF
 ```
 
-```bash
-git add gitops/talosdeck-application.yaml
-git commit -m "deploy: add TalosDeck Argo CD application"
-git push origin main
+*(Примечание: если манифесты запушены в локальный GitLab, а не GitHub, просто замените `repoURL` на `http://gitlab.lan:8080/root/talosdeck.git`)*.
 
-kubectl apply -f gitops/talosdeck-application.yaml
-```
+---
 
-В UI Argo CD открой **talosdeck → Diff → Sync → Synchronize**. Первый sync ручной. Или после входа CLI в свой Argo CD:
+### Способ 2. Либо через веб-интерфейс Argo CD (кнопками):
+1. Откройте веб-интерфейс Argo CD: `http://10.42.0.110:30080`
+2. Нажмите синюю кнопку **+ NEW APP** (вверху слева).
+3. Заполните поля:
+   - **Application Name**: `talosdeck`
+   - **Project Name**: `default`
+   - **Sync Policy**: `Manual` (или `Automatic`)
+   - **Repository URL**: `https://github.com/etosheartem/TalosDeck.git`
+   - **Revision**: `main`
+   - **Path**: `gitops/talosdeck`
+   - **Cluster URL**: `https://kubernetes.default.svc`
+   - **Namespace**: `talosdeck`
+4. Нажмите **CREATE** вверху.
 
-```bash
-argocd app sync talosdeck
-argocd app wait talosdeck --sync --health --timeout 300
-kubectl -n talosdeck rollout status deployment/talosdeck --timeout=300s
-kubectl -n talosdeck get pods,pvc,svc
-kubectl -n talosdeck logs deployment/talosdeck --tail=100
-```
+---
 
-Статус ожидается `Synced / Healthy`, PVC — `Bound`. У StorageClass с `WaitForFirstConsumer` PVC может ждать назначения Pod до связывания.
+### Первый запуск (Sync):
+1. На главной странице Argo CD появится карточка приложения **`talosdeck`** со статусом `OutOfSync` (желтый круг).
+2. Нажмите на карточку приложения, затем нажмите кнопку **SYNC** вверху и подтвердите: **SYNCHRONIZE**.
+3. Argo CD скачает манифесты из Git и создаст Deployment, Pod, Service и PVC.
+4. Через 10–20 секунд кружок станет зелёным: **`Synced`** и **`Healthy`**.
 
-## 7. Открыть панель и проверить версию
+---
+
+## 7. Открыть панель TalosDeck в браузере
+
+После того как Argo CD засинхронизировал приложение, пробросьте порт на рабочую машину:
 
 ```bash
 kubectl -n talosdeck port-forward svc/talosdeck 8080:8080
 ```
 
-Открой `http://localhost:8080`, войди паролем из шага 3. Если 8080 занят локальным `make run`, используй `18080:8080` и `http://localhost:18080`.
-
-Проверка, что загружен нужный образ:
-
-```bash
-kubectl -n talosdeck get deployment talosdeck \
-  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
-kubectl -n talosdeck get pods -l app=talosdeck \
-  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].imageID}{"\n"}{end}'
-```
-
-Сравни с опубликованным тегом/digest. В новом интерфейсе — 10 разделов и отметка `Console UI 2`. Проверь ноды, workloads, логи и список бэкапов. Зелёный Pod сам по себе не подтверждает, что все подключения работают.
+1. Откройте в браузере: 👉 **`http://localhost:8080`**
+2. Введите:
+   - **Логин**: `admin`
+   - **Пароль**: `admin` *(пароль, который мы записали в секрет `talosdeck-runtime`)*
+3. Вы попадёте в новый интерфейс оператора TalosDeck с 10 разделами!
 
 ## 8. Обновления и откат
 
