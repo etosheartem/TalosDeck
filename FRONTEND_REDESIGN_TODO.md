@@ -1,3 +1,5 @@
+> Historical checklist for the discarded styling iteration. The actual replacement is tracked in [FRONTEND_REBUILD.md](FRONTEND_REBUILD.md).
+
 # TalosDeck frontend redesign
 
 The frontend should read like an operator console: dense, calm, predictable, and useful during an incident. Visual decoration must never compete with cluster state.
