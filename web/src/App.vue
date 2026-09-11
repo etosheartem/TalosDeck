@@ -47,7 +47,8 @@ const cluster = ref<ClusterInfo>({
 
 // Auto refresh interval in ms (0 = off)
 const autoRefreshInterval = ref<number>(10000)
-let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
+let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let isUnmounted = false
 
 // Modals
 const activeServicesNode = ref<NodeOverview | null>(null)
@@ -81,6 +82,8 @@ const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info')
 
 // Fetch data
 const loadData = async () => {
+  if (loading.value) return
+
   loading.value = true
   try {
     const res = await fetchNodes()
@@ -105,12 +108,14 @@ const loadData = async () => {
 // Auto refresh setup
 const setupAutoRefresh = () => {
   if (autoRefreshTimer) {
-    clearInterval(autoRefreshTimer)
+    clearTimeout(autoRefreshTimer)
     autoRefreshTimer = null
   }
-  if (autoRefreshInterval.value > 0) {
-    autoRefreshTimer = setInterval(() => {
-      loadData()
+  if (!isUnmounted && autoRefreshInterval.value > 0) {
+    autoRefreshTimer = setTimeout(async () => {
+      autoRefreshTimer = null
+      await loadData()
+      setupAutoRefresh()
     }, autoRefreshInterval.value)
   }
 }
@@ -119,13 +124,15 @@ watch(autoRefreshInterval, () => {
   setupAutoRefresh()
 })
 
-onMounted(() => {
-  loadData()
+onMounted(async () => {
+  isUnmounted = false
+  await loadData()
   setupAutoRefresh()
 })
 
 onUnmounted(() => {
-  if (autoRefreshTimer) clearInterval(autoRefreshTimer)
+  isUnmounted = true
+  if (autoRefreshTimer) clearTimeout(autoRefreshTimer)
   if (toastTimer) clearTimeout(toastTimer)
 })
 

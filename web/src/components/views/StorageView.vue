@@ -13,6 +13,7 @@ import {
 import { t } from '../../i18n'
 import type { NodeOverview, NodeDisksOverview } from '../../types'
 import { fetchAllNodeDisks } from '../../api'
+import { sizeToGiB } from '../../utils/storage'
 
 const props = defineProps<{
   nodes: NodeOverview[]
@@ -53,7 +54,7 @@ const totalCapacity = computed(() => {
   let totalGB = 0
   for (const nd of nodeDisks.value) {
     for (const d of nd.disks) {
-      totalGB += parseFloat(d.size) || 0
+      totalGB += sizeToGiB(d.sizeBytes ?? d.size)
     }
   }
   return `${totalGB.toFixed(0)} GB`
@@ -65,9 +66,7 @@ const totalUsed = computed(() => {
     for (const d of nd.disks) {
       for (const p of d.partitions) {
         if (p.used) {
-          const val = parseFloat(p.used)
-          if (p.used.includes('GB')) usedGB += val
-          else if (p.used.includes('MB')) usedGB += val / 1024
+          usedGB += sizeToGiB(p.used)
         }
       }
     }

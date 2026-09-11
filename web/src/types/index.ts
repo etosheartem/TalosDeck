@@ -56,6 +56,7 @@ export type TabKey = 'nodes' | 'storage' | 'config' | 'workloads' | 'operations'
 export interface DiskPartition {
   device: string // e.g. "/dev/sda1"
   size: string // e.g. "512 MB"
+  sizeBytes?: number
   type?: string // e.g. "EFI System", "Talos State"
   filesystem?: string // e.g. "vfat", "xfs", "ext4"
   mountpoint?: string // e.g. "/boot/efi", "/var", "/system/state"
@@ -69,6 +70,7 @@ export interface PhysicalDisk {
   model?: string // e.g. "VirtIO SCSI Disk"
   serial?: string
   size: string // e.g. "50.0 GB"
+  sizeBytes?: number
   bus: string // e.g. "SCSI", "NVMe", "VirtIO", "SATA"
   type: 'SSD' | 'HDD' | 'NVMe' | 'Virtual'
   healthy: boolean

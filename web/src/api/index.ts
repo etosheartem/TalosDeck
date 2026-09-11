@@ -20,6 +20,7 @@ import type {
   MeResponse,
   AuditLogEvent,
 } from '../types'
+import { formatBytes, sizeToGiB } from '../utils/storage'
 
 export type { AuthResponse, MeResponse, UserInfo, AuditLogEvent }
 
@@ -496,13 +497,63 @@ export const MOCK_DISKS_MAP: Record<string, PhysicalDisk[]> = {
   ],
 }
 
+const normalizeDiskType = (value: unknown): PhysicalDisk['type'] => {
+  const diskType = String(value || '').toLowerCase()
+  if (diskType.includes('nvme')) return 'NVMe'
+  if (diskType.includes('ssd')) return 'SSD'
+  if (diskType.includes('hdd')) return 'HDD'
+  return 'Virtual'
+}
+
+const normalizePhysicalDisk = (raw: any): PhysicalDisk => {
+  const rawSize = raw.sizeBytes ?? raw.size
+  const sizeBytes = typeof rawSize === 'number' && Number.isFinite(rawSize) ? rawSize : undefined
+  const partitions = Array.isArray(raw.partitions) ? raw.partitions : []
+
+  return {
+    name: raw.name || raw.devicePath || raw.deviceName || 'unknown',
+    model: raw.model,
+    serial: raw.serial,
+    size: raw.prettySize || (sizeBytes !== undefined ? formatBytes(sizeBytes) : String(raw.size || '0 B')),
+    sizeBytes,
+    bus: raw.bus || 'Unknown',
+    type: normalizeDiskType(raw.type),
+    healthy: raw.healthy ?? true,
+    temp: raw.temp,
+    readOnly: raw.readOnly ?? raw.readonly ?? false,
+    partitions: partitions.map((partition: any) => {
+      const rawPartitionSize = partition.sizeBytes ?? partition.size
+      const partitionSizeBytes =
+        typeof rawPartitionSize === 'number' && Number.isFinite(rawPartitionSize)
+          ? rawPartitionSize
+          : undefined
+
+      return {
+        device: partition.device || partition.location || partition.id || 'unknown',
+        size:
+          partition.prettySize ||
+          (partitionSizeBytes !== undefined
+            ? formatBytes(partitionSizeBytes)
+            : String(partition.size || '0 B')),
+        sizeBytes: partitionSizeBytes,
+        type: partition.type,
+        filesystem: partition.filesystem,
+        mountpoint: partition.mountpoint || partition.mountPath,
+        label: partition.label,
+        used: partition.used,
+        usedPercent: partition.usedPercent,
+      }
+    }),
+  }
+}
+
 export const fetchNodeDisks = async (nodeIP: string): Promise<PhysicalDisk[]> => {
   try {
     const res = await fetchWithTimeout(`/api/nodes/${nodeIP}/disks`)
     if (res.ok) {
       const data = await res.json()
       if (Array.isArray(data) && data.length > 0) {
-        return data
+        return data.map(normalizePhysicalDisk)
       }
     }
   } catch (err) {
@@ -520,13 +571,10 @@ export const fetchAllNodeDisks = async (nodes: NodeOverview[]): Promise<NodeDisk
     let totalGB = 0
     let usedGB = 0
     disks.forEach((d) => {
-      const num = parseFloat(d.size) || 50
-      totalGB += num
+      totalGB += sizeToGiB(d.sizeBytes ?? d.size)
       d.partitions.forEach((p) => {
         if (p.used) {
-          const usedNum = parseFloat(p.used)
-          if (p.used.includes('GB')) usedGB += usedNum
-          else if (p.used.includes('MB')) usedGB += usedNum / 1024
+          usedGB += sizeToGiB(p.used)
         }
       })
     })
@@ -539,7 +587,7 @@ export const fetchAllNodeDisks = async (nodes: NodeOverview[]): Promise<NodeDisk
       disks,
       totalStorage: `${totalGB.toFixed(1)} GB`,
       usedStorage: `${usedGB.toFixed(1)} GB`,
-      usedPercent: Math.max(usedPercent, 12),
+      usedPercent,
     })
   }
   return list
