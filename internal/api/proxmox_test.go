@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,12 @@ import (
 
 	"talosdeck/internal/proxmox"
 )
+
+type testNodeDrainer func(context.Context, string) error
+
+func (f testNodeDrainer) CordonAndDrainNode(ctx context.Context, nodeName string) error {
+	return f(ctx, nodeName)
+}
 
 func TestProxmoxAPIStatusUnconfigured(t *testing.T) {
 	app := fiber.New()
@@ -89,6 +97,9 @@ func TestProxmoxAPIConfigured(t *testing.T) {
 					"exitstatus": "OK",
 				},
 			})
+		case path == "/api2/json/nodes/pve/qemu/114/status/shutdown":
+			vmStopped = true
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": "UPID:pve:shutdown:114"})
 		case path == "/api2/json/nodes/pve/qemu/114/status/stop":
 			vmStopped = true
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": "UPID:pve:stop:114"})
@@ -100,7 +111,16 @@ func TestProxmoxAPIConfigured(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"data": map[string]interface{}{
 					"vmid":   114,
+					"name":   "talos-worker-3",
 					"status": status,
+				},
+			})
+		case path == "/api2/json/nodes/pve/qemu/110/status/current":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{
+					"vmid":   110,
+					"name":   "talos-cp-1",
+					"status": "running",
 				},
 			})
 		case path == "/api2/json/nodes/pve/qemu/114":
@@ -122,6 +142,12 @@ func TestProxmoxAPIConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
+	client.SetDrainer(testNodeDrainer(func(_ context.Context, nodeName string) error {
+		if nodeName != "talos-worker-3" {
+			return fmt.Errorf("unexpected node name %q", nodeName)
+		}
+		return nil
+	}))
 
 	app := fiber.New()
 	apiGroup := app.Group("/api")
@@ -208,6 +234,19 @@ func TestProxmoxAPIConfigured(t *testing.T) {
 		_ = json.NewDecoder(resp.Body).Decode(&res)
 		if res["success"] != true {
 			t.Errorf("Expected success=true, got %v", res["success"])
+		}
+	})
+
+	// 5. Test DELETE /api/proxmox/worker/110 (Forbidden: safety check on Control Plane)
+	t.Run("DELETE /api/proxmox/worker/110 (Control Plane Protected)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/proxmox/worker/110", nil)
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusForbidden {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("Expected 403 Forbidden for protected node, got %d: %s", resp.StatusCode, string(body))
 		}
 	})
 }

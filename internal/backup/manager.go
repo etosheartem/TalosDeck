@@ -10,12 +10,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/client"
@@ -72,22 +76,83 @@ type BackupManager struct {
 	storageDir   string
 	talosManager *talos.TalosManager
 	mu           sync.RWMutex
+	isBackingUp  atomic.Bool
+	maxBackups   int
 }
 
-// NewBackupManager creates and initializes a BackupManager.
+// sanitizeFilename strips or replaces directory separators and invalid characters.
+func sanitizeFilename(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	res := strings.Trim(b.String(), "._-")
+	if res == "" {
+		return "unnamed"
+	}
+	return res
+}
+
+// checkDiskSpace verifies that storageDir has at least minBytes available disk space (BKP-07).
+func checkDiskSpace(dir string, minBytes uint64) error {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(dir, &stat); err != nil {
+		// If statfs fails on specialized virtual mounts, do not block execution
+		return nil
+	}
+	freeBytes := stat.Bavail * uint64(stat.Bsize)
+	if freeBytes < minBytes {
+		return fmt.Errorf("insufficient disk space in %s: %d MB available, %d MB required",
+			dir, freeBytes/(1024*1024), minBytes/(1024*1024))
+	}
+	return nil
+}
+
+// NewBackupManager creates and initializes a BackupManager with strict 0700 directory permissions (BKP-05, BKP-06).
 func NewBackupManager(storageDir string, talosManager *talos.TalosManager) (*BackupManager, error) {
 	if storageDir == "" {
 		storageDir = "./data/backups"
 	}
 
-	if err := os.MkdirAll(storageDir, 0755); err != nil {
+	// BKP-06: Create directory with secure 0700 permissions
+	if err := os.MkdirAll(storageDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create backup storage directory %s: %w", storageDir, err)
 	}
 
-	return &BackupManager{
+	bm := &BackupManager{
 		storageDir:   storageDir,
 		talosManager: talosManager,
-	}, nil
+		maxBackups:   20, // Keep last 20 backups by default (BKP-07)
+	}
+
+	// BKP-08: Clean up orphan temporary files (.temp-etcd-*) from previous crashed runs
+	bm.cleanStaleTempFiles()
+
+	return bm, nil
+}
+
+// cleanStaleTempFiles cleans up any leftover .temp-etcd-* files.
+func (m *BackupManager) cleanStaleTempFiles() {
+	entries, err := os.ReadDir(m.storageDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".temp-etcd-") {
+			_ = os.Remove(filepath.Join(m.storageDir, entry.Name()))
+		}
+	}
+}
+
+// SetMaxBackups configures the retention quota limit.
+func (m *BackupManager) SetMaxBackups(limit int) {
+	if limit > 0 {
+		m.maxBackups = limit
+	}
 }
 
 // GetStorageDir returns the active backup storage directory.
@@ -95,22 +160,52 @@ func (m *BackupManager) GetStorageDir() string {
 	return m.storageDir
 }
 
-// CreateEtcdSnapshot triggers an etcd snapshot via the Talos SDK and saves a .snapshot file with timestamp and SHA256 checksum.
+// rotateBackups removes oldest backups if total exceeds limit (BKP-07).
+func (m *BackupManager) rotateBackups(limit int) {
+	if limit <= 0 {
+		return
+	}
+	backups, err := m.ListBackups()
+	if err != nil || len(backups) <= limit {
+		return
+	}
+	// backups are sorted newest first, delete from index limit onwards
+	for i := limit; i < len(backups); i++ {
+		_ = m.DeleteBackup(backups[i].ID)
+	}
+}
+
+// CreateEtcdSnapshot triggers an etcd snapshot via the Talos SDK and saves a .snapshot file.
+// BKP-04: Non-blocking atomic concurrency guard prevents UI deadlocks during streaming.
+// BKP-05: Secure 0600 file permissions.
+// BKP-03: IP address validation prevents path injection.
 func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP string) (*BackupInfo, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// BKP-04 / BKP-05: Prevent overlapping backups and deadlock
+	if !m.isBackingUp.CompareAndSwap(false, true) {
+		return nil, errors.New("backup operation is already in progress")
+	}
+	defer m.isBackingUp.Store(false)
 
 	if m.talosManager == nil {
 		return nil, errors.New("talos cluster manager is not initialized")
 	}
 
-	if err := os.MkdirAll(m.storageDir, 0755); err != nil {
+	if err := os.MkdirAll(m.storageDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to ensure backup directory: %w", err)
 	}
 
-	// 1. Resolve target control plane IP if not specified
-	targetIP := controlPlaneIP
-	if targetIP == "" {
+	// BKP-07: Verify disk space (at least 200MB free)
+	if err := checkDiskSpace(m.storageDir, 200*1024*1024); err != nil {
+		return nil, err
+	}
+
+	// 1. Resolve target control plane IP if not specified and validate IP format (BKP-03)
+	targetIP := strings.TrimSpace(controlPlaneIP)
+	if targetIP != "" {
+		if net.ParseIP(targetIP) == nil {
+			return nil, fmt.Errorf("invalid control plane IP address: %q", targetIP)
+		}
+	} else {
 		nodes, err := m.talosManager.ListNodes(ctx)
 		if err == nil {
 			for _, n := range nodes {
@@ -132,7 +227,7 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 
 	now := time.Now().UTC()
 	timestampStr := now.Format("20060102-150405")
-	filename := fmt.Sprintf("etcd-%s-%s.snapshot", targetIP, timestampStr)
+	filename := fmt.Sprintf("etcd-%s-%s.snapshot", sanitizeFilename(targetIP), timestampStr)
 	targetPath := filepath.Join(m.storageDir, filename)
 
 	// 2. Call Talos SDK EtcdSnapshot
@@ -143,8 +238,8 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 	}
 	defer reader.Close()
 
-	// 3. Write snapshot to disk while calculating SHA256
-	outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	// 3. Write snapshot to disk with 0600 permissions (BKP-05) while calculating SHA256
+	outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create snapshot file %s: %w", targetPath, err)
 	}
@@ -153,18 +248,25 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 	multiWriter := io.MultiWriter(outFile, hasher)
 
 	written, copyErr := io.Copy(multiWriter, reader)
-	_ = outFile.Close()
+	closeErr := outFile.Close() // BKP-09: check Close error
 
 	if copyErr != nil {
 		_ = os.Remove(targetPath)
 		return nil, fmt.Errorf("failed to stream etcd snapshot to file: %w", copyErr)
 	}
+	if closeErr != nil {
+		_ = os.Remove(targetPath)
+		return nil, fmt.Errorf("failed to flush snapshot file to disk: %w", closeErr)
+	}
 
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 
-	// 4. Save sidecar .sha256 file
+	// 4. Save sidecar .sha256 file with 0600 permissions (BKP-05, BKP-09)
 	shaPath := targetPath + ".sha256"
-	_ = os.WriteFile(shaPath, []byte(fmt.Sprintf("%s  %s\n", checksum, filename)), 0644)
+	if err := os.WriteFile(shaPath, []byte(fmt.Sprintf("%s  %s\n", checksum, filename)), 0600); err != nil {
+		_ = os.Remove(targetPath)
+		return nil, fmt.Errorf("failed to write sha256 sidecar file: %w", err)
+	}
 
 	clusterName := m.talosManager.GetConfig().Context
 	if clusterName == "" {
@@ -184,30 +286,48 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 		Description: fmt.Sprintf("Etcd database snapshot from control plane %s", targetIP),
 	}
 
-	// 5. Save sidecar .json metadata
+	// 5. Save sidecar .json metadata with 0600 permissions (BKP-05, BKP-09)
 	metaPath := targetPath + ".json"
-	if metaBytes, err := json.MarshalIndent(info, "", "  "); err == nil {
-		_ = os.WriteFile(metaPath, metaBytes, 0644)
+	metaBytes, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		_ = os.Remove(targetPath)
+		_ = os.Remove(shaPath)
+		return nil, fmt.Errorf("failed to serialize backup metadata: %w", err)
 	}
+	if err := os.WriteFile(metaPath, metaBytes, 0600); err != nil {
+		_ = os.Remove(targetPath)
+		_ = os.Remove(shaPath)
+		return nil, fmt.Errorf("failed to write metadata sidecar file: %w", err)
+	}
+
+	// Rotate backups according to retention policy
+	m.rotateBackups(m.maxBackups)
 
 	return info, nil
 }
 
-// CreateFullClusterBackup creates a disaster recovery .tar.gz archive containing:
-// - Active talosconfig
-// - Node MachineConfigs (retrieved via Talos client)
-// - Etcd snapshot
-// - Metadata JSON (timestamp, cluster name, node list, Talos version, k8s version).
+// CreateFullClusterBackup creates a disaster recovery .tar.gz archive.
+// BKP-04: Runs streaming outside of global locks.
+// BKP-05: Strict 0600 file permissions and 0700 dir permissions.
+// BKP-02: Sanitizes tar internal paths against TarSlip / ZipSlip.
 func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInfo, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// BKP-04 / BKP-05: Non-blocking atomic guard
+	if !m.isBackingUp.CompareAndSwap(false, true) {
+		return nil, errors.New("backup operation is already in progress")
+	}
+	defer m.isBackingUp.Store(false)
 
 	if m.talosManager == nil {
 		return nil, errors.New("talos cluster manager is not initialized")
 	}
 
-	if err := os.MkdirAll(m.storageDir, 0755); err != nil {
+	if err := os.MkdirAll(m.storageDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to ensure backup directory: %w", err)
+	}
+
+	// BKP-07: Verify disk space (at least 500MB free)
+	if err := checkDiskSpace(m.storageDir, 500*1024*1024); err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UTC()
@@ -263,19 +383,23 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		return nil, fmt.Errorf("failed to retrieve active talosconfig: %w", err)
 	}
 
-	// 4. Retrieve MachineConfigs for each node
+	// 4. Retrieve MachineConfigs for each node, sanitizing keys (BKP-02)
 	nodeConfigs := make(map[string][]byte)
 	for _, n := range nodes {
+		safeHost := sanitizeFilename(n.Hostname)
+		safeIP := sanitizeFilename(n.IP)
+		configFileName := fmt.Sprintf("%s-%s.yaml", safeHost, safeIP)
+
 		cfgBytes, cfgErr := m.talosManager.GetNodeConfig(ctx, n.IP)
 		if cfgErr != nil {
-			nodeConfigs[fmt.Sprintf("%s-%s.yaml", n.Hostname, n.IP)] = []byte(fmt.Sprintf("# Failed to retrieve live config for %s (%s): %v\n", n.Hostname, n.IP, cfgErr))
+			nodeConfigs[configFileName] = []byte(fmt.Sprintf("# Failed to retrieve live config for %s (%s): %v\n", n.Hostname, n.IP, cfgErr))
 		} else {
-			nodeConfigs[fmt.Sprintf("%s-%s.yaml", n.Hostname, n.IP)] = cfgBytes
+			nodeConfigs[configFileName] = cfgBytes
 		}
 	}
 
-	// 5. Download etcd snapshot to a temporary file
-	tempSnapshotPath := filepath.Join(m.storageDir, fmt.Sprintf(".temp-etcd-%s-%d.snapshot", cpIP, time.Now().UnixNano()))
+	// 5. Download etcd snapshot to a temporary file (BKP-08: clean temp files)
+	tempSnapshotPath := filepath.Join(m.storageDir, fmt.Sprintf(".temp-etcd-%s-%d.snapshot", sanitizeFilename(cpIP), time.Now().UnixNano()))
 	defer os.Remove(tempSnapshotPath)
 
 	nodeCtx := client.WithNode(ctx, cpIP)
@@ -292,10 +416,13 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 
 	_, copyErr := io.Copy(tempFile, snapshotReader)
 	snapshotReader.Close()
-	_ = tempFile.Close()
+	closeTempErr := tempFile.Close()
 
 	if copyErr != nil {
 		return nil, fmt.Errorf("failed writing etcd snapshot to temp storage: %w", copyErr)
+	}
+	if closeTempErr != nil {
+		return nil, fmt.Errorf("failed closing temp snapshot file: %w", closeTempErr)
 	}
 
 	tempStat, err := os.Stat(tempSnapshotPath)
@@ -305,11 +432,12 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	snapshotSize := tempStat.Size()
 
 	// 6. Assemble .tar.gz archive
-	safeClusterName := strings.ReplaceAll(clusterName, " ", "_")
+	safeClusterName := sanitizeFilename(clusterName)
 	filename := fmt.Sprintf("cluster-backup-%s-%s.tar.gz", safeClusterName, timestampStr)
 	archivePath := filepath.Join(m.storageDir, filename)
 
-	outFile, err := os.OpenFile(archivePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	// BKP-05: Create archive with 0600 permissions
+	outFile, err := os.OpenFile(archivePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backup archive file %s: %w", archivePath, err)
 	}
@@ -319,11 +447,15 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	gzWriter := gzip.NewWriter(archiveWriter)
 	tarWriter := tar.NewWriter(gzWriter)
 
-	// Helper to add in-memory bytes to tar
+	// Helper to add in-memory bytes to tar (BKP-02: ensure paths are safe and clean)
 	addFileToTar := func(name string, data []byte) error {
+		cleanName := filepath.Clean(name)
+		if strings.HasPrefix(cleanName, "/") || strings.HasPrefix(cleanName, "..") {
+			return fmt.Errorf("illegal tar entry path: %s", name)
+		}
 		hdr := &tar.Header{
-			Name:    name,
-			Mode:    0644,
+			Name:    cleanName,
+			Mode:    0600,
 			Size:    int64(len(data)),
 			ModTime: now,
 		}
@@ -361,7 +493,8 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 
 	// Add node machine configs
 	for cfgName, data := range nodeConfigs {
-		if err := addFileToTar(fmt.Sprintf("machine-configs/%s", cfgName), data); err != nil {
+		tarPath := fmt.Sprintf("machine-configs/%s", cfgName)
+		if err := addFileToTar(tarPath, data); err != nil {
 			outFile.Close()
 			_ = os.Remove(archivePath)
 			return nil, fmt.Errorf("failed to write machine config %s to archive: %w", cfgName, err)
@@ -369,9 +502,10 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	}
 
 	// Add etcd snapshot from temp file
+	etcdEntryName := fmt.Sprintf("etcd/snapshot-%s.snapshot", sanitizeFilename(cpIP))
 	etcdHdr := &tar.Header{
-		Name:    fmt.Sprintf("etcd/snapshot-%s.snapshot", cpIP),
-		Mode:    0644,
+		Name:    etcdEntryName,
+		Mode:    0600,
 		Size:    snapshotSize,
 		ModTime: now,
 	}
@@ -406,6 +540,7 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to close gzip writer: %w", err)
 	}
+	// BKP-09: check Close error
 	if err := outFile.Close(); err != nil {
 		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to close archive file: %w", err)
@@ -420,8 +555,12 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		finalSize = finalStat.Size()
 	}
 
-	// Save sidecar .sha256
-	_ = os.WriteFile(archivePath+".sha256", []byte(fmt.Sprintf("%s  %s\n", checksum, filename)), 0644)
+	// BKP-05, BKP-09: Save sidecar .sha256 with 0600 and check error
+	shaPath := archivePath + ".sha256"
+	if err := os.WriteFile(shaPath, []byte(fmt.Sprintf("%s  %s\n", checksum, filename)), 0600); err != nil {
+		_ = os.Remove(archivePath)
+		return nil, fmt.Errorf("failed to write sha256 sidecar file: %w", err)
+	}
 
 	info := &BackupInfo{
 		ID:          filename,
@@ -436,10 +575,21 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		Description: fmt.Sprintf("Full disaster recovery archive: %d nodes, talosconfig, machine configs, etcd snapshot", len(nodes)),
 	}
 
-	// Save sidecar .json metadata
-	if infoBytes, err := json.MarshalIndent(info, "", "  "); err == nil {
-		_ = os.WriteFile(archivePath+".json", infoBytes, 0644)
+	// BKP-05, BKP-09: Save sidecar .json metadata with 0600 and check error
+	infoBytes, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		_ = os.Remove(archivePath)
+		_ = os.Remove(shaPath)
+		return nil, fmt.Errorf("failed to serialize backup metadata: %w", err)
 	}
+	if err := os.WriteFile(archivePath+".json", infoBytes, 0600); err != nil {
+		_ = os.Remove(archivePath)
+		_ = os.Remove(shaPath)
+		return nil, fmt.Errorf("failed to write metadata sidecar file: %w", err)
+	}
+
+	// Rotate backups according to retention policy
+	m.rotateBackups(m.maxBackups)
 
 	return info, nil
 }
@@ -449,7 +599,7 @@ func (m *BackupManager) ListBackups() ([]*BackupInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if err := os.MkdirAll(m.storageDir, 0755); err != nil {
+	if err := os.MkdirAll(m.storageDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to access backup directory: %w", err)
 	}
 
@@ -536,18 +686,27 @@ func (m *BackupManager) ListBackups() ([]*BackupInfo, error) {
 }
 
 // GetBackup returns the BackupInfo and the verified absolute path of a backup by ID or filename.
+// BKP-01: Full protection against path traversal (cleanID == "..", absolute paths, escaping).
 func (m *BackupManager) GetBackup(id string) (*BackupInfo, string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	cleanID := filepath.Base(id)
-	if cleanID == "" || cleanID == "." || cleanID == "/" {
-		return nil, "", errors.New("invalid backup ID")
+	cleanID := filepath.Base(filepath.Clean(id))
+	if cleanID == "" || cleanID == "." || cleanID == ".." || cleanID == "/" || cleanID == "\\" ||
+		strings.Contains(cleanID, "/") || strings.Contains(cleanID, "\\") {
+		return nil, "", errors.New("invalid backup ID: path traversal attempt detected")
 	}
 
 	targetPath := filepath.Join(m.storageDir, cleanID)
 
-	// If file doesn't directly exist, try searching by prefix or extension
+	// Lexical isolation check (BKP-01)
+	cleanStorage := filepath.Clean(m.storageDir)
+	cleanTarget := filepath.Clean(targetPath)
+	if !strings.HasPrefix(cleanTarget, cleanStorage+string(filepath.Separator)) && cleanTarget != cleanStorage {
+		return nil, "", errors.New("invalid backup ID: path traversal attempt detected")
+	}
+
+	// If file doesn't directly exist, try searching by candidates
 	if _, err := os.Stat(targetPath); err != nil {
 		candidates := []string{
 			targetPath + ".snapshot",
@@ -608,17 +767,51 @@ func (m *BackupManager) GetBackup(id string) (*BackupInfo, string, error) {
 	}, targetPath, nil
 }
 
-// DeleteBackup removes a backup file and any sidecars (.sha256, .json) by ID.
+// VerifyBackup validates the integrity of a backup artifact by recalculating its SHA256 checksum (BKP-10).
+func (m *BackupManager) VerifyBackup(id string) (bool, string, error) {
+	info, filePath, err := m.GetBackup(id)
+	if err != nil {
+		return false, "", err
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to open backup file for verification: %w", err)
+	}
+	defer f.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return false, "", fmt.Errorf("failed to calculate checksum: %w", err)
+	}
+
+	computed := hex.EncodeToString(hasher.Sum(nil))
+	valid := computed == info.Checksum && info.Checksum != ""
+	return valid, computed, nil
+}
+
+// DeleteBackup removes a backup file and its sidecars (.sha256, .json) by ID.
+// BKP-01: Path traversal protection.
+// BKP-06 / BKP-11: Deletes main file before sidecars to prevent orphan corrupt archives.
+// BKP-12: Cleans up orphan sidecars even if main file is missing.
+// BKP-13: Refuses to delete directories.
 func (m *BackupManager) DeleteBackup(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cleanID := filepath.Base(id)
-	if cleanID == "" || cleanID == "." || cleanID == "/" {
-		return errors.New("invalid backup ID")
+	cleanID := filepath.Base(filepath.Clean(id))
+	if cleanID == "" || cleanID == "." || cleanID == ".." || cleanID == "/" || cleanID == "\\" ||
+		strings.Contains(cleanID, "/") || strings.Contains(cleanID, "\\") {
+		return errors.New("invalid backup ID: path traversal attempt detected")
 	}
 
 	targetPath := filepath.Join(m.storageDir, cleanID)
+
+	cleanStorage := filepath.Clean(m.storageDir)
+	cleanTarget := filepath.Clean(targetPath)
+	if !strings.HasPrefix(cleanTarget, cleanStorage+string(filepath.Separator)) && cleanTarget != cleanStorage {
+		return errors.New("invalid backup ID: path traversal attempt detected")
+	}
 
 	// Check if exact file exists, or check common extensions
 	if _, err := os.Stat(targetPath); err != nil {
@@ -635,18 +828,36 @@ func (m *BackupManager) DeleteBackup(id string) error {
 				break
 			}
 		}
+		// BKP-12: Check if sidecars exist even if main file is gone
 		if !found {
-			return fmt.Errorf("backup %s not found: %w", cleanID, os.ErrNotExist)
+			hasSidecars := false
+			if _, err := os.Stat(targetPath + ".sha256"); err == nil {
+				hasSidecars = true
+			}
+			if _, err := os.Stat(targetPath + ".json"); err == nil {
+				hasSidecars = true
+			}
+			if !hasSidecars {
+				return fmt.Errorf("backup %s not found: %w", cleanID, os.ErrNotExist)
+			}
 		}
 	}
 
-	// Delete main file and sidecars
-	_ = os.Remove(targetPath + ".sha256")
-	_ = os.Remove(targetPath + ".json")
+	// BKP-13: Reject if target is a directory
+	if info, err := os.Stat(targetPath); err == nil {
+		if info.IsDir() {
+			return errors.New("target is a directory, not a backup file")
+		}
+	}
 
-	if err := os.Remove(targetPath); err != nil {
+	// BKP-11: First remove the main backup file
+	if err := os.Remove(targetPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove backup file %s: %w", targetPath, err)
 	}
+
+	// Only clean sidecars after main file is successfully removed (or was already missing)
+	_ = os.Remove(targetPath + ".sha256")
+	_ = os.Remove(targetPath + ".json")
 
 	return nil
 }

@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -190,11 +191,21 @@ func (s *TelegramService) UpdateConfig(cfg TelegramConfig) error {
 	if cfg.MinLevel != "" {
 		s.minLevel = strings.ToUpper(strings.TrimSpace(cfg.MinLevel))
 	}
+	minLvl := s.minLevel
+	if minLvl == "" {
+		minLvl = "INFO"
+	}
+	snapshot := TelegramConfig{
+		BotToken: s.botToken,
+		ChatID:   s.chatID,
+		Enabled:  s.enabled,
+		MinLevel: minLvl,
+	}
 	path := s.configPath
 	s.mu.Unlock()
 
 	if path != "" {
-		return s.saveToFile(path)
+		return s.saveConfigSnapshot(path, snapshot)
 	}
 	return nil
 }
@@ -213,22 +224,9 @@ func (s *TelegramService) SetAPIBaseURL(url string) {
 	s.apiBaseURL = url
 }
 
-func (s *TelegramService) saveToFile(path string) error {
-	s.mu.RLock()
-	minLvl := s.minLevel
-	if minLvl == "" {
-		minLvl = "INFO"
-	}
-	cfg := TelegramConfig{
-		BotToken: s.botToken,
-		ChatID:   s.chatID,
-		Enabled:  s.enabled,
-		MinLevel: minLvl,
-	}
-	s.mu.RUnlock()
-
+func (s *TelegramService) saveConfigSnapshot(path string, cfg TelegramConfig) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -237,7 +235,15 @@ func (s *TelegramService) saveToFile(path string) error {
 		return fmt.Errorf("failed to marshal alerts config: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0600)
+	tmpFile := fmt.Sprintf("%s.tmp.%d", path, time.Now().UnixNano())
+	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
+		return fmt.Errorf("failed to write temp config file: %w", err)
+	}
+	if err := os.Rename(tmpFile, path); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to commit config file: %w", err)
+	}
+	return nil
 }
 
 // SeverityScore returns numerical severity for filtering.
@@ -287,6 +293,13 @@ func (s *TelegramService) GetRecentAlerts() []AlertRecord {
 
 // SendAlert sends a formatted HTML alert message to Telegram with icons.
 func (s *TelegramService) SendAlert(level AlertLevel, title, message string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return s.SendAlertWithContext(ctx, level, title, message)
+}
+
+// SendAlertWithContext sends a formatted HTML alert message to Telegram using the provided context (ALT-08).
+func (s *TelegramService) SendAlertWithContext(ctx context.Context, level AlertLevel, title, message string) error {
 	s.mu.RLock()
 	token := s.botToken
 	chatID := s.chatID
@@ -319,7 +332,15 @@ func (s *TelegramService) SendAlert(level AlertLevel, title, message string) err
 		timestamp,
 	)
 
-	err := s.sendRawTelegram(baseURL, token, chatID, text)
+	// Telegram message length limit: 4096 characters (ALT-05)
+	runes := []rune(text)
+	if len(runes) > 4000 {
+		truncNotice := "\n\n<i>⚠️ ... [Message truncated due to 4096 character limit]</i>"
+		maxLen := 4000 - len([]rune(truncNotice))
+		text = string(runes[:maxLen]) + truncNotice
+	}
+
+	err := s.sendRawTelegram(ctx, baseURL, token, chatID, text)
 
 	record := AlertRecord{
 		ID:        fmt.Sprintf("alert-%d", time.Now().UnixNano()),
@@ -405,6 +426,13 @@ func (s *TelegramService) SendResourceAlert(nodeIP, hostname, resourceType strin
 
 // SendTestNotification sends a test message with optional override of token and chatID.
 func (s *TelegramService) SendTestNotification(botToken, chatID, customText string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return s.SendTestNotificationWithContext(ctx, botToken, chatID, customText)
+}
+
+// SendTestNotificationWithContext sends a test message with a context (ALT-08).
+func (s *TelegramService) SendTestNotificationWithContext(ctx context.Context, botToken, chatID, customText string) error {
 	s.mu.RLock()
 	if botToken == "" {
 		botToken = s.botToken
@@ -422,7 +450,8 @@ func (s *TelegramService) SendTestNotification(botToken, chatID, customText stri
 	}
 
 	title := "Test Notification"
-	msg := "This is a test notification from <b>TalosDeck Control Plane</b>.\nIntegration with Telegram bot is working correctly!"
+	// Plain text without raw HTML tags so formatMessageLines formats and escapes properly (ALT-07)
+	msg := "This is a test notification from TalosDeck Control Plane.\nStatus: Operational\nIntegration with Telegram bot is working correctly!"
 	if customText != "" {
 		msg += fmt.Sprintf("\nMessage: %s", customText)
 	}
@@ -438,7 +467,15 @@ func (s *TelegramService) SendTestNotification(botToken, chatID, customText stri
 		timestamp,
 	)
 
-	err := s.sendRawTelegram(baseURL, botToken, chatID, text)
+	// Telegram limit check: 4096 chars (ALT-05)
+	runes := []rune(text)
+	if len(runes) > 4000 {
+		truncNotice := "\n\n<i>⚠️ ... [Message truncated due to 4096 character limit]</i>"
+		maxLen := 4000 - len([]rune(truncNotice))
+		text = string(runes[:maxLen]) + truncNotice
+	}
+
+	err := s.sendRawTelegram(ctx, baseURL, botToken, chatID, text)
 
 	record := AlertRecord{
 		ID:        fmt.Sprintf("alert-%d", time.Now().UnixNano()),
@@ -523,14 +560,33 @@ type telegramPayload struct {
 	DisableWebPagePreview bool   `json:"disable_web_page_preview"`
 }
 
-type telegramAPIResponse struct {
-	Ok          bool   `json:"ok"`
-	ErrorCode   int    `json:"error_code,omitempty"`
-	Description string `json:"description,omitempty"`
+type telegramAPIParameters struct {
+	RetryAfter int `json:"retry_after"`
 }
 
-func (s *TelegramService) sendRawTelegram(baseURL, token, chatID, text string) error {
+type telegramAPIResponse struct {
+	Ok          bool                   `json:"ok"`
+	ErrorCode   int                    `json:"error_code,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  *telegramAPIParameters `json:"parameters,omitempty"`
+}
+
+func (s *TelegramService) sendRawTelegram(ctx context.Context, baseURL, token, chatID, text string) error {
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+	}
+
 	url := fmt.Sprintf("%s/bot%s/sendMessage", baseURL, token)
+
+	// Ensure message doesn't exceed 4096 characters (ALT-05)
+	runes := []rune(text)
+	if len(runes) > 4000 {
+		truncNotice := "\n\n<i>⚠️ ... [Truncated due to 4096 char limit]</i>"
+		maxR := 4000 - len([]rune(truncNotice))
+		text = string(runes[:maxR]) + truncNotice
+	}
 
 	payload := telegramPayload{
 		ChatID:                chatID,
@@ -544,35 +600,67 @@ func (s *TelegramService) sendRawTelegram(baseURL, token, chatID, text string) e
 		return fmt.Errorf("failed to marshal telegram payload: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(bodyBytes))
-	if err != nil {
-		return fmt.Errorf("failed to create telegram request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("telegram request failed: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read telegram response: %w", err)
-	}
-
-	var apiResp telegramAPIResponse
-	if err := json.Unmarshal(respBody, &apiResp); err == nil {
-		if !apiResp.Ok {
-			return fmt.Errorf("telegram API error (%d): %s", apiResp.ErrorCode, apiResp.Description)
+	// Retry loop for rate limits (HTTP 429) (ALT-06)
+	maxRetries := 3
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			return fmt.Errorf("failed to create telegram request: %w", err)
 		}
-	} else if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram HTTP error %d: %s", resp.StatusCode, string(respBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if attempt < maxRetries {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(attempt+1) * 300 * time.Millisecond):
+					continue
+				}
+			}
+			return fmt.Errorf("telegram request failed: %w", err)
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return fmt.Errorf("failed to read telegram response: %w", err)
+		}
+
+		var apiResp telegramAPIResponse
+		_ = json.Unmarshal(respBody, &apiResp)
+
+		// Rate limit handling (HTTP 429) (ALT-06)
+		if resp.StatusCode == http.StatusTooManyRequests || apiResp.ErrorCode == 429 {
+			retrySec := 1
+			if apiResp.Parameters != nil && apiResp.Parameters.RetryAfter > 0 {
+				retrySec = apiResp.Parameters.RetryAfter
+			}
+			if attempt < maxRetries {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(retrySec) * time.Second):
+					continue
+				}
+			}
+			return fmt.Errorf("telegram rate limit exceeded (429): %s", apiResp.Description)
+		}
+
+		if !apiResp.Ok && apiResp.ErrorCode != 0 {
+			return fmt.Errorf("telegram API error (%d): %s", apiResp.ErrorCode, apiResp.Description)
+		} else if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("telegram HTTP error %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("telegram delivery failed after retries")
 }
 
 func formatMessageLines(content string) string {

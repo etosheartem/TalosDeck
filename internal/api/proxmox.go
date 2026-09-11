@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -119,7 +120,11 @@ func RegisterProxmoxRoutes(router fiber.Router, client *proxmox.Client, extra ..
 					Details: map[string]any{"name": opts.Name, "vmid": opts.VMID, "error": err.Error()},
 				})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			statusCode := fiber.StatusInternalServerError
+			if strings.Contains(err.Error(), "invalid VM name") || strings.Contains(err.Error(), "invalid VMID") {
+				statusCode = fiber.StatusBadRequest
+			}
+			return c.Status(statusCode).JSON(fiber.Map{
 				"error": fmt.Sprintf("Failed to create worker VM: %v", err),
 			})
 		}
@@ -177,7 +182,16 @@ func RegisterProxmoxRoutes(router fiber.Router, client *proxmox.Client, extra ..
 					Details: map[string]any{"vmid": vmid, "error": err.Error()},
 				})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			statusCode := fiber.StatusInternalServerError
+			errLower := strings.ToLower(err.Error())
+			if strings.Contains(err.Error(), "safety check violation") || strings.Contains(err.Error(), "protected") {
+				statusCode = fiber.StatusForbidden
+			} else if strings.Contains(err.Error(), "invalid VMID") {
+				statusCode = fiber.StatusBadRequest
+			} else if strings.Contains(errLower, "not found") || strings.Contains(errLower, "does not exist") || strings.Contains(err.Error(), "Configuration file 'nodes/") {
+				statusCode = fiber.StatusNotFound
+			}
+			return c.Status(statusCode).JSON(fiber.Map{
 				"error": fmt.Sprintf("Failed to delete VM %d: %v", vmid, err),
 			})
 		}

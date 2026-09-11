@@ -209,3 +209,67 @@ func TestBackupAPILiveCreation(t *testing.T) {
 		t.Logf("Cleaned up backup %s", result.Backup.ID)
 	}
 }
+
+func TestBackupSecurityEndpoints(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "talosdeck-api-sec-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bm, err := backup.NewBackupManager(tempDir, nil)
+	if err != nil {
+		t.Fatalf("failed to init backup manager: %v", err)
+	}
+
+	authMgr := auth.NewAuthManagerFromEnv()
+	app := fiber.New()
+	apiGroup := app.Group("/api")
+	RegisterBackupRoutes(apiGroup, bm, authMgr)
+
+	// 1. Download without auth should return 401 (BKP-02, BKP-14)
+	req := httptest.NewRequest(http.MethodGet, "/api/backups/test.snapshot/download", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized for unauthenticated download, got: %d", resp.StatusCode)
+	}
+
+	// 2. Traversal on download should return 400 when authenticated
+	token, _ := authMgr.GenerateToken("admin", "admin")
+	req = httptest.NewRequest(http.MethodGet, "/api/backups/../download", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for path traversal download, got: %d", resp.StatusCode)
+	}
+
+	// 3. Traversal on delete should return 400 (BKP-01)
+	req = httptest.NewRequest(http.MethodDelete, "/api/backups/..", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for path traversal delete, got: %d", resp.StatusCode)
+	}
+
+	// 4. Invalid IP on create should return 400 (BKP-03)
+	reqBody := bytes.NewBufferString(`{"type": "etcd", "node": "invalid-ip-999"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/backups/create", reqBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for invalid node IP, got: %d", resp.StatusCode)
+	}
+}

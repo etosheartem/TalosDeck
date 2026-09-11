@@ -44,15 +44,17 @@ func NewAuditManager(filePath string, maxEntries int) (*AuditManager, error) {
 	}
 
 	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create audit log directory: %w", err)
 	}
 
 	var loadedEvents []AuditEvent
 
-	// Load existing entries if the file exists
+	// Load existing entries if the file exists with extended buffer (SEC-10)
 	if f, err := os.Open(filePath); err == nil {
 		scanner := bufio.NewScanner(f)
+		const maxScanBuffer = 10 * 1024 * 1024 // 10MB max line buffer
+		scanner.Buffer(make([]byte, 64*1024), maxScanBuffer)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
@@ -71,11 +73,12 @@ func NewAuditManager(filePath string, maxEntries int) (*AuditManager, error) {
 		}
 	}
 
-	// Open for appending
-	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// Open for appending with 0600 permissions (SEC-11)
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit log file: %w", err)
 	}
+	_ = os.Chmod(filePath, 0600)
 
 	return &AuditManager{
 		filePath:   filePath,
@@ -100,6 +103,9 @@ func (m *AuditManager) Log(event AuditEvent) {
 		event.Status = "success"
 	}
 
+	// Defensive copy & sanitize Details (SEC-04, SEC-12)
+	event.Details = copyAndSanitizeDetails(event.Details)
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -109,16 +115,16 @@ func (m *AuditManager) Log(event AuditEvent) {
 		m.events = m.events[len(m.events)-m.maxEntries:]
 	}
 
-	// Write JSON line to disk
+	// Write JSON line to disk without synchronous fsync under lock (SEC-05)
 	if m.logFile != nil {
 		if data, err := json.Marshal(event); err == nil {
 			_, _ = m.logFile.Write(append(data, '\n'))
-			_ = m.logFile.Sync()
 		}
 	}
 }
 
 // GetEvents returns filtered audit events in reverse chronological order (newest first).
+// Returns deep copies of events and details to prevent data races (SEC-04).
 func (m *AuditManager) GetEvents(limit int, action string, search string) []AuditEvent {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -159,7 +165,9 @@ func (m *AuditManager) GetEvents(limit int, action string, search string) []Audi
 			}
 		}
 
-		result = append(result, ev)
+		evCopy := ev
+		evCopy.Details = deepCopyDetails(ev.Details)
+		result = append(result, evCopy)
 		if len(result) >= limit {
 			break
 		}
@@ -175,14 +183,81 @@ func (m *AuditManager) TotalCount() int {
 	return len(m.events)
 }
 
-// Close closes the underlying log file.
+// Close flushes and closes the underlying log file.
 func (m *AuditManager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.logFile != nil {
+		_ = m.logFile.Sync()
 		err := m.logFile.Close()
 		m.logFile = nil
 		return err
 	}
 	return nil
+}
+
+var sensitiveKeyPatterns = []string{
+	"password", "secret", "token", "auth", "cookie",
+	"talosconfig", "kubeconfig", "private", "credential",
+}
+
+func isSensitiveKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, p := range sensitiveKeyPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeStringValue(val string) string {
+	lower := strings.ToLower(val)
+	patterns := []string{"bearer ", "token=", "password=", "secret="}
+	for _, p := range patterns {
+		if idx := strings.Index(lower, p); idx != -1 {
+			end := strings.IndexAny(val[idx+len(p):], " \t\r\n,;\"'")
+			if end == -1 {
+				val = val[:idx+len(p)] + "***MASKED***"
+			} else {
+				val = val[:idx+len(p)] + "***MASKED***" + val[idx+len(p)+end:]
+			}
+			lower = strings.ToLower(val)
+		}
+	}
+	return val
+}
+
+func copyAndSanitizeDetails(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		if isSensitiveKey(k) {
+			dst[k] = "***MASKED***"
+		} else if str, ok := v.(string); ok {
+			dst[k] = sanitizeStringValue(str)
+		} else if nestedMap, ok := v.(map[string]any); ok {
+			dst[k] = copyAndSanitizeDetails(nestedMap)
+		} else {
+			dst[k] = v
+		}
+	}
+	return dst
+}
+
+func deepCopyDetails(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		if nestedMap, ok := v.(map[string]any); ok {
+			dst[k] = deepCopyDetails(nestedMap)
+		} else {
+			dst[k] = v
+		}
+	}
+	return dst
 }

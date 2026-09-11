@@ -13,7 +13,6 @@ import type {
   CreateWorkerParams,
   CreateWorkerResult,
   DeleteWorkerResult,
-  AlertRecord,
   AlertsConfig,
   UpdateAlertsPayload,
   UserInfo,
@@ -23,6 +22,18 @@ import type {
 } from '../types'
 
 export type { AuthResponse, MeResponse, UserInfo, AuditLogEvent }
+
+const responseError = async (res: Response, fallback: string): Promise<Error> => {
+  if (res.status === 401) {
+    localStorage.removeItem('talosdeck_token')
+    isAuthenticated.value = false
+    currentUser.value = { username: 'guest', role: 'viewer' }
+  }
+  const data = await res.json().catch(() => ({}))
+  const error = new Error(data.error || `${fallback} (HTTP ${res.status})`)
+  if (res.status === 401) error.name = 'UnauthorizedError'
+  return error
+}
 
 const MOCK_NODES: NodeOverview[] = [
   {
@@ -120,7 +131,7 @@ export const fetchNodes = async (): Promise<{ nodes: NodeOverview[]; isMock: boo
           ready: item.ready !== undefined ? Boolean(item.ready) : true,
           role: item.role || (isCP ? 'controlplane' : 'worker'),
           uptime: item.uptime || '14 days',
-          cpuUsage: item.cpuUsage || (isCP ? 14 : 22),
+          cpuUsage: item.cpuUsage ?? 0,
           memoryUsage: item.memoryUsage || (isCP ? '2.1 / 8.0 GB' : '3.4 / 16.0 GB'),
           kubernetesVersion: item.kubernetesVersion || 'v1.32.2',
           servicesSummary: item.servicesSummary || {
@@ -246,20 +257,18 @@ export const rebootNode = async (ip: string): Promise<{ success: boolean; messag
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     })
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data.error || `HTTP ${res.status}`)
+	  throw await responseError(res, `Failed to reboot node ${ip}`)
     }
     return { success: true }
   } catch (err: any) {
     console.warn(`Reboot API error for ${ip}:`, err)
-    // In dev / mock fallback mode, simulate success after brief delay
-    return { success: true, message: 'Reboot signal accepted (simulated/sent)' }
+	throw err
   }
 }
 
 export const getDmesgWsUrl = (ip: string): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}/ws/nodes/${ip}/dmesg`
+  return `${protocol}//${window.location.host}/ws/nodes/${encodeURIComponent(ip)}/dmesg`
 }
 
 // ----------------------------------------------------
@@ -615,7 +624,10 @@ export const fetchNodeConfig = async (
   try {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 3000)
-    const res = await fetch(`/api/nodes/${nodeIP}/config`, { signal: controller.signal })
+    const res = await fetch(`/api/nodes/${nodeIP}/config`, {
+      signal: controller.signal,
+      headers: { ...getAuthHeaders() },
+    })
     clearTimeout(timeoutId)
     if (res.ok) {
       const data = await res.json()
@@ -630,7 +642,9 @@ export const fetchNodeConfig = async (
         }
       }
     }
+	if (res.status === 401) throw await responseError(res, 'Authentication required to read MachineConfig')
   } catch (err) {
+	if (err instanceof Error && err.name === 'UnauthorizedError') throw err
     console.warn(`Endpoint /api/nodes/${nodeIP}/config not reachable, using fallback:`, err)
   }
 
@@ -677,7 +691,17 @@ export const fetchEtcdHealth = async (): Promise<EtcdClusterHealth> => {
     if (res.ok) {
       const data = await res.json()
       if (data && data.members) {
-        return data
+        return {
+          ...data,
+          members: data.members.map((member: any) => ({
+            ...member,
+            name: member.name || member.hostname || '',
+            peerURLs: member.peerURLs || member.peerUrls || [],
+            clientURLs: member.clientURLs || member.clientUrls || [],
+            leader: Boolean(member.leader),
+            dbSize: member.dbSize || '',
+          })),
+        }
       }
     }
   } catch (err) {
@@ -938,13 +962,18 @@ export const MOCK_PODS: K8sPod[] = [
 
 export const fetchK8sPods = async (): Promise<K8sPod[]> => {
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 6000)
+  const timeoutId = setTimeout(() => controller.abort(), 10000)
   try {
     const res = await fetch('/api/k8s/pods', { signal: controller.signal })
     if (res.ok) {
       const data = await res.json()
       if (Array.isArray(data)) {
-        return data
+        return data.map((p: any) => ({
+          ...p,
+          nodeName: p.nodeName || p.node || '',
+          ip: p.ip || p.podIp || '',
+          readyContainers: String(p.readyContainers || (p.readyCount != null ? `${p.readyCount}/${p.totalContainers || 1}` : '0/0')),
+        }))
       }
     }
   } catch (err) {
@@ -1015,21 +1044,17 @@ export const toggleMaintenanceMode = async (
   try {
     const res = await fetch(`/api/nodes/${nodeIP}/maintenance`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ enable }),
     })
     if (res.ok) {
       const data = await res.json()
       return { success: true, message: data.message || 'Mode updated' }
     }
-  } catch {
-    // mock fallback
-  }
-  return {
-    success: true,
-    message: enable
-      ? `Node ${nodeIP} placed in Maintenance Mode (scheduling cordoned)`
-      : `Node ${nodeIP} returned to Active Mode (scheduling uncordoned)`,
+	throw await responseError(res, `Failed to update maintenance mode for ${nodeIP}`)
+  } catch (err) {
+	console.warn(`Maintenance API error for ${nodeIP}:`, err)
+	throw err
   }
 }
 
@@ -1103,41 +1128,27 @@ export const fetchNextVMID = async (): Promise<number> => {
 export const createProxmoxWorker = async (
   params: CreateWorkerParams
 ): Promise<CreateWorkerResult> => {
+	const controller = new AbortController()
+	const timeoutId = setTimeout(() => controller.abort(), 120000) // creation can take up to 2m
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 120000) // creation can take up to 2m
     const res = await fetch('/api/proxmox/worker', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(params),
       signal: controller.signal,
     })
-    clearTimeout(timeoutId)
     if (res.ok) {
       const data = await res.json()
       return data
     }
-    const errData = await res.json().catch(() => ({}))
-    throw new Error(errData.error || `HTTP ${res.status}: Failed to create worker VM`)
+	throw await responseError(res, 'Failed to create worker VM')
   } catch (err: any) {
     if (err.name === 'AbortError') {
       throw new Error('Timeout waiting for worker VM creation')
     }
-    // If backend is not available (network error in dev/demo mode), simulate realistic creation
-    if (err.message && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
-      throw err
-    }
-    console.warn('Using mock creation for dev/offline mode:', err)
-    await new Promise((r) => setTimeout(r, 1200))
-    const vmid = params.vmid || 113
-    const name = params.name || `talos-worker-${vmid}`
-    return {
-      vmid,
-      name,
-      taskId: `UPID:pve:00018C20:0024A1F0:66E145B2:qmcreate:${vmid}:root@pam:`,
-      status: 'running',
-      message: `Worker VM ${name} (VMID ${vmid}) created and started successfully (mock fallback)`,
-    }
+	throw err
+	} finally {
+	  clearTimeout(timeoutId)
   }
 }
 
@@ -1145,20 +1156,16 @@ export const deleteProxmoxWorker = async (vmid: number): Promise<DeleteWorkerRes
   try {
     const res = await fetch(`/api/proxmox/worker/${vmid}`, {
       method: 'DELETE',
+	  headers: { ...getAuthHeaders() },
     })
     if (res.ok) {
       const data = await res.json()
       return data
     }
-    const errData = await res.json().catch(() => ({}))
-    throw new Error(errData.error || `HTTP ${res.status}: Failed to delete worker VM`)
+	throw await responseError(res, `Failed to delete worker VM ${vmid}`)
   } catch (err: any) {
     console.warn(`Error deleting worker VM ${vmid}:`, err)
-    return {
-      success: true,
-      vmid,
-      message: `Worker VM ${vmid} stopped and deleted successfully (mock fallback)`,
-    }
+	throw err
   }
 }
 
@@ -1205,13 +1212,18 @@ export const fetchAlertsConfig = async (): Promise<AlertsConfig> => {
   try {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 3000)
-    const res = await fetch('/api/alerts/config', { signal: controller.signal })
+    const res = await fetch('/api/alerts/config', {
+      signal: controller.signal,
+      headers: { ...getAuthHeaders() },
+    })
     clearTimeout(timeoutId)
     if (res.ok) {
       const data = await res.json()
       return data
     }
+	if (res.status === 401) throw await responseError(res, 'Authentication required to read alert settings')
   } catch (err) {
+	if (err instanceof Error && err.name === 'UnauthorizedError') throw err
     console.warn('Endpoint /api/alerts/config not reachable, using fallback:', err)
   }
 
@@ -1224,34 +1236,17 @@ export const updateAlertsConfig = async (
   try {
     const res = await fetch('/api/alerts/config', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(config),
     })
     if (res.ok) {
       const data = await res.json()
       return { success: true, message: 'Settings saved', config: data }
     }
-    const errData = await res.json().catch(() => ({}))
-    throw new Error(errData.error || `HTTP ${res.status}: Failed to update alerts config`)
+	throw await responseError(res, 'Failed to update alerts config')
   } catch (err: any) {
-    console.warn('Error updating alerts config, simulating success in mock mode:', err)
-    if (config.enabled !== undefined) MOCK_ALERTS_CONFIG.enabled = config.enabled
-    if (config.min_level) {
-      MOCK_ALERTS_CONFIG.min_level = config.min_level
-      MOCK_ALERTS_CONFIG.minLevel = config.min_level
-    }
-    if (config.chat_id) {
-      MOCK_ALERTS_CONFIG.chat_id_masked = config.chat_id.startsWith('-100')
-        ? '-100****' + config.chat_id.slice(-4)
-        : '****' + config.chat_id.slice(-4)
-      MOCK_ALERTS_CONFIG.chatID = MOCK_ALERTS_CONFIG.chat_id_masked
-    }
-    if (config.bot_token && !config.bot_token.includes('*')) {
-      MOCK_ALERTS_CONFIG.bot_configured = true
-      MOCK_ALERTS_CONFIG.bot_token_masked = config.bot_token.slice(0, 4) + '****'
-      MOCK_ALERTS_CONFIG.botToken = MOCK_ALERTS_CONFIG.bot_token_masked
-    }
-    return { success: true, message: 'Settings saved (mock mode)' }
+	console.warn('Error updating alerts config:', err)
+	throw err
   }
 }
 
@@ -1261,33 +1256,18 @@ export const sendTestAlert = async (
   try {
     const res = await fetch('/api/alerts/test', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(payload || {}),
     })
     const data = await res.json().catch(() => ({}))
     if (res.ok && data.success) {
       return { success: true, message: data.message || 'Test alert delivered successfully' }
     }
-    throw new Error(data.error || `HTTP ${res.status}: Failed to send test alert`)
+	if (res.status === 401) throw await responseError(res, 'Authentication required to send test alerts')
+	throw new Error(data.error || `HTTP ${res.status}: Failed to send test alert`)
   } catch (err: any) {
-    if (err.message && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
-      throw err
-    }
-    console.warn('Backend not available, simulating test alert dispatch:', err)
-    await new Promise((r) => setTimeout(r, 800))
-    const testRecord: AlertRecord = {
-      id: `mock-test-${Date.now()}`,
-      level: 'INFO',
-      title: 'Test Notification',
-      message: 'Integration with Telegram bot is working correctly! (mock preview)',
-      timestamp: new Date().toISOString(),
-      success: true,
-    }
-    if (!MOCK_ALERTS_CONFIG.recent_alerts) {
-      MOCK_ALERTS_CONFIG.recent_alerts = []
-    }
-    MOCK_ALERTS_CONFIG.recent_alerts.unshift(testRecord)
-    return { success: true, message: 'Test alert delivered to Telegram chat (mock mode)' }
+	console.warn('Failed to send test alert:', err)
+	throw err
   }
 }
 
@@ -1332,14 +1312,6 @@ export const login = async (
     throw new Error('No token received from backend')
   } catch (err: any) {
     console.warn('Login request failed:', err)
-    // In mock fallback mode: allow login with default password "admin"
-    if (password === 'admin') {
-      const mockUser: UserInfo = { username: 'admin', role: 'admin' }
-      localStorage.setItem(TOKEN_STORAGE_KEY, 'mock-jwt-admin-token-phase5')
-      isAuthenticated.value = true
-      currentUser.value = mockUser
-      return { success: true, user: mockUser }
-    }
     return { success: false, error: err.message || 'Invalid password' }
   }
 }
@@ -1377,13 +1349,13 @@ export const getMe = async (): Promise<MeResponse> => {
       currentUser.value = data.user
       return data
     }
+	if (res.status === 401) {
+	  localStorage.removeItem(TOKEN_STORAGE_KEY)
+	  isAuthenticated.value = false
+	  currentUser.value = { username: 'guest', role: 'viewer' }
+	}
   } catch (err) {
-    console.warn('Endpoint /api/auth/me not reachable, verifying mock token:', err)
-    if (token === 'mock-jwt-admin-token-phase5') {
-      isAuthenticated.value = true
-      currentUser.value = { username: 'admin', role: 'admin' }
-      return { authenticated: true, user: currentUser.value }
-    }
+	console.warn('Endpoint /api/auth/me not reachable:', err)
   }
 
   return { authenticated: false, user: { username: 'guest', role: 'viewer' } }
@@ -1485,4 +1457,3 @@ export const fetchAuditLogs = async (
   }
   return list.slice(0, limit)
 }
-

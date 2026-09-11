@@ -258,3 +258,101 @@ func TestWatcher_StartAndStop(t *testing.T) {
 		t.Error("expected watcher to be stopped")
 	}
 }
+
+func TestWatcher_NoAlertSuppressionOnFailure(t *testing.T) {
+	var shouldFail atomic.Bool
+	shouldFail.Store(true)
+	var alertAttempts int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&alertAttempts, 1)
+		if shouldFail.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"ok": false, "error": "server error"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok": true}`))
+	}))
+	defer server.Close()
+
+	alertSvc := NewTelegramService("bot:token", "-100123", true)
+	alertSvc.SetAPIBaseURL(server.URL)
+
+	mockCluster := &mockClusterInspector{
+		nodes: []*talos.NodeOverview{
+			{IP: "10.42.0.111", Hostname: "talos-worker-1", Ready: true, Role: "worker"},
+		},
+	}
+	watcher := NewWatcher(mockCluster, alertSvc, 100*time.Millisecond)
+	ctx := context.Background()
+
+	// Initial check (healthy)
+	_ = watcher.CheckClusterHealth(ctx)
+
+	// Node transitions to NotReady
+	mockCluster.setNodeReady("10.42.0.111", false)
+
+	// Tick 1: Telegram fails (returns 500)
+	_ = watcher.CheckClusterHealth(ctx)
+	if atomic.LoadInt32(&alertAttempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", alertAttempts)
+	}
+
+	// State should NOT be considered Ready=false yet because alert failed (ALT-01)
+	snaps := watcher.GetNodeSnapshots()
+	if snaps["10.42.0.111"].Ready == false {
+		t.Errorf("expected node Ready in snapshot to still be true until alert delivery succeeds")
+	}
+
+	// Tick 2: Telegram is now back online (returns 200)
+	shouldFail.Store(false)
+	_ = watcher.CheckClusterHealth(ctx)
+	if atomic.LoadInt32(&alertAttempts) != 2 {
+		t.Fatalf("expected second attempt (retry on failure), got %d", alertAttempts)
+	}
+
+	// Now state is successfully updated
+	snaps = watcher.GetNodeSnapshots()
+	if snaps["10.42.0.111"].Ready != false {
+		t.Errorf("expected node Ready in snapshot to be updated to false after delivery")
+	}
+
+	// Tick 3: No new alert should be sent (deduplication)
+	_ = watcher.CheckClusterHealth(ctx)
+	if atomic.LoadInt32(&alertAttempts) != 2 {
+		t.Fatalf("expected alert attempts to stay 2, got %d", alertAttempts)
+	}
+}
+
+func TestWatcher_RestartAfterContextCancel(t *testing.T) {
+	// ALT-03: context cancel must reset w.running to false so Start() can be called again
+	mockCluster := &mockClusterInspector{nodes: []*talos.NodeOverview{}}
+	alertSvc := NewTelegramService("", "", false)
+	watcher := NewWatcher(mockCluster, alertSvc, 50*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	watcher.Start(ctx)
+
+	time.Sleep(30 * time.Millisecond)
+	cancel() // Cancel context
+
+	// Wait for goroutine to exit
+	time.Sleep(50 * time.Millisecond)
+
+	status := watcher.GetStatus()
+	if status.Running {
+		t.Errorf("expected watcher running=false after context cancel, got %v", status.Running)
+	}
+
+	// Start again with new context
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	watcher.Start(ctx2)
+
+	status = watcher.GetStatus()
+	if !status.Running {
+		t.Errorf("expected watcher running=true after restart")
+	}
+	watcher.Stop()
+}

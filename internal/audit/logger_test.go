@@ -3,6 +3,7 @@ package audit
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,5 +72,127 @@ func TestAuditManager(t *testing.T) {
 
 	if reloaded.TotalCount() != 6 {
 		t.Errorf("expected 6 events loaded from file, got %d", reloaded.TotalCount())
+	}
+}
+
+func TestAuditSecurityAndRace(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "audit-sec-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	logFile := filepath.Join(tempDir, "audit.log")
+	am, err := NewAuditManager(logFile, 50)
+	if err != nil {
+		t.Fatalf("failed to create AuditManager: %v", err)
+	}
+	defer am.Close()
+
+	// 1. Check file permissions (SEC-11)
+	info, err := os.Stat(logFile)
+	if err != nil {
+		t.Fatalf("failed to stat log file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("expected file mode 0600, got %o", perm)
+	}
+
+	// 2. Sensitive data masking (SEC-12)
+	am.Log(AuditEvent{
+		Action: "auth.login",
+		Details: map[string]any{
+			"password": "supersecretpassword",
+			"token":    "ey12345",
+			"error":    "failed with bearer secret-token-xyz",
+			"node":     "10.42.0.110",
+		},
+	})
+	events := am.GetEvents(1, "auth.login", "")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event")
+	}
+	d := events[0].Details
+	if d["password"] != "***MASKED***" {
+		t.Errorf("expected password to be masked, got %v", d["password"])
+	}
+	if d["token"] != "***MASKED***" {
+		t.Errorf("expected token to be masked, got %v", d["token"])
+	}
+	if strErr, ok := d["error"].(string); !ok || !strings.Contains(strErr, "***MASKED***") {
+		t.Errorf("expected bearer token in error to be masked, got %v", d["error"])
+	}
+	if d["node"] != "10.42.0.110" {
+		t.Errorf("expected non-sensitive node to be preserved, got %v", d["node"])
+	}
+
+	// 3. Race condition & defensive copy test (SEC-04)
+	detailsMap := map[string]any{"counter": 0}
+	am.Log(AuditEvent{Action: "race.test", Details: detailsMap})
+
+	// Mutate original map outside
+	detailsMap["counter"] = 999
+	evs := am.GetEvents(1, "race.test", "")
+	if len(evs) > 0 && evs[0].Details["counter"] == 999 {
+		t.Errorf("defensive copy failed: internal state was modified via caller map!")
+	}
+
+	// Concurrent read and write to verify race-free behavior
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			am.Log(AuditEvent{
+				Action:  "concurrent.log",
+				Details: map[string]any{"idx": i, "val": "something"},
+			})
+		}
+		close(done)
+	}()
+
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			evList := am.GetEvents(10, "", "")
+			for _, e := range evList {
+				if e.Details != nil {
+					e.Details["mutated_by_reader"] = true
+				}
+			}
+		}
+	}
+}
+
+func TestLargeAuditLine(t *testing.T) {
+	// SEC-10: Large entry > 64KB
+	tempDir, err := os.MkdirTemp("", "audit-large-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	logFile := filepath.Join(tempDir, "audit.log")
+	am, err := NewAuditManager(logFile, 10)
+	if err != nil {
+		t.Fatalf("failed to create AuditManager: %v", err)
+	}
+
+	largeString := strings.Repeat("A", 128*1024) // 128KB string (exceeds default 64KB bufio.Scanner)
+	am.Log(AuditEvent{
+		Action:  "large.payload",
+		Details: map[string]any{"data": largeString},
+	})
+	_ = am.Close()
+
+	// Reload from file to ensure it was parsed without scanner error
+	reloaded, err := NewAuditManager(logFile, 10)
+	if err != nil {
+		t.Fatalf("failed to reload AuditManager: %v", err)
+	}
+	defer reloaded.Close()
+
+	if reloaded.TotalCount() != 1 {
+		t.Errorf("expected 1 large event loaded, got %d", reloaded.TotalCount())
 	}
 }

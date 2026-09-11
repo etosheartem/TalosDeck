@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/websocket/v2"
@@ -41,9 +44,13 @@ type ServerConfig struct {
 
 // SetupServer initializes the Fiber app with routes and middlewares.
 func SetupServer(cfg ServerConfig) *fiber.App {
+	// API-08: Enforce server timeouts in fiber.Config to prevent Slowloris DoS attacks
 	app := fiber.New(fiber.Config{
 		AppName:      "TalosDeck v0.1.0",
 		ServerHeader: "TalosDeck",
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
 			if e, ok := err.(*fiber.Error); ok {
@@ -69,12 +76,20 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 
 	// Audit Manager
 	auditMgr := cfg.Audit
+	ownsAuditMgr := false
 	if auditMgr == nil {
 		var err error
 		auditMgr, err = audit.NewAuditManager("./data/audit.log", 1000)
 		if err != nil {
 			log.Printf("[Audit] Warning: Failed to initialize audit manager: %v", err)
+		} else {
+			ownsAuditMgr = true
 		}
+	}
+	if ownsAuditMgr && auditMgr != nil {
+		app.Hooks().OnShutdown(func() error {
+			return auditMgr.Close()
+		})
 	}
 
 	// Auth Manager
@@ -86,9 +101,23 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	// REST API Routes Group
 	api := app.Group("/api")
 
+	// API-09: Rate limiting on login attempts to mitigate brute-force attacks
+	loginLimiter := limiter.New(limiter.Config{
+		Max:        30,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return auth.GetClientIP(c)
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "Too many login attempts. Please try again later.",
+			})
+		},
+	})
+
 	// Auth Endpoints
 	// POST /api/auth/login -> accepts {"password": "..."}, returns {"token": "...", "user": {"role": "admin"}}
-	api.Post("/auth/login", func(c *fiber.Ctx) error {
+	api.Post("/auth/login", loginLimiter, func(c *fiber.Ctx) error {
 		var req struct {
 			Password string `json:"password"`
 		}
@@ -149,9 +178,16 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		})
 	})
 
-	// POST /api/auth/logout
+	// POST /api/auth/logout (SEC-08: Revoke token on logout)
 	api.Post("/auth/logout", func(c *fiber.Ctx) error {
 		user := auth.GetContextUser(c, authMgr)
+		authHeader := c.Get("Authorization")
+		if authHeader != "" && authMgr != nil {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+				_ = authMgr.RevokeToken(parts[1])
+			}
+		}
 		if auditMgr != nil {
 			auditMgr.Log(audit.AuditEvent{
 				Action: "auth.logout",
@@ -193,8 +229,12 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		})
 	})
 
-	// GET /api/audit -> list of audit events
-	api.Get("/audit", func(c *fiber.Ctx) error {
+	// GET /api/audit -> list of audit events (SEC-02: RequireAuth protected)
+	auditHandlers := []fiber.Handler{}
+	if authMgr != nil {
+		auditHandlers = append(auditHandlers, auth.RequireAuth(authMgr))
+	}
+	auditHandlers = append(auditHandlers, func(c *fiber.Ctx) error {
 		limit := c.QueryInt("limit", 50)
 		action := c.Query("action", "")
 		search := c.Query("search", "")
@@ -208,6 +248,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		}
 		return c.JSON(events)
 	})
+	api.Get("/audit", auditHandlers...)
 
 	bm := cfg.Backup
 	if bm == nil {
@@ -231,13 +272,25 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		watcher = alerts.NewWatcher(manager, alertSvc, 30*time.Second)
 	}
 
-	RegisterAlertRoutes(api, alertSvc, watcher)
+	RegisterAlertRoutes(api, alertSvc, watcher, authMgr, auditMgr)
 
 	proxmoxClient := cfg.Proxmox
 	if proxmoxClient == nil {
 		proxmoxClient = proxmox.NewClientFromEnv()
 	}
+	if cfg.K8s != nil && proxmoxClient != nil {
+		proxmoxClient.SetDrainer(cfg.K8s)
+	}
 	RegisterProxmoxRoutes(api, proxmoxClient, authMgr, auditMgr)
+
+	// validateNodeIP checks that :ip parameter is a valid IPv4 or IPv6 address (API-11)
+	validateNodeIP := func(c *fiber.Ctx) (string, error) {
+		ip := strings.TrimSpace(c.Params("ip"))
+		if ip == "" || net.ParseIP(ip) == nil {
+			return "", fmt.Errorf("invalid node IP address: %q", ip)
+		}
+		return ip, nil
+	}
 
 	// GET /api/cluster -> cluster overview
 	api.Get("/cluster", func(c *fiber.Ctx) error {
@@ -267,9 +320,12 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		return c.JSON(nodes)
 	})
 
-	// GET /api/nodes/:ip -> single node overview
+	// GET /api/nodes/:ip -> single node overview (API-11: IP validation)
 	api.Get("/nodes/:ip", func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
+		ip, err := validateNodeIP(c)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		ctx, cancel := context.WithTimeout(c.UserContext(), 8*time.Second)
 		defer cancel()
 
@@ -282,9 +338,12 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		return c.JSON(status)
 	})
 
-	// GET /api/nodes/:ip/services -> list of services and health
+	// GET /api/nodes/:ip/services -> list of services and health (API-11: IP validation)
 	api.Get("/nodes/:ip/services", func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
+		ip, err := validateNodeIP(c)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		ctx, cancel := context.WithTimeout(c.UserContext(), 8*time.Second)
 		defer cancel()
 
@@ -297,28 +356,65 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		return c.JSON(services)
 	})
 
-	// POST /api/nodes/:ip/services/:id/restart -> restart service
-	api.Post("/nodes/:ip/services/:id/restart", func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
-		id := c.Params("id")
+	// POST /api/nodes/:ip/services/:id/restart -> restart service (API-01: RequireAuth, IP validation & audit log)
+	restartHandlers := []fiber.Handler{}
+	if authMgr != nil {
+		restartHandlers = append(restartHandlers, auth.RequireAuth(authMgr))
+	}
+	restartHandlers = append(restartHandlers, func(c *fiber.Ctx) error {
+		ip, err := validateNodeIP(c)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		id := strings.TrimSpace(c.Params("id"))
+		if id == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "service id is required"})
+		}
+		user := auth.GetContextUser(c, authMgr)
+		clientIP := auth.GetClientIP(c)
+
 		ctx, cancel := context.WithTimeout(c.UserContext(), 10*time.Second)
 		defer cancel()
 
 		if err := manager.RestartService(ctx, ip, id); err != nil {
+			if auditMgr != nil {
+				auditMgr.Log(audit.AuditEvent{
+					Action:  "service.restart",
+					User:    user,
+					IP:      clientIP,
+					Status:  "failed",
+					Details: map[string]any{"node": ip, "service": id, "error": err.Error()},
+				})
+			}
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": fmt.Sprintf("failed to restart service %s on %s: %v", id, ip, err),
 			})
 		}
+
+		if auditMgr != nil {
+			auditMgr.Log(audit.AuditEvent{
+				Action:  "service.restart",
+				User:    user,
+				IP:      clientIP,
+				Status:  "success",
+				Details: map[string]any{"node": ip, "service": id},
+			})
+		}
+
 		return c.JSON(fiber.Map{
 			"status":  "restarting",
 			"node":    ip,
 			"service": id,
 		})
 	})
+	api.Post("/nodes/:ip/services/:id/restart", restartHandlers...)
 
-	// GET /api/nodes/:ip/containers -> list of containers
+	// GET /api/nodes/:ip/containers -> list of containers (API-11: IP validation)
 	api.Get("/nodes/:ip/containers", func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
+		ip, err := validateNodeIP(c)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		ns := c.Query("namespace", "system")
 		ctx, cancel := context.WithTimeout(c.UserContext(), 8*time.Second)
 		defer cancel()
@@ -332,9 +428,12 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		return c.JSON(containers)
 	})
 
-	// POST /api/nodes/:ip/reboot -> reboot node (protected with auth)
+	// POST /api/nodes/:ip/reboot -> reboot node (protected with auth & IP validation; API-12 removed duplicate route)
 	rebootHandler := func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
+		ip, err := validateNodeIP(c)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		user := auth.GetContextUser(c, authMgr)
 		clientIP := auth.GetClientIP(c)
 
@@ -379,12 +478,14 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	}
 	rebootHandlers := append(rebootMiddlewares, rebootHandler)
 
-	api.Post("/api/nodes/:ip/reboot", rebootHandlers...)
 	api.Post("/nodes/:ip/reboot", rebootHandlers...)
 
-	// GET /api/nodes/:ip/disks -> physical disks and partitions via Talos SDK
+	// GET /api/nodes/:ip/disks -> physical disks and partitions via Talos SDK (API-11: IP validation)
 	api.Get("/nodes/:ip/disks", func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
+		ip, err := validateNodeIP(c)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		ctx, cancel := context.WithTimeout(c.UserContext(), 10*time.Second)
 		defer cancel()
 
@@ -397,19 +498,47 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		return c.JSON(disks)
 	})
 
-	// GET /api/nodes/:ip/config -> Talos MachineConfig (YAML or JSON)
-	api.Get("/nodes/:ip/config", func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
+	// GET /api/nodes/:ip/config -> Talos MachineConfig (API-02: RequireAuth, IP validation & audit log)
+	configHandlers := []fiber.Handler{}
+	if authMgr != nil {
+		configHandlers = append(configHandlers, auth.RequireAuth(authMgr))
+	}
+	configHandlers = append(configHandlers, func(c *fiber.Ctx) error {
+		ip, err := validateNodeIP(c)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		format := strings.ToLower(c.Query("format", ""))
 		accept := c.Get("Accept")
+		user := auth.GetContextUser(c, authMgr)
+		clientIP := auth.GetClientIP(c)
 
 		ctx, cancel := context.WithTimeout(c.UserContext(), 10*time.Second)
 		defer cancel()
 
 		cfgBytes, err := manager.GetNodeConfig(ctx, ip)
 		if err != nil {
+			if auditMgr != nil {
+				auditMgr.Log(audit.AuditEvent{
+					Action:  "node.config.export",
+					User:    user,
+					IP:      clientIP,
+					Status:  "failed",
+					Details: map[string]any{"node": ip, "format": format, "error": err.Error()},
+				})
+			}
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": fmt.Sprintf("failed to get machine config for %s: %v", ip, err),
+			})
+		}
+
+		if auditMgr != nil {
+			auditMgr.Log(audit.AuditEvent{
+				Action:  "node.config.export",
+				User:    user,
+				IP:      clientIP,
+				Status:  "success",
+				Details: map[string]any{"node": ip, "format": format},
 			})
 		}
 
@@ -431,6 +560,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 			"config":     parsedConfig,
 		})
 	})
+	api.Get("/nodes/:ip/config", configHandlers...)
 
 	// GET /api/cluster/etcd -> etcd cluster health, members, and alarms via Talos SDK
 	api.Get("/cluster/etcd", func(c *fiber.Ctx) error {
@@ -489,16 +619,53 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		return c.JSON(namespaces)
 	})
 
-	// POST /api/nodes/:ip/maintenance -> toggle maintenance mode
-	api.Post("/nodes/:ip/maintenance", func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
+	// POST /api/nodes/:ip/maintenance -> toggle maintenance mode (API-05: RequireAuth, IP & payload validation)
+	maintHandlers := []fiber.Handler{}
+	if authMgr != nil {
+		maintHandlers = append(maintHandlers, auth.RequireAuth(authMgr))
+	}
+	maintHandlers = append(maintHandlers, func(c *fiber.Ctx) error {
+		ip, err := validateNodeIP(c)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		var body struct {
 			Enable bool `json:"enable"`
 		}
-		_ = c.BodyParser(&body)
-		msg := fmt.Sprintf("Node %s cordoned (maintenance active)", ip)
+		if len(c.Body()) > 0 {
+			if err := c.BodyParser(&body); err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": fmt.Sprintf("invalid request payload: %v", err),
+				})
+			}
+		}
+		if cfg.K8s == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "Kubernetes client is not available",
+			})
+		}
+
+		ctx, cancel := context.WithTimeout(c.UserContext(), 10*time.Second)
+		defer cancel()
+		nodeName, operationErr := cfg.K8s.SetNodeMaintenance(ctx, ip, body.Enable)
+		if operationErr != nil {
+			if auditMgr != nil {
+				auditMgr.Log(audit.AuditEvent{
+					Action:  "node.maintenance",
+					User:    auth.GetContextUser(c, authMgr),
+					IP:      auth.GetClientIP(c),
+					Status:  "failed",
+					Details: map[string]any{"node": ip, "enable": body.Enable, "error": operationErr.Error()},
+				})
+			}
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+				"error": fmt.Sprintf("failed to update maintenance mode for %s: %v", ip, operationErr),
+			})
+		}
+
+		msg := fmt.Sprintf("Node %s cordoned (maintenance active)", nodeName)
 		if !body.Enable {
-			msg = fmt.Sprintf("Node %s uncordoned (active)", ip)
+			msg = fmt.Sprintf("Node %s uncordoned (active)", nodeName)
 		}
 		if auditMgr != nil {
 			auditMgr.Log(audit.AuditEvent{
@@ -506,27 +673,82 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 				User:    auth.GetContextUser(c, authMgr),
 				IP:      auth.GetClientIP(c),
 				Status:  "success",
-				Details: map[string]any{"node": ip, "enable": body.Enable},
+				Details: map[string]any{"node": nodeName, "nodeIP": ip, "enable": body.Enable},
 			})
 		}
 		return c.JSON(fiber.Map{
 			"success": true,
-			"node":    ip,
+			"node":    nodeName,
 			"message": msg,
 		})
 	})
+	api.Post("/nodes/:ip/maintenance", maintHandlers...)
 
-	// WebSocket Upgrade Middleware
+	// API-07: Catch-all 404 for unmatched /api routes
+	api.All("/*", func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": fmt.Sprintf("API route %s not found", c.Path()),
+		})
+	})
+
+	// WebSocket Upgrade Middleware (API-06: WebSocket authentication & upgrade check)
 	app.Use("/ws", func(c *fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(c) {
-			return c.Next()
+		if !websocket.IsWebSocketUpgrade(c) {
+			return fiber.ErrUpgradeRequired
 		}
-		return fiber.ErrUpgradeRequired
+
+		if authMgr != nil {
+			token := ""
+			authHeader := c.Get("Authorization")
+			if authHeader != "" {
+				parts := strings.SplitN(authHeader, " ", 2)
+				if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+					token = strings.TrimSpace(parts[1])
+				}
+			}
+			if token == "" {
+				token = strings.TrimSpace(c.Query("token"))
+			}
+			if token == "" {
+				proto := c.Get("Sec-WebSocket-Protocol")
+				if proto != "" {
+					parts := strings.Split(proto, ",")
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if claims, err := authMgr.ValidateToken(p); err == nil && claims != nil {
+							token = p
+							c.Set("Sec-WebSocket-Protocol", token)
+							break
+						}
+					}
+				}
+			}
+
+			if token == "" {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error": "Authentication required for WebSocket connection",
+				})
+			}
+
+			claims, err := authMgr.ValidateToken(token)
+			if err != nil || claims == nil {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error": "Invalid or expired token for WebSocket connection",
+				})
+			}
+		}
+
+		return c.Next()
 	})
 
 	// GET /ws/nodes/:ip/dmesg -> WebSocket stream of kernel dmesg
 	app.Get("/ws/nodes/:ip/dmesg", websocket.New(func(c *websocket.Conn) {
-		ip := c.Params("ip")
+		ip := strings.TrimSpace(c.Params("ip"))
+		if net.ParseIP(ip) == nil {
+			_ = c.WriteMessage(websocket.TextMessage, []byte("Error: invalid node IP address"))
+			_ = c.Close()
+			return
+		}
 		log.Printf("[WebSocket] Dmesg client connected for node %s", ip)
 		defer log.Printf("[WebSocket] Dmesg client disconnected for node %s", ip)
 
@@ -572,8 +794,18 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 
 	// GET /ws/nodes/:ip/logs/:service -> WebSocket stream of service logs
 	app.Get("/ws/nodes/:ip/logs/:service", websocket.New(func(c *websocket.Conn) {
-		ip := c.Params("ip")
-		service := c.Params("service")
+		ip := strings.TrimSpace(c.Params("ip"))
+		if net.ParseIP(ip) == nil {
+			_ = c.WriteMessage(websocket.TextMessage, []byte("Error: invalid node IP address"))
+			_ = c.Close()
+			return
+		}
+		service := strings.TrimSpace(c.Params("service"))
+		if service == "" {
+			_ = c.WriteMessage(websocket.TextMessage, []byte("Error: service parameter is required"))
+			_ = c.Close()
+			return
+		}
 		log.Printf("[WebSocket] Service logs client connected for %s on node %s", service, ip)
 		defer log.Printf("[WebSocket] Service logs client disconnected for %s on node %s", service, ip)
 
@@ -614,6 +846,13 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		}
 	}))
 
+	// API-07: Catch-all 404 for unmatched /ws routes
+	app.All("/ws/*", func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": fmt.Sprintf("WebSocket route %s not found", c.Path()),
+		})
+	})
+
 	// Embed Static Files from web/dist with fallback
 	distSubFS, err := web.GetDistFS()
 	hasStatic := false
@@ -627,12 +866,36 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 			_ = f.Close()
 			hasStatic = true
 			log.Printf("[Static] Serving embedded frontend from web/dist")
+			// API-07: Skip static file middleware for /api and /ws routes
 			app.Use(filesystem.New(filesystem.Config{
-				Root:         http.FS(distSubFS),
-				Index:        "index.html",
-				Browse:       false,
-				NotFoundFile: "index.html",
+				Root:   http.FS(distSubFS),
+				Index:  "index.html",
+				Browse: false,
+				Next: func(c *fiber.Ctx) bool {
+					path := c.Path()
+					return strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/ws")
+				},
 			}))
+			// SPA client-side fallback: serve index.html for non-API/non-WS paths
+			app.Get("/*", func(c *fiber.Ctx) error {
+				path := c.Path()
+				if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/ws") {
+					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+						"error": "not found",
+					})
+				}
+				idxContent, err := distSubFS.Open("index.html")
+				if err != nil {
+					return c.Status(fiber.StatusInternalServerError).SendString("index.html not found")
+				}
+				defer idxContent.Close()
+				data, err := io.ReadAll(idxContent)
+				if err != nil {
+					return c.Status(fiber.StatusInternalServerError).SendString("failed to read index.html")
+				}
+				c.Set("Content-Type", "text/html; charset=utf-8")
+				return c.Send(data)
+			})
 		}
 	}
 

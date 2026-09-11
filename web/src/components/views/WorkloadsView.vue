@@ -62,13 +62,13 @@ const filteredPods = computed(() => {
       return false
     }
 
-    // Search query
+    // Search query (FE-01: Null-safe search matching across nodeName/node and ip/podIp)
     const q = searchQuery.value.trim().toLowerCase()
     if (q) {
-      const matchName = pod.name.toLowerCase().includes(q)
-      const matchNode = pod.nodeName.toLowerCase().includes(q)
-      const matchIP = pod.ip.includes(q)
-      const matchNS = pod.namespace.toLowerCase().includes(q)
+      const matchName = (pod.name || '').toLowerCase().includes(q)
+      const matchNode = (pod.nodeName || pod.node || '').toLowerCase().includes(q)
+      const matchIP = (pod.ip || pod.podIp || '').includes(q)
+      const matchNS = (pod.namespace || '').toLowerCase().includes(q)
       if (!matchName && !matchNode && !matchIP && !matchNS) return false
     }
 
@@ -336,11 +336,11 @@ const copyPodName = async (name: string, id: string) => {
                 {{ pod.readyContainers }}
               </td>
 
-              <!-- Node Placement -->
+              <!-- Node -->
               <td class="py-3 px-3">
                 <div class="flex items-center gap-1.5 font-mono text-zinc-300">
                   <Server class="w-3 h-3 text-zinc-500" />
-                  <span>{{ pod.nodeName }}</span>
+                  <span>{{ pod.nodeName || pod.node || 'N/A' }}</span>
                 </div>
               </td>
 
@@ -360,7 +360,7 @@ const copyPodName = async (name: string, id: string) => {
 
               <!-- IP -->
               <td class="py-3 px-3 font-mono text-zinc-400">
-                {{ pod.ip }}
+                {{ pod.ip || pod.podIp || 'N/A' }}
               </td>
 
               <!-- CPU / RAM -->

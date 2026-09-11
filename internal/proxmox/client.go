@@ -1,111 +1,49 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Config contains settings for connecting to the Proxmox VE API.
-type Config struct {
-	BaseURL        string        `json:"baseUrl"`        // e.g. "https://192.168.88.169:8006"
-	Node           string        `json:"node"`           // e.g. "pve"
-	SkipTLSVerify  bool          `json:"skipTlsVerify"`  // true for self-signed certificates
-	APIToken       string        `json:"apiToken"`       // "PVEAPIToken=USER@REALM!TOKENID=UUID" or "USER@REALM!TOKENID=UUID"
-	Username       string        `json:"username"`       // e.g. "root@pam"
-	Password       string        `json:"password"`       // e.g. "secret"
-	DefaultStorage string        `json:"defaultStorage"` // e.g. "local-lvm"
-	DefaultISO     string        `json:"defaultIso"`     // e.g. "data:iso/talos-v1.14.0-qemu-guest-agent.iso"
-	DefaultBridge  string        `json:"defaultBridge"`  // e.g. "vmbr0"
-	Timeout        time.Duration `json:"timeout"`
+var validNodeNameRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+func isValidNodeName(name string) bool {
+	return validNodeNameRegex.MatchString(name)
 }
 
-// MemoryStatus represents Proxmox host RAM statistics.
-type MemoryStatus struct {
-	Total        uint64  `json:"total"`        // Total memory in bytes
-	Used         uint64  `json:"used"`         // Used memory in bytes
-	Free         uint64  `json:"free"`         // Free memory in bytes
-	Available    uint64  `json:"available"`    // Available memory in bytes
-	UsagePercent float64 `json:"usagePercent"` // Usage in percentage (0 - 100)
+func isTalosWorker(name string) bool {
+	lower := strings.ToLower(name)
+	// Explicitly protect master / control-plane nodes
+	if strings.HasPrefix(lower, "talos-cp") || strings.Contains(lower, "controlplane") || strings.Contains(lower, "master") {
+		return false
+	}
+	// Explicitly protect user workstations, production servers and Proxmox infrastructure
+	if lower == "win11" || lower == "ubuntu-server" || strings.Contains(lower, "pve") || strings.Contains(lower, "proxmox") {
+		return false
+	}
+	// Destructive deletion is allowed only for the TalosDeck worker naming scheme.
+	return lower == "talos-worker" || strings.HasPrefix(lower, "talos-worker-")
 }
 
-// StorageStatus represents Proxmox storage pool statistics.
-type StorageStatus struct {
-	Name         string  `json:"name"`         // Storage ID (e.g. "local-lvm")
-	Total        uint64  `json:"total"`        // Total storage in bytes
-	Used         uint64  `json:"used"`         // Used storage in bytes
-	Free         uint64  `json:"free"`         // Available/free storage in bytes
-	UsagePercent float64 `json:"usagePercent"` // Usage in percentage (0 - 100)
-	Type         string  `json:"type"`         // Storage type (e.g. "lvmthin")
-}
-
-// NodeStatus represents the overall host resource summary from Proxmox VE.
-type NodeStatus struct {
-	Node            string        `json:"node"`
-	Uptime          int64         `json:"uptime"`
-	CPU             float64       `json:"cpu"`             // CPU usage (0.0 to 1.0)
-	CPUUsagePercent float64       `json:"cpuUsagePercent"` // CPU usage percentage (0 - 100)
-	CPUCores        int           `json:"cpuCores"`
-	CPUModel        string        `json:"cpuModel"`
-	Memory          MemoryStatus  `json:"memory"`
-	Storage         StorageStatus `json:"storage"`
-}
-
-// VMStatus represents current status of a QEMU VM.
-type VMStatus struct {
-	VMID    int    `json:"vmid"`
-	Name    string `json:"name"`
-	Status  string `json:"status"` // "running", "stopped"
-	CPUs    int    `json:"cpus"`
-	Memory  uint64 `json:"memory"`
-	Uptime  int64  `json:"uptime"`
-	NetIn   uint64 `json:"netin"`
-	NetOut  uint64 `json:"netout"`
-	DiskIn  uint64 `json:"diskread"`
-	DiskOut uint64 `json:"diskwrite"`
-}
-
-// TaskStatus represents the status of an asynchronous Proxmox task.
-type TaskStatus struct {
-	UPID       string `json:"upid"`
-	Node       string `json:"node"`
-	Type       string `json:"type"`
-	Status     string `json:"status"`     // "running", "stopped"
-	ExitStatus string `json:"exitstatus"` // "OK" or error message
-}
-
-// CreateWorkerOpts defines options for creating a new Talos worker VM.
-type CreateWorkerOpts struct {
-	VMID     int    `json:"vmid,omitempty"`     // Target VMID (if <= 0, auto-allocated via GetNextVMID)
-	Name     string `json:"name,omitempty"`     // VM name (defaults to "talos-worker-{vmid}")
-	Cores    int    `json:"cores,omitempty"`    // vCPU count (defaults to 2)
-	MemoryMB int    `json:"memoryMB,omitempty"` // Memory in MB (defaults to 3072 = 3GB)
-	DiskGB   int    `json:"diskGB,omitempty"`   // Disk size in GB (defaults to 30 = 30GB)
-	Storage  string `json:"storage,omitempty"`  // Target storage (defaults to "local-lvm")
-	ISO      string `json:"iso,omitempty"`      // ISO path (defaults to "data:iso/talos-v1.14.0-qemu-guest-agent.iso")
-	Bridge   string `json:"bridge,omitempty"`   // Network bridge (defaults to "vmbr0")
-	MACAddr  string `json:"macAddr,omitempty"`  // Optional MAC address
-	Start    *bool  `json:"start,omitempty"`    // Whether to start the VM after creation (defaults to true)
-}
-
-// CreateWorkerResult represents the outcome of worker creation.
-type CreateWorkerResult struct {
-	VMID    int    `json:"vmid"`
-	Name    string `json:"name"`
-	TaskID  string `json:"taskId,omitempty"`
-	Status  string `json:"status"` // "running", "created"
-	Message string `json:"message"`
+// NodeDrainer is an interface to gracefully cordon and drain workloads from a Kubernetes node before VM destruction (PVE-07).
+type NodeDrainer interface {
+	CordonAndDrainNode(ctx context.Context, nodeName string) error
 }
 
 // Client is an HTTP client for communicating with the Proxmox VE REST API.
@@ -117,6 +55,10 @@ type Client struct {
 	ticket          string
 	csrfToken       string
 	ticketExpiresAt time.Time
+
+	vmidMu        sync.Mutex
+	inFlightVMIDs map[int]bool
+	drainer       NodeDrainer
 }
 
 // NewClient creates a new Proxmox VE client from the provided configuration.
@@ -142,12 +84,37 @@ func NewClient(cfg Config) (*Client, error) {
 		cfg.Timeout = 45 * time.Second
 	}
 
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: cfg.SkipTLSVerify,
+	}
+
+	// Support custom CA certificates (TLS-02)
+	if cfg.CACertFile != "" || cfg.CACert != "" {
+		certPool, err := x509.SystemCertPool()
+		if err != nil || certPool == nil {
+			certPool = x509.NewCertPool()
+		}
+		if cfg.CACertFile != "" {
+			caBytes, err := os.ReadFile(cfg.CACertFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read Proxmox CA certificate %s: %w", cfg.CACertFile, err)
+			}
+			if ok := certPool.AppendCertsFromPEM(caBytes); !ok {
+				return nil, fmt.Errorf("failed to parse Proxmox CA certificate from %s", cfg.CACertFile)
+			}
+		}
+		if cfg.CACert != "" {
+			if ok := certPool.AppendCertsFromPEM([]byte(cfg.CACert)); !ok {
+				return nil, errors.New("failed to parse inline Proxmox CA certificate")
+			}
+		}
+		tlsConfig.RootCAs = certPool
+	}
+
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: cfg.SkipTLSVerify,
-		},
-		MaxIdleConns:        10,
-		IdleConnTimeout:     30 * time.Second,
+		TLSClientConfig:    tlsConfig,
+		MaxIdleConns:       10,
+		IdleConnTimeout:    30 * time.Second,
 		DisableCompression: false,
 	}
 
@@ -172,15 +139,26 @@ func NewClientFromEnv() *Client {
 	storage := getEnv("PROXMOX_STORAGE", getEnv("PVE_STORAGE", "local-lvm"))
 	iso := getEnv("PROXMOX_ISO", getEnv("PVE_ISO", "data:iso/talos-v1.14.0-qemu-guest-agent.iso"))
 	bridge := getEnv("PROXMOX_BRIDGE", getEnv("PVE_BRIDGE", "vmbr0"))
-	skipTLS := getEnvBool("PROXMOX_SKIP_TLS_VERIFY", getEnvBool("PVE_SKIP_TLS_VERIFY", true))
 
-	// Fallback to cluster-config/proxmox.token if token not provided via env
+	// PVE-05: InsecureSkipVerify must default to false (safe by default)
+	skipTLS := getEnvBool("PROXMOX_SKIP_TLS_VERIFY", getEnvBool("PVE_SKIP_TLS_VERIFY", false))
+	caCert := getEnv("PROXMOX_CA_CERT", getEnv("PVE_CA_CERT", ""))
+	caFile := getEnv("PROXMOX_CA_FILE", getEnv("PVE_CA_FILE", getEnv("PROXMOX_CA_PATH", "")))
+
+	// PVE-12: Dynamic token path search
 	if apiToken == "" && username == "" {
-		tokenPaths := []string{
-			"/home/artem/laba-kuber/cluster-config/proxmox.token",
-			"cluster-config/proxmox.token",
-			"proxmox.token",
+		tokenFileEnv := getEnv("PROXMOX_TOKEN_FILE", getEnv("PVE_TOKEN_FILE", ""))
+		var tokenPaths []string
+		if tokenFileEnv != "" {
+			tokenPaths = append(tokenPaths, tokenFileEnv)
 		}
+		tokenPaths = append(tokenPaths,
+			"cluster-config/proxmox.token",
+			"./proxmox.token",
+			"proxmox.token",
+			"/etc/talosdeck/proxmox.token",
+			"/home/artem/laba-kuber/cluster-config/proxmox.token",
+		)
 		for _, p := range tokenPaths {
 			if content, err := os.ReadFile(p); err == nil {
 				token := strings.TrimSpace(string(content))
@@ -196,6 +174,8 @@ func NewClientFromEnv() *Client {
 		BaseURL:        baseURL,
 		Node:           node,
 		SkipTLSVerify:  skipTLS,
+		CACert:         caCert,
+		CACertFile:     caFile,
 		APIToken:       apiToken,
 		Username:       username,
 		Password:       password,
@@ -328,12 +308,7 @@ func (c *Client) GetNodeStatus(ctx context.Context) (*NodeStatus, error) {
 	}, nil
 }
 
-// GetNextVMID gets the next free VMID from Proxmox cluster.
-func (c *Client) GetNextVMID(ctx context.Context) (int, error) {
-	if !c.IsConfigured() {
-		return 0, errors.New("proxmox client is not configured")
-	}
-
+func (c *Client) fetchNextVMID(ctx context.Context) (int, error) {
 	var resp struct {
 		Data json.RawMessage `json:"data"`
 	}
@@ -342,22 +317,89 @@ func (c *Client) GetNextVMID(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("failed to get next VMID from proxmox: %w", err)
 	}
 
-	// Proxmox can return string "100" or number 100
+	var vmid int
 	var strVal string
 	if err := json.Unmarshal(resp.Data, &strVal); err == nil {
-		vmid, err := strconv.Atoi(strVal)
-		if err != nil {
+		var errConv error
+		vmid, errConv = strconv.Atoi(strVal)
+		if errConv != nil {
 			return 0, fmt.Errorf("unexpected non-numeric VMID string: %s", strVal)
 		}
-		return vmid, nil
+	} else {
+		var numVal int
+		if err := json.Unmarshal(resp.Data, &numVal); err == nil {
+			vmid = numVal
+		} else {
+			return 0, fmt.Errorf("unable to decode nextid response: %s", string(resp.Data))
+		}
 	}
 
-	var numVal int
-	if err := json.Unmarshal(resp.Data, &numVal); err == nil {
-		return numVal, nil
+	return vmid, nil
+}
+
+// GetNextVMID queries the next available VMID without locking it permanently.
+func (c *Client) GetNextVMID(ctx context.Context) (int, error) {
+	if !c.IsConfigured() {
+		return 0, errors.New("proxmox client is not configured")
 	}
 
-	return 0, fmt.Errorf("unable to decode nextid response: %s", string(resp.Data))
+	c.vmidMu.Lock()
+	defer c.vmidMu.Unlock()
+
+	vmid, err := c.fetchNextVMID(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	for c.inFlightVMIDs != nil && c.inFlightVMIDs[vmid] {
+		vmid++
+	}
+
+	if vmid < 100 {
+		vmid = 100
+		for c.inFlightVMIDs != nil && c.inFlightVMIDs[vmid] {
+			vmid++
+		}
+	}
+
+	return vmid, nil
+}
+
+// allocateVMID reserves a unique VMID to prevent TOCTOU collisions during concurrent creations (PVE-04).
+func (c *Client) allocateVMID(ctx context.Context) (int, error) {
+	c.vmidMu.Lock()
+	defer c.vmidMu.Unlock()
+
+	vmid, err := c.fetchNextVMID(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	if c.inFlightVMIDs == nil {
+		c.inFlightVMIDs = make(map[int]bool)
+	}
+
+	for c.inFlightVMIDs[vmid] {
+		vmid++
+	}
+
+	if vmid < 100 {
+		vmid = 100
+		for c.inFlightVMIDs[vmid] {
+			vmid++
+		}
+	}
+
+	c.inFlightVMIDs[vmid] = true
+	return vmid, nil
+}
+
+func (c *Client) releaseVMID(vmid int) {
+	c.vmidMu.Lock()
+	defer c.vmidMu.Unlock()
+	if c.inFlightVMIDs != nil {
+		delete(c.inFlightVMIDs, vmid)
+	}
 }
 
 // CreateTalosWorker creates a new worker VM, attaches Talos ISO, configures resources, and starts the VM.
@@ -368,21 +410,35 @@ func (c *Client) CreateTalosWorker(ctx context.Context, opts CreateWorkerOpts) (
 
 	node := c.cfg.Node
 
-	// Allocate VMID if not specified
-	vmid := opts.VMID
-	if vmid <= 0 {
-		var err error
-		vmid, err = c.GetNextVMID(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to auto-allocate VMID: %w", err)
+	// PVE-10: Validate VMID range if explicitly specified
+	if opts.VMID > 0 {
+		if opts.VMID < 100 || opts.VMID > 999999999 {
+			return nil, fmt.Errorf("invalid VMID %d: Proxmox VMID must be between 100 and 999999999", opts.VMID)
 		}
 	}
 
+	// Allocate VMID if not specified, protected against TOCTOU race (PVE-04)
+	vmid := opts.VMID
+	if vmid <= 0 {
+		var err error
+		vmid, err = c.allocateVMID(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to auto-allocate VMID: %w", err)
+		}
+		defer c.releaseVMID(vmid)
+	}
+
 	// Apply sensible defaults matching TalosDeck worker template
-	name := opts.Name
+	name := strings.TrimSpace(opts.Name)
 	if name == "" {
 		name = fmt.Sprintf("talos-worker-%d", vmid)
 	}
+
+	// QEMU-04: Validate hostname according to RFC 1123
+	if !isValidNodeName(name) {
+		return nil, fmt.Errorf("invalid VM name %q: must adhere to RFC 1123 (lowercase alphanumeric characters or '-', max 63 chars, must start and end with an alphanumeric character)", name)
+	}
+
 	cores := opts.Cores
 	if cores <= 0 {
 		cores = 2
@@ -419,11 +475,21 @@ func (c *Client) CreateTalosWorker(ctx context.Context, opts CreateWorkerOpts) (
 	form.Set("cores", strconv.Itoa(cores))
 	form.Set("sockets", "1")
 	form.Set("cpu", "host")
+	// PVE-09: Specify ostype l26 (Linux 2.6/3.x/4.x/5.x/6.x) for kernel optimizations
+	form.Set("ostype", "l26")
 	form.Set("memory", strconv.Itoa(memoryMB))
 	form.Set("scsihw", "virtio-scsi-single")
 	form.Set("scsi0", fmt.Sprintf("%s:%d,ssd=1", storage, diskGB))
-	form.Set("cdrom", iso)
-	form.Set("boot", "order=ide2;scsi0")
+
+	// PVE-06: Use REST API standard ide2 parameter with media=cdrom instead of CLI alias cdrom.
+	// Modern PVE API2 rejects the CLI-only 'cdrom' parameter.
+	form.Set("ide2", fmt.Sprintf("%s,media=cdrom", iso))
+
+	// PVE-02: Boot order must prioritize scsi0 before ide2 (order=scsi0;ide2).
+	// On first boot, scsi0 is unformatted, so BIOS falls back to ide2 (Live ISO).
+	// Once Talos installs to scsi0, subsequent reboots boot directly from scsi0 without Live ISO boot-loop.
+	form.Set("boot", "order=scsi0;ide2")
+
 	form.Set("agent", "enabled=1")
 	form.Set("onboot", "1")
 
@@ -456,18 +522,32 @@ func (c *Client) CreateTalosWorker(ctx context.Context, opts CreateWorkerOpts) (
 		}
 	}
 
-	// If start was requested, ensure the VM is active
+	// PVE-08: Handle autostart cleanly without lock contention
 	finalStatus := "created"
 	if shouldStart {
-		vmStatus, err := c.GetVMStatus(ctx, vmid)
-		if err == nil && vmStatus.Status == "running" {
-			finalStatus = "running"
-		} else {
-			// Explicit start call if start=1 was delayed or didn't auto-start
+		started := false
+		// Poll for up to 10 seconds for VM to be in running state (handled by start=1 in Proxmox)
+		for i := 0; i < 20; i++ {
+			vmStatus, err := c.GetVMStatus(ctx, vmid)
+			if err == nil && vmStatus.Status == "running" {
+				started = true
+				finalStatus = "running"
+				break
+			}
+
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+
+		// If still stopped (e.g. start=1 was omitted or delayed), explicitly trigger start
+		if !started {
 			if startErr := c.StartVM(ctx, vmid); startErr == nil {
 				finalStatus = "running"
 			} else {
-				finalStatus = "created"
+				log.Printf("[Proxmox] Note: explicit start for VM %d returned: %v", vmid, startErr)
 			}
 		}
 	}
@@ -477,14 +557,27 @@ func (c *Client) CreateTalosWorker(ctx context.Context, opts CreateWorkerOpts) (
 		Name:    name,
 		TaskID:  taskID,
 		Status:  finalStatus,
-		Message: fmt.Sprintf("Talos worker VM %d (%s) created successfully with 2 vCPU, 3GB RAM, 30GB disk", vmid, name),
+		Message: fmt.Sprintf("Talos worker VM %d (%s) created successfully with %d vCPU, %dMB RAM, %dGB disk", vmid, name, cores, memoryMB, diskGB),
 	}, nil
 }
 
+// SetDrainer registers a NodeDrainer (e.g. K8sManager) to drain workloads prior to VM deletion (PVE-07).
+func (c *Client) SetDrainer(drainer NodeDrainer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.drainer = drainer
+}
+
 // DeleteWorker stops and destroys the specified VM and its storage disks.
+// PVE-01: Validates that the target VM is strictly a Talos worker node to prevent accidental deletion of Control Plane or host VMs.
+// PVE-07: Cordons and drains the node in Kubernetes, then gracefully shuts down VM via ACPI before forcing stop.
 func (c *Client) DeleteWorker(ctx context.Context, vmid int) error {
 	if !c.IsConfigured() {
 		return errors.New("proxmox client is not configured")
+	}
+
+	if vmid < 100 {
+		return fmt.Errorf("invalid VMID %d: VMID must be >= 100", vmid)
 	}
 
 	node := c.cfg.Node
@@ -495,24 +588,71 @@ func (c *Client) DeleteWorker(ctx context.Context, vmid int) error {
 		return fmt.Errorf("failed to inspect VM %d before deletion: %w", vmid, err)
 	}
 
-	// 2. If running, stop VM and wait until stopped
-	if vmStatus.Status == "running" {
-		if err := c.StopVM(ctx, vmid); err != nil {
-			return fmt.Errorf("failed to stop VM %d before deletion: %w", vmid, err)
-		}
+	// PVE-01: Safety check: protect Control Plane, win11 and non-worker VMs
+	if !isTalosWorker(vmStatus.Name) {
+		return fmt.Errorf("safety check violation: VM %d (%q) is protected or not a Talos worker node; deletion aborted", vmid, vmStatus.Name)
+	}
 
-		// Wait up to 30 seconds for VM to halt
+	// 2. Cordon & Drain node in Kubernetes before shutting down and deleting (PVE-07)
+	c.mu.RLock()
+	drainer := c.drainer
+	c.mu.RUnlock()
+	if drainer == nil {
+		return errors.New("refusing to delete worker VM: Kubernetes drain service is unavailable")
+	}
+	log.Printf("[Proxmox] Cordoning and draining node %s before destroying VM %d (PVE-07)...", vmStatus.Name, vmid)
+	drainCtx, drainCancel := context.WithTimeout(ctx, 45*time.Second)
+	drainErr := drainer.CordonAndDrainNode(drainCtx, vmStatus.Name)
+	drainCancel()
+	if drainErr != nil {
+		return fmt.Errorf("refusing to delete worker VM %d because Kubernetes drain failed: %w", vmid, drainErr)
+	}
+
+	// 3. If running, first attempt graceful ACPI shutdown (PVE-07)
+	if vmStatus.Status == "running" {
 		stopped := false
-		for i := 0; i < 30; i++ {
-			time.Sleep(1 * time.Second)
-			st, err := c.GetVMStatus(ctx, vmid)
-			if err == nil && st.Status == "stopped" {
-				stopped = true
-				break
+
+		// Attempt graceful ACPI shutdown
+		if shutdownErr := c.ShutdownVM(ctx, vmid); shutdownErr == nil {
+			// Wait up to 15 seconds for VM to gracefully halt
+			for i := 0; i < 15; i++ {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(1 * time.Second):
+				}
+
+				st, err := c.GetVMStatus(ctx, vmid)
+				if err == nil && st.Status == "stopped" {
+					stopped = true
+					break
+				}
 			}
 		}
+
+		// Fall back to hard stop if ACPI shutdown timed out or failed
 		if !stopped {
-			return fmt.Errorf("VM %d failed to stop within 30 seconds", vmid)
+			if err := c.StopVM(ctx, vmid); err != nil {
+				return fmt.Errorf("failed to stop VM %d before deletion: %w", vmid, err)
+			}
+
+			// Wait up to 30 seconds for VM to halt
+			for i := 0; i < 30; i++ {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(1 * time.Second):
+				}
+
+				st, err := c.GetVMStatus(ctx, vmid)
+				if err == nil && st.Status == "stopped" {
+					stopped = true
+					break
+				}
+			}
+			if !stopped {
+				return fmt.Errorf("VM %d failed to stop within 30 seconds", vmid)
+			}
 		}
 	}
 
@@ -570,6 +710,19 @@ func (c *Client) GetVMStatus(ctx context.Context, vmid int) (*VMStatus, error) {
 		DiskIn:  resp.Data.DiskRead,
 		DiskOut: resp.Data.DiskWrite,
 	}, nil
+}
+
+// ShutdownVM issues a graceful ACPI shutdown signal to a VM (PVE-07).
+func (c *Client) ShutdownVM(ctx context.Context, vmid int) error {
+	node := c.cfg.Node
+	endpoint := fmt.Sprintf("/nodes/%s/qemu/%d/status/shutdown", node, vmid)
+	var resp struct {
+		Data string `json:"data"` // UPID
+	}
+	if err := c.postForm(ctx, endpoint, url.Values{}, &resp); err != nil {
+		return fmt.Errorf("failed to shutdown VM %d: %w", vmid, err)
+	}
+	return nil
 }
 
 // StartVM issues a power on command to a VM.
@@ -634,6 +787,7 @@ func (c *Client) GetTaskStatus(ctx context.Context, upid string) (*TaskStatus, e
 }
 
 // WaitForTask polls a task UPID until completed or until timeout occurs.
+// TASK-01: Uses interruptible select on ctx.Done() rather than blocking time.Sleep.
 func (c *Client) WaitForTask(ctx context.Context, upid string, timeout time.Duration) error {
 	if upid == "" {
 		return nil
@@ -654,7 +808,11 @@ func (c *Client) WaitForTask(ctx context.Context, upid string, timeout time.Dura
 		task, err := c.GetTaskStatus(ctx, upid)
 		if err != nil {
 			// If temporary error, wait and retry
-			time.Sleep(1 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(1 * time.Second):
+			}
 			continue
 		}
 
@@ -665,11 +823,16 @@ func (c *Client) WaitForTask(ctx context.Context, upid string, timeout time.Dura
 			return fmt.Errorf("task finished with error: %s", task.ExitStatus)
 		}
 
-		time.Sleep(1 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
 	}
 }
 
 // authenticate acquires ticket and CSRF token when username/password is used.
+// PVE-11: Validates against empty ticket response.
 func (c *Client) authenticate(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -713,6 +876,11 @@ func (c *Client) authenticate(ctx context.Context) error {
 		return fmt.Errorf("failed to parse auth response: %w", err)
 	}
 
+	// PVE-11: Explicitly verify ticket is non-empty
+	if authResp.Data.Ticket == "" {
+		return errors.New("authentication failed: Proxmox returned empty ticket (TFA/2FA or authentication failure)")
+	}
+
 	c.ticket = authResp.Data.Ticket
 	c.csrfToken = authResp.Data.CSRFPreventionToken
 	// Tickets usually expire in 2 hours; refresh slightly earlier
@@ -722,54 +890,99 @@ func (c *Client) authenticate(ctx context.Context) error {
 }
 
 // doRequest prepares and executes an HTTP request with proper authorization.
+// PVE-03: Refreshes session and retries request on HTTP 401/403.
 func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io.Reader, contentType string) (*http.Response, error) {
 	if !strings.HasPrefix(endpoint, "/") {
 		endpoint = "/" + endpoint
 	}
 	fullURL := c.cfg.BaseURL + "/api2/json" + endpoint
 
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, body)
+	// Buffer body to allow replay on re-authentication if necessary
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to buffer request body: %w", err)
+		}
+	}
+
+	createRequest := func() (*http.Request, error) {
+		var r io.Reader
+		if bodyBytes != nil {
+			r = bytes.NewReader(bodyBytes)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, fullURL, r)
+		if err != nil {
+			return nil, err
+		}
+
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		req.Header.Set("Accept", "application/json")
+
+		// Apply Authentication
+		if c.cfg.APIToken != "" {
+			token := c.cfg.APIToken
+			if !strings.HasPrefix(token, "PVEAPIToken=") {
+				token = "PVEAPIToken=" + token
+			}
+			req.Header.Set("Authorization", token)
+		} else if c.cfg.Username != "" && c.cfg.Password != "" {
+			c.mu.RLock()
+			validTicket := c.ticket != "" && time.Now().Before(c.ticketExpiresAt)
+			c.mu.RUnlock()
+
+			if !validTicket {
+				if err := c.authenticate(ctx); err != nil {
+					return nil, fmt.Errorf("ticket authentication failed: %w", err)
+				}
+			}
+
+			c.mu.RLock()
+			req.AddCookie(&http.Cookie{
+				Name:  "PVEAuthCookie",
+				Value: c.ticket,
+			})
+			if method != http.MethodGet && method != http.MethodHead {
+				req.Header.Set("CSRFPreventionToken", c.csrfToken)
+			}
+			c.mu.RUnlock()
+		}
+		return req, nil
+	}
+
+	req, err := createRequest()
 	if err != nil {
 		return nil, err
-	}
-
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	// Apply Authentication
-	if c.cfg.APIToken != "" {
-		token := c.cfg.APIToken
-		if !strings.HasPrefix(token, "PVEAPIToken=") {
-			token = "PVEAPIToken=" + token
-		}
-		req.Header.Set("Authorization", token)
-	} else if c.cfg.Username != "" && c.cfg.Password != "" {
-		c.mu.RLock()
-		validTicket := c.ticket != "" && time.Now().Before(c.ticketExpiresAt)
-		c.mu.RUnlock()
-
-		if !validTicket {
-			if err := c.authenticate(ctx); err != nil {
-				return nil, fmt.Errorf("ticket authentication failed: %w", err)
-			}
-		}
-
-		c.mu.RLock()
-		req.AddCookie(&http.Cookie{
-			Name:  "PVEAuthCookie",
-			Value: c.ticket,
-		})
-		if method != http.MethodGet && method != http.MethodHead {
-			req.Header.Set("CSRFPreventionToken", c.csrfToken)
-		}
-		c.mu.RUnlock()
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
+	}
+
+	// PVE-03: If ticket-based auth receives 401 or 403, invalidate ticket and retry once
+	if (c.cfg.APIToken == "" && c.cfg.Username != "" && c.cfg.Password != "") &&
+		(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+		resp.Body.Close()
+
+		c.mu.Lock()
+		c.ticket = ""
+		c.csrfToken = ""
+		c.ticketExpiresAt = time.Time{}
+		c.mu.Unlock()
+
+		if err := c.authenticate(ctx); err != nil {
+			return nil, fmt.Errorf("ticket re-authentication after %d failed: %w", resp.StatusCode, err)
+		}
+
+		retryReq, err := createRequest()
+		if err != nil {
+			return nil, err
+		}
+		return c.httpClient.Do(retryReq)
 	}
 
 	return resp, nil

@@ -3,6 +3,7 @@ package talos
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"sort"
 	"strings"
@@ -17,12 +18,20 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/siderolabs/talos/pkg/machinery/resources/block"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/resources/config"
+	talosk8s "github.com/siderolabs/talos/pkg/machinery/resources/k8s"
+	"github.com/siderolabs/talos/pkg/machinery/resources/perf"
 )
 
 var defaultNodeHostnames = map[string]string{
 	"10.42.0.110": "talos-cp-1",
 	"10.42.0.111": "talos-worker-1",
 	"10.42.0.112": "talos-worker-2",
+}
+
+type cpuSnapshot struct {
+	busy  float64
+	total float64
+	usage int
 }
 
 // GetNodeStatus fetches the runtime status, version, and health of a single node.
@@ -102,17 +111,88 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 		overview.ServicesSummary.Etcd = "N/A"
 	}
 
-	// Baseline metrics estimation for UI display
-	if overview.Role == "controlplane" {
-		overview.CPUUsage = 14
-		overview.MemoryUsage = "2.1 / 8.0 GB"
-		overview.Uptime = "14d 6h"
-		overview.KubernetesVersion = "v1.32.2"
-	} else {
-		overview.CPUUsage = 18
-		overview.MemoryUsage = "1.8 / 8.0 GB"
-		overview.Uptime = "14d 6h"
-		overview.KubernetesVersion = "v1.32.2"
+	// TALOS-18: Query real node runtime metrics (Memory, CPU, Uptime, Kubernetes version) dynamically
+	// 1. Real Memory from Talos machine Memory API
+	if memResp, err := m.client.Memory(nodeCtx); err == nil && len(memResp.GetMessages()) > 0 {
+		if meminfo := memResp.GetMessages()[0].GetMeminfo(); meminfo != nil {
+			totalBytes := meminfo.GetMemtotal() * 1024
+			availBytes := meminfo.GetMemavailable() * 1024
+			if availBytes == 0 && meminfo.GetMemfree() > 0 {
+				availBytes = meminfo.GetMemfree() * 1024
+			}
+			usedBytes := totalBytes - availBytes
+			totalGB := float64(totalBytes) / (1024 * 1024 * 1024)
+			usedGB := float64(usedBytes) / (1024 * 1024 * 1024)
+			overview.MemoryUsage = fmt.Sprintf("%.1f / %.1f GB", usedGB, totalGB)
+		}
+	}
+
+	// 2. Real CPU usage from COSI perf.CPU
+	if cpuRes, err := safe.StateGet[*perf.CPU](nodeCtx, m.client.COSI, resource.NewMetadata(perf.NamespaceName, perf.CPUType, perf.CPUID, resource.VersionUndefined)); err == nil && cpuRes != nil && cpuRes.TypedSpec() != nil {
+		stat := cpuRes.TypedSpec().CPUTotal
+		total := stat.User + stat.Nice + stat.System + stat.Idle + stat.Iowait + stat.Irq + stat.SoftIrq + stat.Steal
+		if total > 0 {
+			idle := stat.Idle + stat.Iowait
+			busy := total - idle
+			if busy < 0 {
+				busy = 0
+			}
+
+			// CPUStat contains counters accumulated since boot. Calculate usage from
+			// the delta between dashboard polls instead of reporting a lifetime average.
+			m.metricsMu.Lock()
+			if m.cpuSamples == nil {
+				m.cpuSamples = make(map[string]cpuSnapshot)
+			}
+			previous, hasPrevious := m.cpuSamples[nodeIP]
+			usage := previous.usage
+			if hasPrevious && total > previous.total && busy >= previous.busy {
+				usage = int(((busy - previous.busy) / (total - previous.total)) * 100)
+				if usage < 0 {
+					usage = 0
+				} else if usage > 100 {
+					usage = 100
+				}
+			}
+			m.cpuSamples[nodeIP] = cpuSnapshot{busy: busy, total: total, usage: usage}
+			m.metricsMu.Unlock()
+			overview.CPUUsage = usage
+		}
+	}
+
+	// 3. Real Uptime from /proc/uptime via client.Read
+	if uptimeReader, err := m.client.Read(nodeCtx, "/proc/uptime"); err == nil {
+		var upSec, idleSec float64
+		if data, err := io.ReadAll(uptimeReader); err == nil {
+			if _, err := fmt.Sscanf(string(data), "%f %f", &upSec, &idleSec); err == nil && upSec > 0 {
+				d := time.Duration(upSec) * time.Second
+				days := int(d.Hours()) / 24
+				hours := int(d.Hours()) % 24
+				mins := int(d.Minutes()) % 60
+				if days > 0 {
+					overview.Uptime = fmt.Sprintf("%dd %dh", days, hours)
+				} else if hours > 0 {
+					overview.Uptime = fmt.Sprintf("%dh %dm", hours, mins)
+				} else {
+					overview.Uptime = fmt.Sprintf("%dm", mins)
+				}
+			}
+		}
+		_ = uptimeReader.Close()
+	}
+
+	// 4. Real Kubernetes Version from COSI k8s.KubeletStatus
+	if k8sList, err := safe.StateListAll[*talosk8s.KubeletStatus](nodeCtx, m.client.COSI); err == nil {
+		for ks := range k8sList.All() {
+			if ks == nil || ks.TypedSpec() == nil {
+				continue
+			}
+			img := ks.TypedSpec().Image
+			if idx := strings.LastIndex(img, ":"); idx != -1 {
+				overview.KubernetesVersion = img[idx+1:]
+				break
+			}
+		}
 	}
 
 	return overview, nil
@@ -537,12 +617,76 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 		for _, mem := range msg.GetMembers() {
 			members = append(members, EtcdMemberInfo{
 				ID:         fmt.Sprintf("%016x", mem.GetId()),
+				Name:       mem.GetHostname(),
 				Hostname:   mem.GetHostname(),
 				ClientURLs: mem.GetClientUrls(),
 				PeerURLs:   mem.GetPeerUrls(),
 				IsLearner:  mem.GetIsLearner(),
-				Healthy:    !mem.GetIsLearner(),
+				Healthy:    false,
 			})
+		}
+	}
+
+	// EtcdMemberList describes membership, not health. Query each reachable
+	// control-plane node for its actual member status and correlate by member ID.
+	type memberRuntimeStatus struct {
+		leader    uint64
+		dbSize    int64
+		raftTerm  uint64
+		raftIndex uint64
+		errors    []string
+	}
+	statuses := make(map[string]memberRuntimeStatus)
+	var totalDBSize uint64
+	var leaderID string
+	var raftTerm, raftIndex uint64
+	for _, cp := range cpCandidates {
+		statusCtx, statusCancel := context.WithTimeout(reqCtx, 3*time.Second)
+		statusResp, statusErr := m.client.EtcdStatus(client.WithNode(statusCtx, cp))
+		statusCancel()
+		if statusErr != nil || statusResp == nil {
+			continue
+		}
+		for _, msg := range statusResp.GetMessages() {
+			status := msg.GetMemberStatus()
+			if status == nil {
+				continue
+			}
+			id := fmt.Sprintf("%016x", status.GetMemberId())
+			statuses[id] = memberRuntimeStatus{
+				leader: status.GetLeader(), dbSize: status.GetDbSize(),
+				raftTerm: status.GetRaftTerm(), raftIndex: status.GetRaftIndex(),
+				errors: append([]string(nil), status.GetErrors()...),
+			}
+			if status.GetDbSize() > 0 {
+				totalDBSize += uint64(status.GetDbSize())
+			}
+			if status.GetLeader() != 0 {
+				leaderID = fmt.Sprintf("%016x", status.GetLeader())
+			}
+			if status.GetRaftTerm() > raftTerm {
+				raftTerm = status.GetRaftTerm()
+			}
+			if status.GetRaftIndex() > raftIndex {
+				raftIndex = status.GetRaftIndex()
+			}
+		}
+	}
+
+	leaderName := ""
+	for i := range members {
+		status, ok := statuses[members[i].ID]
+		if !ok {
+			continue
+		}
+		members[i].Healthy = len(status.errors) == 0
+		members[i].Leader = members[i].ID == leaderID
+		members[i].Errors = status.errors
+		if status.dbSize > 0 {
+			members[i].DBSize = formatBytes(uint64(status.dbSize))
+		}
+		if members[i].Leader {
+			leaderName = members[i].Hostname
 		}
 	}
 
@@ -568,12 +712,21 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 		log.Printf("[WARN] EtcdAlarmList failed on %s: %v", activeCP, alarmErr)
 	}
 
-	healthy := len(members) > 0 && len(alarms) == 0 && alarmCheckSuccess
+	healthyMembers := len(members) > 0
+	for _, member := range members {
+		healthyMembers = healthyMembers && member.Healthy
+	}
+	healthy := healthyMembers && len(alarms) == 0 && alarmCheckSuccess
 
 	return &EtcdClusterStatus{
-		Healthy: healthy,
-		Members: members,
-		Alarms:  alarms,
+		Healthy:     healthy,
+		Members:     members,
+		Alarms:      alarms,
+		LeaderID:    leaderID,
+		LeaderName:  leaderName,
+		TotalDBSize: formatBytes(totalDBSize),
+		RaftTerm:    raftTerm,
+		RaftIndex:   raftIndex,
 	}, nil
 }
 

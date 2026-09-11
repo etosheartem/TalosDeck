@@ -2,20 +2,33 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
+	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrInvalidToken       = errors.New("invalid or expired token")
+)
+
+var (
+	envSecretOnce     sync.Once
+	cachedEnvSecret   string
+	envPasswordOnce   sync.Once
+	cachedEnvPassword string
 )
 
 // Claims defines custom JWT claims including user role.
@@ -25,42 +38,84 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// AuthManager manages authentication credentials and JWT signing.
+// AuthManager manages authentication credentials, JWT signing, and token revocation.
 type AuthManager struct {
 	adminPassword string
 	jwtSecret     []byte
 	tokenTTL      time.Duration
+	leeway        time.Duration
+	revokedMu     sync.RWMutex
+	revokedTokens map[string]time.Time // key: JTI or token string, value: expiration time
 }
 
 // NewAuthManager initializes an AuthManager with given password and secret.
+// Ephemeral random secrets are generated if none are provided (SEC-01).
 func NewAuthManager(adminPassword, jwtSecret string) *AuthManager {
 	if adminPassword == "" {
-		adminPassword = "admin"
+		adminPassword = RandomString(16)
+		log.Printf("[SECURITY WARNING] No admin password configured. Generated ephemeral admin password: %s", adminPassword)
 	}
 	if jwtSecret == "" {
-		jwtSecret = "talosdeck-default-secret-key-32-chars-long-jwt-auth"
+		jwtSecret = RandomString(32)
+		log.Printf("[SECURITY] No JWT secret configured. Generated ephemeral 256-bit JWT secret.")
 	}
 
 	return &AuthManager{
 		adminPassword: adminPassword,
 		jwtSecret:     []byte(jwtSecret),
 		tokenTTL:      24 * time.Hour,
+		leeway:        1 * time.Minute,
+		revokedTokens: make(map[string]time.Time),
 	}
 }
 
 // NewAuthManagerFromEnv initializes an AuthManager reading from environment variables.
+// If variables are unset, process-wide ephemeral credentials are used (SEC-01).
 func NewAuthManagerFromEnv() *AuthManager {
 	adminPassword := os.Getenv("TALOSDECK_ADMIN_PASSWORD")
+	if adminPassword == "" {
+		envPasswordOnce.Do(func() {
+			cachedEnvPassword = RandomString(16)
+			log.Printf("[SECURITY WARNING] No TALOSDECK_ADMIN_PASSWORD set. Generated process-wide ephemeral admin password: %s", cachedEnvPassword)
+		})
+		adminPassword = cachedEnvPassword
+	}
+
 	jwtSecret := os.Getenv("TALOSDECK_JWT_SECRET")
+	if jwtSecret == "" {
+		envSecretOnce.Do(func() {
+			cachedEnvSecret = RandomString(32)
+			log.Printf("[SECURITY] No TALOSDECK_JWT_SECRET set. Generated process-wide ephemeral 256-bit JWT secret.")
+		})
+		jwtSecret = cachedEnvSecret
+	}
+
 	return NewAuthManager(adminPassword, jwtSecret)
 }
 
-// VerifyPassword checks if the provided password matches the configured admin password.
-func (a *AuthManager) VerifyPassword(password string) bool {
-	return password == a.adminPassword
+// SetTokenTTL updates token lifetime (primarily for testing).
+func (a *AuthManager) SetTokenTTL(d time.Duration) {
+	a.tokenTTL = d
 }
 
-// GenerateToken generates a signed JWT token valid for 24 hours.
+// SetLeeway updates clock skew leeway (primarily for testing).
+func (a *AuthManager) SetLeeway(d time.Duration) {
+	a.leeway = d
+}
+
+// VerifyPassword checks if the provided password matches the configured admin password in constant time (SEC-03).
+// Supports both bcrypt hashed passwords and constant-time string comparison.
+func (a *AuthManager) VerifyPassword(password string) bool {
+	if password == "" || a.adminPassword == "" {
+		return false
+	}
+	if strings.HasPrefix(a.adminPassword, "$2a$") || strings.HasPrefix(a.adminPassword, "$2b$") {
+		return bcrypt.CompareHashAndPassword([]byte(a.adminPassword), []byte(password)) == nil
+	}
+	return subtle.ConstantTimeCompare([]byte(password), []byte(a.adminPassword)) == 1
+}
+
+// GenerateToken generates a signed JWT token valid for tokenTTL with JTI, Issuer, and Subject (SEC-07).
 func (a *AuthManager) GenerateToken(username, role string) (string, error) {
 	if username == "" {
 		username = "admin"
@@ -74,9 +129,10 @@ func (a *AuthManager) GenerateToken(username, role string) (string, error) {
 		Username: username,
 		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        uuid.New().String(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(a.tokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now.Add(-10 * time.Second)),
 			Issuer:    "TalosDeck",
 			Subject:   username,
 		},
@@ -91,14 +147,26 @@ func (a *AuthManager) GenerateToken(username, role string) (string, error) {
 	return tokenString, nil
 }
 
-// ValidateToken parses and validates the given JWT token string.
+// ValidateToken parses and validates the given JWT token string, enforcing issuer, subject, leeway, and revocation status (SEC-07, SEC-08).
 func (a *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
+	tokenString = strings.TrimSpace(tokenString)
+	if tokenString == "" {
+		return nil, ErrInvalidToken
+	}
+
+	parseOpts := []jwt.ParserOption{
+		jwt.WithIssuer("TalosDeck"),
+	}
+	if a.leeway > 0 {
+		parseOpts = append(parseOpts, jwt.WithLeeway(a.leeway))
+	}
+
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return a.jwtSecret, nil
-	})
+	}, parseOpts...)
 
 	if err != nil {
 		return nil, ErrInvalidToken
@@ -109,12 +177,86 @@ func (a *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 		return nil, ErrInvalidToken
 	}
 
+	// Validate subject and username (SEC-07)
+	if claims.Username == "" || claims.Subject == "" || claims.Subject != claims.Username {
+		return nil, ErrInvalidToken
+	}
+
+	// Check if token is revoked (SEC-08)
+	a.revokedMu.RLock()
+	isRevoked := false
+	if a.revokedTokens != nil {
+		if claims.ID != "" {
+			if _, exists := a.revokedTokens[claims.ID]; exists {
+				isRevoked = true
+			}
+		}
+		if !isRevoked {
+			if _, exists := a.revokedTokens[tokenString]; exists {
+				isRevoked = true
+			}
+		}
+	}
+	a.revokedMu.RUnlock()
+
+	if isRevoked {
+		return nil, ErrInvalidToken
+	}
+
 	return claims, nil
+}
+
+// RevokeToken invalidates the specified token until its expiration (SEC-08, SEC-13).
+func (a *AuthManager) RevokeToken(tokenString string) error {
+	tokenString = strings.TrimSpace(tokenString)
+	if tokenString == "" {
+		return ErrInvalidToken
+	}
+
+	var jti string
+	expiry := time.Now().Add(a.tokenTTL)
+
+	parser := jwt.NewParser()
+	var claims Claims
+	if _, _, err := parser.ParseUnverified(tokenString, &claims); err == nil {
+		if claims.ID != "" {
+			jti = claims.ID
+		}
+		if claims.ExpiresAt != nil {
+			expiry = claims.ExpiresAt.Time
+		}
+	}
+
+	a.revokedMu.Lock()
+	defer a.revokedMu.Unlock()
+
+	if a.revokedTokens == nil {
+		a.revokedTokens = make(map[string]time.Time)
+	}
+
+	// SEC-13: Periodic cleanup of expired tokens to prevent unbounded memory growth
+	now := time.Now()
+	for k, exp := range a.revokedTokens {
+		if now.After(exp) {
+			delete(a.revokedTokens, k)
+		}
+	}
+
+	if jti != "" {
+		a.revokedTokens[jti] = expiry
+	}
+	a.revokedTokens[tokenString] = expiry
+
+	return nil
 }
 
 // RequireAuth returns a Fiber middleware that checks for a valid JWT Bearer token.
 func RequireAuth(authMgr *AuthManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		if authMgr == nil {
+			return c.Next()
+		}
+
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -166,17 +308,55 @@ func GetContextUser(c *fiber.Ctx, authMgr *AuthManager) string {
 	return "viewer"
 }
 
-// GetClientIP returns the real client IP address checking X-Forwarded-For first.
-func GetClientIP(c *fiber.Ctx) string {
-	xff := c.Get("X-Forwarded-For")
-	if xff != "" {
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
+// isTrustedProxy checks if an IP is a loopback or matches configured trusted proxies (SEC-06).
+func isTrustedProxy(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
 	}
-	return c.IP()
+	if ip.IsLoopback() {
+		return true
+	}
+	if trustedEnv := os.Getenv("TALOSDECK_TRUSTED_PROXIES"); trustedEnv != "" {
+		for _, trusted := range strings.Split(trustedEnv, ",") {
+			trusted = strings.TrimSpace(trusted)
+			if trusted == "" {
+				continue
+			}
+			if strings.Contains(trusted, "/") {
+				if _, ipNet, err := net.ParseCIDR(trusted); err == nil && ipNet.Contains(ip) {
+					return true
+				}
+			} else if trusted == ipStr {
+				return true
+			}
+		}
+	}
+	return false
 }
 
-// RandomString generates a random hex string for tokens/secrets.
+// GetClientIP returns the real client IP address checking X-Forwarded-For ONLY if direct peer is trusted (SEC-06).
+func GetClientIP(c *fiber.Ctx) string {
+	directIP := c.IP()
+	if isTrustedProxy(directIP) {
+		if xff := c.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			clientIP := strings.TrimSpace(parts[0])
+			if parsed := net.ParseIP(clientIP); parsed != nil {
+				return clientIP
+			}
+		}
+		if xrip := c.Get("X-Real-IP"); xrip != "" {
+			clientIP := strings.TrimSpace(xrip)
+			if parsed := net.ParseIP(clientIP); parsed != nil {
+				return clientIP
+			}
+		}
+	}
+	return directIP
+}
+
+// RandomString generates a cryptographically secure random hex string for tokens/secrets.
 func RandomString(n int) string {
 	bytes := make([]byte, n)
 	_, _ = rand.Read(bytes)

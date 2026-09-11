@@ -2,12 +2,16 @@ package k8s
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestK8sManager_NilSafety(t *testing.T) {
@@ -217,5 +221,80 @@ func TestK8sManager_ListNamespaces(t *testing.T) {
 	}
 	if len(nsList) != 2 {
 		t.Errorf("expected 2 namespaces, got %d", len(nsList))
+	}
+}
+
+func TestSetNodeMaintenanceResolvesIP(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset(&corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "talos-worker-1"},
+		Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+			{Type: corev1.NodeInternalIP, Address: "10.42.0.111"},
+		}},
+	})
+	mgr := &K8sManager{clientset: fakeClient}
+
+	name, err := mgr.SetNodeMaintenance(context.Background(), "10.42.0.111", true)
+	if err != nil {
+		t.Fatalf("SetNodeMaintenance failed: %v", err)
+	}
+	if name != "talos-worker-1" {
+		t.Fatalf("expected resolved node name, got %q", name)
+	}
+	node, err := fakeClient.CoreV1().Nodes().Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to read patched node: %v", err)
+	}
+	if !node.Spec.Unschedulable {
+		t.Fatal("expected node to be cordoned")
+	}
+}
+
+func TestCordonAndDrainUsesEvictionAndWaits(t *testing.T) {
+	controller := true
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "talos-worker-1"}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "app", Namespace: "default",
+				OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "app-rs", Controller: &controller}},
+			},
+			Spec: corev1.PodSpec{NodeName: "talos-worker-1"},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "network-agent", Namespace: "kube-system",
+				OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: "network-agent", Controller: &controller}},
+			},
+			Spec: corev1.PodSpec{NodeName: "talos-worker-1"},
+		},
+	)
+	evictions := 0
+	fakeClient.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		create, ok := action.(k8stesting.CreateAction)
+		if !ok || action.GetSubresource() != "eviction" {
+			return false, nil, nil
+		}
+		eviction, ok := create.GetObject().(*policyv1.Eviction)
+		if !ok {
+			return true, nil, fmt.Errorf("unexpected eviction object %T", create.GetObject())
+		}
+		evictions++
+		if err := fakeClient.Tracker().Delete(corev1.SchemeGroupVersion.WithResource("pods"), eviction.Namespace, eviction.Name); err != nil {
+			return true, nil, err
+		}
+		return true, eviction, nil
+	})
+
+	mgr := &K8sManager{clientset: fakeClient}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := mgr.CordonAndDrainNode(ctx, "talos-worker-1"); err != nil {
+		t.Fatalf("CordonAndDrainNode failed: %v", err)
+	}
+	if evictions != 1 {
+		t.Fatalf("expected one workload eviction, got %d", evictions)
+	}
+	if _, err := fakeClient.CoreV1().Pods("kube-system").Get(ctx, "network-agent", metav1.GetOptions{}); err != nil {
+		t.Fatalf("daemonset pod should remain on the node: %v", err)
 	}
 }

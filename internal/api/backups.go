@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -13,6 +15,7 @@ import (
 )
 
 // RegisterBackupRoutes registers the cluster backup endpoints on the provided Fiber router.
+// BKP-02 / BKP-14: Secures all mutating and sensitive download/listing endpoints with RequireAuth.
 func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra ...any) {
 	var authMgr *auth.AuthManager
 	var auditMgr *audit.AuditManager
@@ -24,10 +27,13 @@ func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra .
 			auditMgr = v
 		}
 	}
-	_ = authMgr
-	_ = auditMgr
+
 	// GET /api/backups -> returns list of backups
-	router.Get("/backups", func(c *fiber.Ctx) error {
+	listHandlers := []fiber.Handler{}
+	if authMgr != nil {
+		listHandlers = append(listHandlers, auth.RequireAuth(authMgr))
+	}
+	listHandlers = append(listHandlers, func(c *fiber.Ctx) error {
 		backups, err := bm.ListBackups()
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -39,8 +45,9 @@ func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra .
 		}
 		return c.JSON(backups)
 	})
+	router.Get("/backups", listHandlers...)
 
-	// Handlers with optional auth middleware
+	// POST /api/backups/create -> creates a new backup
 	createHandlers := []fiber.Handler{}
 	if authMgr != nil {
 		createHandlers = append(createHandlers, auth.RequireAuth(authMgr))
@@ -51,9 +58,22 @@ func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra .
 			Node string `json:"node"` // optional node IP for etcd
 		}
 
-		_ = c.BodyParser(&req)
+		if len(c.Body()) > 0 {
+			if err := c.BodyParser(&req); err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": fmt.Sprintf("invalid request payload: %v", err),
+				})
+			}
+		}
 		if req.Type == "" {
 			req.Type = "full"
+		}
+
+		// BKP-03: Validate IP format if provided
+		if req.Node != "" && net.ParseIP(strings.TrimSpace(req.Node)) == nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": fmt.Sprintf("invalid control plane node IP address: %q", req.Node),
+			})
 		}
 
 		ctx, cancel := context.WithTimeout(c.UserContext(), 3*time.Minute)
@@ -86,7 +106,17 @@ func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra .
 					Details: map[string]any{"type": req.Type, "node": req.Node, "error": err.Error()},
 				})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+
+			statusCode := fiber.StatusInternalServerError
+			if strings.Contains(err.Error(), "already in progress") {
+				statusCode = fiber.StatusConflict
+			} else if strings.Contains(err.Error(), "insufficient disk space") {
+				statusCode = fiber.StatusInsufficientStorage
+			} else if strings.Contains(err.Error(), "invalid control plane IP") {
+				statusCode = fiber.StatusBadRequest
+			}
+
+			return c.Status(statusCode).JSON(fiber.Map{
 				"error": fmt.Sprintf("backup creation failed: %v", err),
 			})
 		}
@@ -109,18 +139,27 @@ func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra .
 	})
 	router.Post("/backups/create", createHandlers...)
 
-	// GET /api/backups/:id/download -> downloads the backup archive file
-	router.Get("/backups/:id/download", func(c *fiber.Ctx) error {
+	// GET /api/backups/:id/download -> downloads the backup archive file (BKP-02 / BKP-14: Protected by RequireAuth)
+	downloadHandlers := []fiber.Handler{}
+	if authMgr != nil {
+		downloadHandlers = append(downloadHandlers, auth.RequireAuth(authMgr))
+	}
+	downloadHandlers = append(downloadHandlers, func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		info, filePath, err := bm.GetBackup(id)
 		if err != nil {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			statusCode := fiber.StatusNotFound
+			if strings.Contains(err.Error(), "path traversal") || strings.Contains(err.Error(), "invalid backup ID") {
+				statusCode = fiber.StatusBadRequest
+			}
+			return c.Status(statusCode).JSON(fiber.Map{
 				"error": fmt.Sprintf("backup '%s' not found: %v", id, err),
 			})
 		}
 
 		return c.Download(filePath, info.Filename)
 	})
+	router.Get("/backups/:id/download", downloadHandlers...)
 
 	// DELETE /api/backups/:id -> removes backup
 	deleteHandlers := []fiber.Handler{}
@@ -142,7 +181,15 @@ func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra .
 					Details: map[string]any{"id": id, "error": err.Error()},
 				})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+
+			statusCode := fiber.StatusInternalServerError
+			if strings.Contains(err.Error(), "path traversal") || strings.Contains(err.Error(), "invalid backup ID") {
+				statusCode = fiber.StatusBadRequest
+			} else if strings.Contains(err.Error(), "not found") {
+				statusCode = fiber.StatusNotFound
+			}
+
+			return c.Status(statusCode).JSON(fiber.Map{
 				"error": fmt.Sprintf("failed to delete backup '%s': %v", id, err),
 			})
 		}

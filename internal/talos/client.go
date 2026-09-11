@@ -18,6 +18,8 @@ type TalosManager struct {
 	endpoints       []string
 	nodes           []string
 	mu              sync.RWMutex
+	metricsMu       sync.Mutex
+	cpuSamples      map[string]cpuSnapshot
 }
 
 // NewTalosManager opens the given talosconfig and initializes a Talos client.
@@ -69,6 +71,7 @@ func NewTalosManager(talosconfigPath string, extraNodes ...string) (*TalosManage
 		talosconfigPath: talosconfigPath,
 		endpoints:       endpoints,
 		nodes:           nodes,
+		cpuSamples:      make(map[string]cpuSnapshot),
 	}, nil
 }
 

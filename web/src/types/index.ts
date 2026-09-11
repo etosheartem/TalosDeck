@@ -104,11 +104,14 @@ export interface K8sPod {
   name: string
   namespace: string
   nodeName: string
-  nodeIP: string
+  node?: string
+  nodeIP?: string
   status: PodStatus
   readyContainers: string // e.g. "1/1"
+  readyCount?: number
   restarts: number
   ip: string
+  podIp?: string
   age: string
   cpu?: string
   memory?: string

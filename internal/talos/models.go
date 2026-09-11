@@ -87,20 +87,29 @@ type PartitionInfo struct {
 
 // EtcdClusterStatus represents the health and topology of the etcd cluster.
 type EtcdClusterStatus struct {
-	Healthy bool             `json:"healthy"`
-	Members []EtcdMemberInfo `json:"members"`
-	Alarms  []EtcdAlarmInfo  `json:"alarms"`
-	Errors  []string         `json:"errors,omitempty"`
+	Healthy     bool             `json:"healthy"`
+	Members     []EtcdMemberInfo `json:"members"`
+	Alarms      []EtcdAlarmInfo  `json:"alarms"`
+	Errors      []string         `json:"errors,omitempty"`
+	LeaderID    string           `json:"leaderId,omitempty"`
+	LeaderName  string           `json:"leaderName,omitempty"`
+	TotalDBSize string           `json:"totalDbSize,omitempty"`
+	RaftTerm    uint64           `json:"raftTerm,omitempty"`
+	RaftIndex   uint64           `json:"raftIndex,omitempty"`
 }
 
 // EtcdMemberInfo represents a member in the etcd cluster.
 type EtcdMemberInfo struct {
 	ID         string   `json:"id"`
+	Name       string   `json:"name"`
 	Hostname   string   `json:"hostname"`
 	ClientURLs []string `json:"clientUrls"`
 	PeerURLs   []string `json:"peerUrls"`
 	IsLearner  bool     `json:"isLearner"`
 	Healthy    bool     `json:"healthy"`
+	Leader     bool     `json:"leader"`
+	DBSize     string   `json:"dbSize,omitempty"`
+	Errors     []string `json:"errors,omitempty"`
 }
 
 // EtcdAlarmInfo represents an active alarm in etcd.
@@ -108,4 +117,3 @@ type EtcdAlarmInfo struct {
 	MemberID string `json:"memberId"`
 	Alarm    string `json:"alarm"`
 }
-

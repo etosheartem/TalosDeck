@@ -182,3 +182,86 @@ func TestTelegramService_ConfigSaveAndLoad(t *testing.T) {
 		t.Errorf("unexpected saved config: %+v", saved)
 	}
 }
+
+func TestTelegramService_MessageTruncation(t *testing.T) {
+	var receivedText string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var p telegramPayload
+		_ = json.Unmarshal(body, &p)
+		receivedText = p.Text
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok": true}`))
+	}))
+	defer server.Close()
+
+	svc := NewTelegramService("bot:token", "12345", true)
+	svc.SetAPIBaseURL(server.URL)
+
+	// Long message > 4096 chars (ALT-05)
+	hugeMessage := strings.Repeat("Error line with detailed crash information\n", 200)
+	err := svc.SendAlert(LevelCritical, "Huge Alert", hugeMessage)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len([]rune(receivedText)) > 4096 {
+		t.Errorf("expected message <= 4096 chars, got %d", len([]rune(receivedText)))
+	}
+	if !strings.Contains(receivedText, "truncated") {
+		t.Errorf("expected truncation notice in text: %s", receivedText)
+	}
+}
+
+func TestTelegramService_HTMLNoRawTagsInTest(t *testing.T) {
+	var receivedText string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var p telegramPayload
+		_ = json.Unmarshal(body, &p)
+		receivedText = p.Text
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok": true}`))
+	}))
+	defer server.Close()
+
+	svc := NewTelegramService("bot:token", "12345", true)
+	svc.SetAPIBaseURL(server.URL)
+
+	err := svc.SendTestNotification("", "", "Custom test message")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify no double-escaped &lt;b&gt; (ALT-07)
+	if strings.Contains(receivedText, "&lt;b&gt;") || strings.Contains(receivedText, "&lt;/b&gt;") {
+		t.Errorf("found broken escaped tags in telegram text: %s", receivedText)
+	}
+}
+
+func TestTelegramService_RateLimitRetry(t *testing.T) {
+	var attempts int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&attempts, 1)
+		if count == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"ok": false, "error_code": 429, "description": "Too Many Requests", "parameters": {"retry_after": 1}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok": true}`))
+	}))
+	defer server.Close()
+
+	svc := NewTelegramService("bot:token", "12345", true)
+	svc.SetAPIBaseURL(server.URL)
+
+	err := svc.SendAlert(LevelInfo, "Rate limit test", "Should retry after 429")
+	if err != nil {
+		t.Fatalf("expected successful retry, got: %v", err)
+	}
+	if atomic.LoadInt32(&attempts) != 2 {
+		t.Errorf("expected 2 attempts after 429 retry, got %d", attempts)
+	}
+}

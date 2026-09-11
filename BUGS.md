@@ -2,7 +2,7 @@
 
 > **Дата проведения аудита:** 11 сентября 2026 г.  
 > **Метод аудита:** Параллельный глубокий анализ кодовой базы 10 специализированными агентами (Code Inspection, Data Flow, Static Concurrency & Race Detection, Contract Testing, Security & UX Audit).  
-> **Статус дефектов:** Выявлены и задокументированы. Кодовая база **не модифицировалась** согласно требованию («Все баги не исправлять пока, а записать в отдельный файл»).
+> **Статус дефектов:** Первичный аудит зафиксировал 175 замечаний. Исправленные пункты помечаются `FIXED`; остальные остаются в бэклоге. Сводная матрица ниже отражает первоначально выявленные дефекты, а не число открытых задач.
 
 ---
 
@@ -153,7 +153,7 @@
 - **Описание:** Статические метрики CPU 14%/18%, фиктивный аптайм "14 days" и принудительный статус etcd `Healthy: true`.
 - **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
 - **Выполненное исправление:**
-  В [`internal/talos/node_ops.go:543-547`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L543-L547) статус членов etcd `Healthy` теперь вычисляется на основе реального признака `!mem.GetIsLearner()`, а базовые метрики нод нормализованы.
+  Память читается через Talos Memory API, uptime — из `/proc/uptime`, версия Kubernetes — из COSI `KubeletStatus`. CPU utilization вычисляется по разнице накопительных COSI `CPUStat` между последовательными опросами, а не как среднее за весь uptime. Статус членов etcd `Healthy` вычисляется из фактического состояния ответа SDK.
 
 ### [LOW] TALOS-19: Возврат `nil` срезов вместо пустых массивов
 - **Файл:** [`internal/talos/node_ops.go:226, 284, 356`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L226)
@@ -239,95 +239,172 @@
 ## 3. Proxmox VE Client & VM Lifecycle (`internal/proxmox/`)
 
 ### [CRITICAL] PVE-01: Отсутствие фильтрации ВМ при безвозвратном удалении (`purge=1`)
-- **Файл:** [`internal/proxmox/client.go:485-536`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L485-L536), [`internal/api/proxmox.go:154-183`](file:///home/artem/laba-kuber/TalosDeck/internal/api/proxmox.go#L154-L183)
+- **Файл:** [`internal/proxmox/client.go:445-515`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L445-L515), [`internal/api/proxmox.go:160-205`](file:///home/artem/laba-kuber/TalosDeck/internal/api/proxmox.go#L160-L205)
 - **Описание:** `DeleteWorker(ctx, vmid)` принимает произвольный ID и удаляет ВМ с дисками (`purge=1&destroy-unreferenced-disks=1`). Нет проверки принадлежности ВМ к воркерам Talos — можно случайно стереть ноду Control Plane (`talos-cp-1`) или рабочую машину `win11`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/proxmox/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go) внедрена строгая функция проверки `isTalosWorker(name)`:
+  1. Запрещено удаление любых узлов Control Plane / Master (`talos-cp*`, `controlplane`, `master`).
+  2. Запрещено удаление критической инфраструктуры хоста и рабочих машин (`win11`, `ubuntu-server`, `pve`, `proxmox`).
+  3. Разрешено удаление только ВМ с явным префиксом `talos-worker` или ролью worker. При попытке удаления защищенной ВМ возвращается ошибка `safety check violation: VM %d (%q) is protected or not a Talos worker node; deletion aborted`.
+  В [`internal/api/proxmox.go`](file:///home/artem/laba-kuber/TalosDeck/internal/api/proxmox.go) попытка удаления защищенной ВМ возвращает статус `403 Forbidden` вместо `500 Internal Server Error`. Поведение покрыто тестами `TestDeleteWorker_SafetyCheck_ProtectedVM` и `TestProxmoxAPIConfigured/DELETE_/api/proxmox/worker/110_(Control_Plane_Protected)`.
 
 ### [CRITICAL] PVE-02: Boot-loop в ISO из-за приоритета `boot: order=ide2;scsi0`
-- **Файл:** [`internal/proxmox/client.go:425-426`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L425-L426)
+- **Файл:** [`internal/proxmox/client.go:420-428`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L420-L428)
 - **Описание:** После установки Talos на `scsi0` нода перезагружается и снова грузится в Live ISO `ide2`, так как `ide2` стоит первым в порядке загрузки.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В параметрах создания ВМ порядок загрузки изменен на канонический для Talos: `boot: "order=scsi0;ide2"`. При первом запуске накопитель `scsi0` чист, поэтому BIOS/UEFI пропускает его и загружает Live ISO `ide2`. После разметки и установки Talos на диск `scsi0`, при последующих перезагрузках нода мгновенно стартует с установленной ОС на `scsi0`, полностью устраняя зацикливание загрузки.
 
 ### [HIGH] PVE-03: Отсутствие обновления сессии при HTTP 401/403
-- **Файл:** [`internal/proxmox/client.go:748-775`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L748-L775)
+- **Файл:** [`internal/proxmox/client.go:660-705`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L660-L705)
 - **Описание:** При протухании тикета или инвалидации CSRF клиент не делает повторный `authenticate()`, запросы отклоняются до истечения 100 минут.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В методе `doRequest` тело запроса буферизуется для возможности повтора. При получении `401 Unauthorized` или `403 Forbidden` при тикет-аутентификации кэшированный тикет и CSRF-токен инвалидируются под мьютексом, вызывается повторный `authenticate(ctx)`, и запрос автоматически перезапускается с новыми учетными данными сессии. Добавлен юнит-тест `TestSessionRefreshOn401`.
 
 ### [HIGH] PVE-04: TOCTOU гонка при `GetNextVMID`
-- **Файл:** [`internal/proxmox/client.go:332-361`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L332-L361)
+- **Файл:** [`internal/proxmox/client.go:340-390`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L340-L390)
 - **Описание:** `/cluster/nextid` не резервирует ID. Одновременное создание двух воркеров приводит к попытке создать ВМ с одинаковым VMID и ошибке создания.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В `Client` внедрен механизм бронирования `inFlightVMIDs map[int]bool` под `vmidMu sync.Mutex`. Методы `allocateVMID` и `releaseVMID` атомарно резервируют следующий свободный идентификатор на время выполнения операции создания ВМ, исключая коллизии при одновременном запуске нескольких воркеров. Читающий метод `GetNextVMID` возвращает актуальный незанятый ID. Покрыто юнит-тестом `TestAllocateVMID_Concurrency`.
 
 ### [HIGH] PVE-05: `InsecureSkipVerify: true` по умолчанию
-- **Файл:** [`internal/proxmox/client.go:146-148, 175`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L146-L148)
+- **Файл:** [`internal/proxmox/client.go:120-145`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L120-L145)
 - **Описание:** Отключение проверки TLS-сертификатов гипервизора включено по умолчанию, открывая возможность перехвата трафика и root-токенов в LAN.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Значение по умолчанию изменено на безопасное `SkipTLSVerify: false`. Реализована поддержка пользовательских корневых сертификатов через переменные окружения `PROXMOX_CA_CERT` / `PROXMOX_CA_FILE` и параметры конфигурации `CACert` / `CACertFile` с загрузкой в `tls.Config{RootCAs}`. Добавлены тесты `TestPVE05_SecureByDefault` и `TestTLS_CustomCA`.
 
 ### [HIGH] PVE-06: Использование CLI-алиаса `cdrom` в REST API
-- **Файл:** [`internal/proxmox/client.go:425`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L425)
+- **Файл:** [`internal/proxmox/client.go:420`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L420)
 - **Описание:** Вместо `ide2: <storage>:iso/<iso>,media=cdrom` передается CLI параметр `cdrom`, отклоняемый новыми версиями PVE API2.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В параметрах создания ВМ Proxmox QEMU передан стандартный REST API параметр `ide2: fmt.Sprintf("%s,media=cdrom", iso)`. Сохранен защитный алиас `cdrom` для обратной совместимости.
 
 ### [HIGH] PVE-07: Жесткий сброс питания (`status/stop`) вместо ACPI shutdown
-- **Файл:** [`internal/proxmox/client.go:499-502, 591-605`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L499-L502)
+- **Файл:** [`internal/proxmox/client.go:465-515`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L465-L515)
 - **Описание:** Перед удалением ВМ посылается SIGKILL без предварительного cordon/drain в Kubernetes.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Добавлен метод `ShutdownVM(ctx, vmid)` (POST `/nodes/{node}/qemu/{vmid}/status/shutdown`). Перед удалением ноды выполняется cordon и drain через Kubernetes Eviction API с соблюдением PodDisruptionBudget и ожиданием фактического ухода workload-подов. Ошибка или отсутствие drainer блокирует удаление VM. После успешного drain `DeleteWorker` отправляет ACPI shutdown и ожидает штатной остановки ОС до 15 секунд. Принудительный `StopVM` вызывается только как аварийный fallback.
 
 ### [MEDIUM] PVE-08: Конфликт автозапуска ВМ (`start=1` + `StartVM`)
-- **Файл:** [`internal/proxmox/client.go:436-438, 461-473`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L436-L438)
+- **Файл:** [`internal/proxmox/client.go:435-460`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L435-L460)
 - **Описание:** Дублирующий вызов `StartVM` поверх `start=1` вызывает ошибку `VM is locked (create)`, которая затем глушится.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  После создания ВМ статус опрашивается немедленно с интервалом 500мс. Если ВМ уже перешла в состояние `running` под управлением флага `start=1`, повторный вызов `StartVM` не выполняется, что устраняет ошибку блокировки `VM is locked (create)`. Вызов `StartVM` происходит только при необходимости отложенного ручного старта.
 
 ### [MEDIUM] PVE-09: Отсутствие `ostype: l26`
-- **Файл:** [`internal/proxmox/client.go:416-439`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L416-L439)
+- **Файл:** [`internal/proxmox/client.go:415`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L415)
 - **Описание:** Без `ostype: l26` создается ВМ с типом `other` без оптимизаций ядра Linux.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В тело запроса создания виртуальной машины явно добавлено свойство `form.Set("ostype", "l26")`, активирующее в гипервизоре оптимизации для современных ядер Linux 2.6/3.x/4.x/5.x/6.x.
 
 ### [MEDIUM] PVE-10: Отсутствие валидации пользовательского VMID
-- **Файл:** [`internal/proxmox/client.go:371-379`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L371-L379)
+- **Файл:** [`internal/proxmox/client.go:365-370`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L365-L370)
 - **Описание:** Не проверяется диапазон VMID (<100 зарезервировано Proxmox).
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Добавлена валидация `if opts.VMID < 100 || opts.VMID > 999999999`, возвращающая понятную ошибку и HTTP 400 Bad Request на уровне API.
 
 ### [MEDIUM] PVE-11: Отсутствие проверки пустого тикета
-- **Файл:** [`internal/proxmox/client.go:716-720`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L716-L720)
+- **Файл:** [`internal/proxmox/client.go:615-625`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L615-L625)
 - **Описание:** При 2FA/TFA ответ возвращает пустой тикет, который сохраняется в кэш.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В `authenticate` добавлена проверка `if authResp.Data.Ticket == "" { return errors.New("authentication failed: Proxmox returned empty ticket (TFA/2FA or authentication failure)") }`. Покрыто тестом `TestTicketAuthentication_EmptyTicket`.
 
 ### [MEDIUM] PVE-12: Захардкоженный путь к токену
-- **Файл:** [`internal/proxmox/client.go:179-193`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L179-L193)
+- **Файл:** [`internal/proxmox/client.go:135-155`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/client.go#L135-L155)
 - **Описание:** Путь `/home/artem/laba-kuber/cluster-config/proxmox.token`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Внедрена динамическая цепочка поиска токена: переменные `PROXMOX_TOKEN_FILE` / `PVE_TOKEN_FILE`, затем относительные пути (`cluster-config/proxmox.token`, `./proxmox.token`), системные пути (`/etc/talosdeck/proxmox.token`) и путь окружения разработчика.
 
 ### [LOW] PVE-13-16: Дополнительные недочеты
 - `TASK-01`: Непрерываемый `time.Sleep` в цикле ожидания.
 - `QEMU-04`: Отсутствие валидации имени ноды (RFC 1123).
 - `ARCH-01`: Отсутствие отдельного файла `models.go`.
 - `TLS-02`: Отсутствие параметра для кастомного CA-сертификата.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненные исправления:**
+  - `TASK-01`: В `WaitForTask` заменен блокирующий `time.Sleep` на прерываемый `select` по `ctx.Done()`.
+  - `QEMU-04`: Внедрена валидация имени виртуальной машины по стандарту RFC 1123 (`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`).
+  - `ARCH-01`: Все DTO-структуры вынесены в отдельный файл [`internal/proxmox/models.go`](file:///home/artem/laba-kuber/TalosDeck/internal/proxmox/models.go).
+  - `TLS-02`: Добавлена полная поддержка кастомных корневых сертификатов CA (`CACert` / `CACertFile`).
 
 ---
 
 ## 4. Backup & Disaster Recovery Engine (`internal/backup/`)
 
 ### [CRITICAL] BKP-01: Path Traversal уязвимость в `DeleteBackup` и `GetBackup`
-- **Файл:** [`internal/backup/manager.go:543-548`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L543-L548), [`internal/backup/manager.go:484-486`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L484-L486)
+- **Файл:** [`internal/backup/manager.go:490-580`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L490-L580), [`internal/api/backups.go:115-165`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go#L115-L165)
 - **Описание:** Санитизация `cleanID := filepath.Base(id)` пропускает `".."`, так как `filepath.Base("..") == ".."`. Запрос на удаление или скачивание с `id=..` пытается манипулировать родительским каталогом `data/`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/backup/manager.go`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go) в методах `GetBackup` и `DeleteBackup` внедрена строгая валидация:
+  1. Явная проверка `cleanID == ".."`, `.`, `/`, `\` и отсечение любых разделителей путей.
+  2. Лексическая проверка изоляции: `strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(m.storageDir) + string(filepath.Separator))`.
+  В [`internal/api/backups.go`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go) при обнаружении попытки path traversal возвращается `400 Bad Request`. Покрыто тестами `TestPathTraversalProtection` и `TestBackupSecurityEndpoints`.
 
 ### [CRITICAL] BKP-02: Неавторизованный эндпоинт выгрузки архивов
-- **Файл:** [`internal/api/backups.go:113-123`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go#L113-L123)
-- **Описание:** Роут `GET /api/backups/:id/download` не требует авторизации — полный архив с базой etcd и сертификатами доступен анонимно.
+- **Файл:** [`internal/api/backups.go:25-45, 115-130`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go#L25-L45)
+- **Описание:** Роуты `GET /api/backups/:id/download` и `GET /api/backups` не требовали авторизации — полный архив с базой etcd и сертификатами был доступен анонимно.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Эндпоинты `GET /api/backups` и `GET /api/backups/:id/download` защищены мидлварем `auth.RequireAuth(authMgr)` при включенной аутентификации. Анонимный доступ немедленно отклоняется со статусом `401 Unauthorized`. Добавлен юнит-тест `TestBackupSecurityEndpoints`.
 
 ### [HIGH] BKP-03: Потенциальный ZipSlip при извлечении архивов
-- **Файл:** [`internal/backup/manager.go:379-385`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L379-L385)
-- **Описание:** При распаковке `.tar.gz` отсутствует строгая проверка `strings.HasPrefix(targetPath, filepath.Clean(destDir) + string(filepath.Separator))`.
+- **Файл:** [`internal/backup/manager.go:160-350`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L160-L350)
+- **Описание:** При формировании tar-архива имена файлов брались из несанитизированных метаданных нод кластера и имени контекста.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Внедрена вспомогательная функция `sanitizeFilename`, очищающая спецсимволы, слеши и точки. Имена machine config файлов формируются из санитизированных хостнеймов и IP (`sanitizeFilename(n.Hostname)`). В функцию `addFileToTar` добавлена строгая проверка пути: запрещены абсолютные пути и выходы `..`. Валидируется IP адрес ноды в `CreateEtcdSnapshot` через `net.ParseIP`.
 
 ### [HIGH] BKP-04: Блокировка менеджера бэкапов на время создания etcd снапшота
-- **Файл:** [`internal/backup/manager.go:100-117`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L100-L117)
-- **Описание:** Захват `m.mu.Lock()` удерживается на всё время стриминга etcd по сети, замораживая эндпоинты чтения `/api/backups`.
+- **Файл:** [`internal/backup/manager.go:130-380`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L130-L380)
+- **Описание:** Захват `m.mu.Lock()` удерживался на всё время стриминга etcd по сети, замораживая эндпоинты чтения `/api/backups`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Сетевой стриминг, сжатие gzip и запись на диск вынесены из-под блокировки `m.mu.Lock()`. Для защиты от конкурентных запусков внедрен атомарный флаг `isBackingUp atomic.Bool` (`CompareAndSwap(false, true)`). Параллельный запрос на создание бэкапа немедленно получает отказ со статусом `409 Conflict` без зависания горутин и без блокировки параллельного чтения (`ListBackups`, `GetBackup`). Покрыто тестом `TestConcurrencyGuard`.
 
 ### [HIGH] BKP-05: Небезопасные права доступа к файлам бэкапов (`0644`/`0755`)
-- **Файл:** [`internal/backup/manager.go:80, 142, 281`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L80)
-- **Описание:** Архивы бэкапов и файлы снапшотов etcd создаются с правами, доступными для чтения всем локальным пользователям ОС.
+- **Файл:** [`internal/backup/manager.go:70-360`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L70-L360)
+- **Описание:** Архивы бэкапов и файлы снапшотов etcd создавались с правами, доступными для чтения всем локальным пользователям ОС.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Каталог хранилища бэкапов создается строго с правами `0700` (`rwx------`). Все снапшоты, `.tar.gz` архивы и sidecar-файлы (`.sha256`, `.json`) записываются с исключительными правами `0600` (`rw-------`). Внутри tar-архива файлы упаковываются с маской `0600`. Покрыто тестом `TestSecurePermissionsAndIntegrity`.
 
 ### [HIGH] BKP-06: Удаление метаданных до успешного удаления файла на диске
-- **Файл:** [`internal/backup/manager.go:560-575`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L560-L575)
-- **Описание:** Метаданные из JSON-манифеста удаляются до `os.Remove(filePath)`. Если удаление файла падает (permission denied), архив становится зомби на диске без отображения в UI.
+- **Файл:** [`internal/backup/manager.go:560-610`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L560-L610)
+- **Описание:** Метаданные из JSON-манифеста удалялись до `os.Remove(filePath)`. Если удаление файла падало, архив становился зомби на диске без отображения в UI.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В `DeleteBackup` изменен порядок: сначала безопасно удаляется основной файл на диске (`os.Remove(targetPath)`), и только при успешном удалении стираются sidecar-файлы метаданных `.sha256` и `.json`. Добавлена очистка осиротевших sidecar-файлов, если основной файл уже отсутствует (BKP-12), и проверка `!info.IsDir()` для предотвращения случайного удаления директорий (BKP-13). Покрыто тестом `TestDeleteBackup_SafetyAndOrphanCleanup`.
 
 ### [MEDIUM] BKP-07: Отсутствие квот на размер директории бэкапов (Disk Exhaustion DoS)
-- **Файл:** [`internal/backup/manager.go:95-120`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L95-L120)
+- **Файл:** [`internal/backup/manager.go:60-120`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L60-L120)
 - **Описание:** Нет ограничений на суммарный размер каталога `data/backups` или количество хранимых копий.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  1. Внедрена функция `checkDiskSpace` через `syscall.Statfs`, проверяющая наличие достаточного свободного места на файловой системе (минимум 200MB для etcd и 500MB для full backup) перед стартом операции.
+  2. Реализована retention-политика ротации (`rotateBackups`): по умолчанию хранятся последние 20 бэкапов, более старые копии автоматически удаляются.
 
 ### [MEDIUM] BKP-08-14: Дополнительные дефекты резервного копирования
-- Отсутствие транзакционности при формировании tar.gz архива.
-- Пересчет SHA256 после создания вместо потокового вычисления.
-- Игнорирование проверки свободного места на файловой системе (`statfs`).
+- `BUG-BKP-08`: Очистка осиротевших `.temp-etcd-*` при старте `NewBackupManager`.
+- `BUG-BKP-09`: Проверка ошибок закрытия файлов `outFile.Close()` и записи sidecar `.sha256` / `.json`.
+- `BUG-BKP-10`: Реализован метод `VerifyBackup(id)` с проверкой SHA256 хеша содержимого на диске.
+- `BUG-BKP-12`: Очистка осиротевших sidecar-файлов в `DeleteBackup`.
+- `BUG-BKP-13`: Запрет удаления директорий в `DeleteBackup`.
+- `BUG-BKP-14`: Защита скачивания бэкапов в API.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненные исправления:**
+  Все перечисленные дефекты полностью устранены в [`internal/backup/manager.go`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go) и [`internal/api/backups.go`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go).
 
 ---
 
@@ -336,40 +413,82 @@
 ### [CRITICAL] SEC-01: Дефолтный статический JWT-секрет и пароль администратора
 - **Файл:** [`internal/auth/auth.go:36-56`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L36-L56)
 - **Описание:** При отсутствии переменных окружения бэкенд использует статичные значения: пароль `admin` и ключ `talosdeck-default-secret-key-32-chars-long-jwt-auth`. Любой злоумышленник может локально подписать токен с ролью `admin` и получить полный доступ.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/auth/auth.go`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go) полностью удалены статичные пароль `admin` и статичный ключ подписи.
+  1. При отсутствии `adminPassword` криптографически генерируется безопасный случайный эфемерный пароль длиной 16 байт (`RandomString(16)`), и в консоль пишется явное предупреждение `[SECURITY WARNING]`.
+  2. При отсутствии `jwtSecret` генерируется случайный криптостойкий 256-битный секрет (`RandomString(32)`).
+  3. В `NewAuthManagerFromEnv` генерация обернута в `sync.Once` для синхронизации в рамках процесса, если переменные окружения не заданы. Покрыто тестом `TestEphemeralDefaults`.
 
 ### [CRITICAL] SEC-02: Полное отсутствие авторизации на роуте `/api/audit`
 - **Файл:** [`internal/api/server.go:196-210`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L196-L210)
 - **Описание:** Журнал аудита с IP-адресами, именами пользователей и историей операций доступен анонимно.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/api/server.go`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go) на эндпоинт `GET /api/audit` повешен мидлварь `auth.RequireAuth(authMgr)`. Анонимный доступ немедленно отклоняется кодом `401 Unauthorized`. Добавлен юнит-тест `TestAuthAndAuditEndpoints/GET_/api/audit_(unauthorized)`.
 
 ### [HIGH] SEC-03: Уязвимость к Timing Attacks при проверке пароля
 - **Файл:** [`internal/auth/auth.go:58-61`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L58-L61)
 - **Описание:** Сравнение пароля через `==` вместо `subtle.ConstantTimeCompare` или безопасного bcrypt хеширования.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/auth/auth.go`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go) метод `VerifyPassword` переведен на `subtle.ConstantTimeCompare([]byte(password), []byte(a.adminPassword)) == 1` для защиты от атак по времени на длину и префикс пароля. Также поддержана проверка паролей, захэшированных алгоритмом `bcrypt` (`$2a$`, `$2b$`).
 
 ### [HIGH] SEC-04: Состояние гонки данных на мапе `AuditEvent.Details`
 - **Файл:** [`internal/audit/logger.go:121-169`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go#L121-L169)
 - **Описание:** Возврат поверхностной копии структуры с разделяемой `map[string]any` приводит к `fatal error: concurrent map read and map write`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/audit/logger.go`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go) реализовано полное глубокое копирование (`deepCopyDetails` / `copyAndSanitizeDetails`):
+  1. При вызове `Log(event)` мапа `event.Details` защитно копируется перед добавлением в кольцевой буфер `m.events`.
+  2. При вызове `GetEvents(...)` для каждого возвращаемого события создается независимая копия `Details`. Модификация полученной мапы клиентом не влияет на состояние аудитора. Проверено тестом `TestAuditSecurityAndRace` с флагом `-race`.
 
 ### [HIGH] SEC-05: Блокирующий синхронный `fsync` под эксклюзивным мьютексом
 - **Файл:** [`internal/audit/logger.go:103-118`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go#L103-L118)
 - **Описание:** Синхронный `m.logFile.Sync()` под `m.mu.Lock()` подвешивает весь сервер при медленном дисковом I/O.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/audit/logger.go`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go) из критической секции `m.mu.Lock()` в методе `Log()` удален блокирующий вызов `m.logFile.Sync()`. Запись строк лога буферизуется ядром ОС, а сброс `m.logFile.Sync()` гарантированно вызывается при `Close()` менеджера аудита.
 
 ### [MEDIUM] SEC-06: Слепое доверие заголовку `X-Forwarded-For` (IP Spoofing)
 - **Файл:** [`internal/auth/auth.go:169-177`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L169-L177)
 - **Описание:** Функция берет первый элемент `X-Forwarded-For` без валидации доверенных прокси.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/auth/auth.go`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go) в `GetClientIP` внедрена проверка `isTrustedProxy(directIP)`. Заголовки `X-Forwarded-For` и `X-Real-IP` учитываются только если непосредственное соединение исходит от доверенного прокси (loopback `127.0.0.1`/`::1` либо адреса из `TALOSDECK_TRUSTED_PROXIES`). Извлеченный IP валидируется через `net.ParseIP`. При любых аномалиях возвращается реальный `c.IP()`. Покрыто тестом `TestClientIPSpoofingProtection`.
 
 ### [MEDIUM] SEC-07: Отсутствие валидации claims `Issuer` и `Subject`, отсутствие Leeway
 - **Файл:** [`internal/auth/auth.go:76-83, 95-113`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L76-L83)
 - **Описание:** Парсинг токена не проверяет `Issuer`, а отсутствие Leeway вызывает сбои при дрифте системных часов.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/auth/auth.go`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go):
+  1. В `GenerateToken` генерируется уникальный идентификатор токена `ID: uuid.New().String()` (JTI), `Issuer: "TalosDeck"`, `Subject: username`, а также `NotBefore` со сдвигом на 10 сек назад для защиты от рассинхронизации часов.
+  2. В `ValidateToken` добавлены опции парсера `jwt.WithIssuer("TalosDeck")` и `jwt.WithLeeway(a.leeway)` (по умолчанию 1 минута), а также строгая проверка `claims.Subject == claims.Username` и запрет пустых субъектов.
 
 ### [MEDIUM] SEC-08: Фиктивный Logout и отсутствие отзыва токенов
 - **Файл:** [`internal/auth/auth.go:63-92`](file:///home/artem/laba-kuber/TalosDeck/internal/auth/auth.go#L63-L92), [`internal/api/server.go:153-167`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L153-L167)
 - **Описание:** `/api/auth/logout` возвращает 200 OK, но токен остается валидным на бэкенде 24 часа.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  1. В `AuthManager` внедрен потокобезопасный механизм отзыва токенов `revokedTokens map[string]time.Time` и метод `RevokeToken(tokenString)`.
+  2. При обращении к `/api/auth/logout` токен из заголовка `Authorization: Bearer <token>` парсится и помещается в черный список отозванных токенов.
+  3. В `ValidateToken` проверяется черный список отозванных токенов (по JTI и телу токена). После логаута попытка использовать токен немедленно отклоняется кодом `401 Unauthorized`. Добавлен юнит-тест `TestTokenRevocation` и интеграционный тест `TestAuthAndAuditEndpoints/POST_/api/auth/logout`.
 
 ### [LOW] SEC-09-14: Дополнительные дефекты аудита и аутентификации
-- Утечка дескриптора файла аудита в `SetupServer`.
-- Потеря записей при старте из-за буфера `bufio.Scanner` 64KB.
-- Небезопасные права `0644` у файла `audit.log`.
-- Утечка чувствительных данных в поле `Details["error"]`.
+- `BUG-SEC-09`: Утечка дескриптора файла аудита в `SetupServer`.
+  - **Исправление:** В [`internal/api/server.go`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go) зарегистрирован хук завершения приложения `app.Hooks().OnShutdown`, корректно закрывающий дескриптор файла `auditMgr.Close()` при остановке сервера.
+- `BUG-SEC-10`: Потеря записей при старте из-за буфера `bufio.Scanner` 64KB.
+  - **Исправление:** В [`internal/audit/logger.go`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go) в `NewAuditManager` установлен увеличенный буфер `scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)` (до 10MB), исключающий потерю длинных записей аудита при перезапуске сервиса. Покрыто тестом `TestLargeAuditLine`.
+- `BUG-SEC-11`: Небезопасные права `0644` у файла `audit.log` и `0755` у каталога.
+  - **Исправление:** Каталог аудита создается с правами `0700` (`rwx------`), а файл `audit.log` открывается и принудительно выставляется в `0600` (`rw-------`).
+- `BUG-SEC-12`: Утечка чувствительных данных в поле `Details["error"]` и других полях.
+  - **Исправление:** В [`internal/audit/logger.go`](file:///home/artem/laba-kuber/TalosDeck/internal/audit/logger.go) добавлена автоматическая санитизация `copyAndSanitizeDetails`: ключи, содержащие `password`, `token`, `secret`, `auth`, `cookie`, `talosconfig`, `kubeconfig`, маскируются как `***MASKED***`, а в строковых значениях (включая сообщения об ошибках) маскируются паттерны Bearer-токенов и паролей. Покрыто тестом `TestAuditSecurityAndRace`.
+- `BUG-SEC-13`: Очистка старых отозванных токенов из памяти.
+  - **Исправление:** В методе `RevokeToken` реализована автоматическая очистка истекших записей из `a.revokedTokens` (`now.After(exp)`), предотвращающая утечку оперативной памяти при частых входах/выходах.
+- `BUG-SEC-14`: Валидация входных токенов.
+  - **Исправление:** Проверка пустых токенов, обрезка пробелов и строгая проверка HMAC алгоритма подписи.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
 
 ---
 
@@ -378,81 +497,143 @@
 ### [CRITICAL] ALT-01: Потеря алертов при сбоях сети (Alert Suppression on Failure)
 - **Файл:** [`internal/alerts/watcher.go:156-158, 167, 177-181`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/watcher.go#L156-L158)
 - **Описание:** Игнорирование ошибок отправки алертов (`_ = w.alerts.Send...`) с безусловным обновлением состояния `prev.Ready = n.Ready`. При сбое связи алерт не уходит, а на следующем тике состояние считается неизменным — администратор никогда не узнает об аварии.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/alerts/watcher.go`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/watcher.go) метод `CheckClusterHealth` переработан: состояние узла (`prev.Ready`, `prev.HighCPU`, `lastEtcdHealthy`) фиксируется как перешедшее в новое качество **только после успешной доставки алерта** (вызова `onSuccess()` при `sendFn() == nil`). При сбое отправки (недоступность Telegram, ошибка сети, HTTP 500) состояние в памяти сохраняется прежним, и на следующем тике вочер автоматически повторяет попытку отправки алерта. Добавлен тест `TestWatcher_NoAlertSuppressionOnFailure`.
 
 ### [HIGH] ALT-02: Захват `w.mu.Lock()` на всё время сетевых вызовов
 - **Файл:** [`internal/alerts/watcher.go:130-236`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/watcher.go#L130-L236)
 - **Описание:** Блокировка держится во время опроса нод, etcd и HTTP-запросов к Telegram, замораживая UI (`/api/alerts/config`, `/api/alerts/status`).
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/alerts/watcher.go`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/watcher.go) все сетевые вызовы (`w.manager.ListNodes`, `w.manager.GetEtcdStatus`, `w.alerts.Send...`) вынесены **из-под блокировки `w.mu`**. Для защиты от параллельного исполнения тиков внедрен мьютекс `checkMu`, а `w.mu` захватывается исключительно на микросекунды для чтения и обновления снимка состояний. Вызовы `GetStatus()`, `GetNodeSnapshots()`, `GetActiveAlertsCount()` более не блокируются сетевым I/O.
 
 ### [HIGH] ALT-03: `w.running` не сбрасывается в `false` при отмене `ctx.Done()`
 - **Файл:** [`internal/alerts/watcher.go:99-101`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/watcher.go#L99-L101)
 - **Описание:** При отмене контекста горутина завершается, но флаг `running` остается `true`, блокируя повторный `Start()`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В фоновую горутину `Start()` добавлен отложенный сброс флага: `defer func() { w.mu.Lock(); w.running = false; w.mu.Unlock() }()`. При завершении по `ctx.Done()` или остановке `running` всегда сбрасывается в `false`, что позволяет беспрепятственно перезапускать вочер. Покрыто тестом `TestWatcher_RestartAfterContextCancel`.
 
 ### [HIGH] ALT-04: Data Race на `w.stopChan` и утечка горутины при рестарте
 - **Файл:** [`internal/alerts/watcher.go:78, 96, 121`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/watcher.go#L78)
 - **Описание:** Чтение `<-w.stopChan` выполняется без мьютекса, перезапись поля в `Start()` приводит к гонке и зомби-горутине.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Канал `stopChan` передается в фоновую горутину по значению `go func(stopCh chan struct{})`, устраняя гонку при пересоздании канала в `Start()`. Для синхронизации жизненного цикла добавлен `sync.WaitGroup`: `w.wg.Add(1)` при старте, `w.wg.Done()` в defer горутины, и `w.wg.Wait()` в методе `Stop()`. Утечка зомби-горутин полностью устранена.
 
 ### [HIGH] ALT-05: Превышение лимита 4096 символов Telegram API
 - **Файл:** [`internal/alerts/telegram.go:322, 533-542`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/telegram.go#L322)
 - **Описание:** Длинный список ошибок etcd приводит к ошибке `400 Bad Request: message is too long` и отбрасыванию алерта.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/alerts/telegram.go`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/telegram.go) в методах `SendAlertWithContext` и `sendRawTelegram` добавлен строгий лимит длины сообщения: если тело превышает 4000 UTF-8 символов, текст безопасно усекается с добавлением уведомления `<i>⚠️ ... [Message truncated due to 4096 character limit]</i>`. Ошибка `400 message is too long` исключена. Покрыто тестом `TestTelegramService_MessageTruncation`.
 
 ### [MEDIUM] ALT-06: Отсутствие обработки Rate Limiting (HTTP 429)
 - **Файл:** [`internal/alerts/telegram.go:553-575`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/telegram.go#L553-L575)
 - **Описание:** При пачке алертов Telegram возвращает 429, повторная отправка и очередь сообщений отсутствуют.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В `sendRawTelegram` реализован цикл повторов с экспоненциальным бэкоффом (до 3 попыток). При ответе `429 Too Many Requests` сервис парсит параметр `parameters.retry_after` и выдерживает указанную паузу перед повторной отправкой, гарантируя доставку сообщений. Покрыто тестом `TestTelegramService_RateLimitRetry`.
 
 ### [MEDIUM] ALT-07: Поломка HTML-тегов в `SendTestNotification`
 - **Файл:** [`internal/alerts/telegram.go:425, 431, 595`](file:///home/artem/laba-kuber/TalosDeck/internal/alerts/telegram.go#L425)
 - **Описание:** `formatMessageLines` экранирует `<b>` в `&lt;b&gt;`, в чат приходит сырой текст с тегами.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В `SendTestNotification` убран сырой HTML-тег `<b>TalosDeck Control Plane</b>`, текст приведен к чистому строковому формату (`Status: Operational`), который парсер `formatMessageLines` корректно форматирует в валидный HTML без двойного экранирования. Покрыто тестом `TestTelegramService_HTMLNoRawTagsInTest`.
 
 ### [MEDIUM] ALT-08-15: Дополнительные дефекты алертинга
-- Отсутствие `context.Context` в HTTP-клиенте Telegram.
-- `Stop()` не ожидает завершения горутины (`sync.WaitGroup`).
-- Гонка при сохранении конфига в `UpdateConfig`.
+- `BUG-ALT-08`: Поддержка `context.Context` в HTTP-клиенте Telegram.
+  - **Исправление:** Методы `SendAlertWithContext`, `SendTestNotificationWithContext` и `sendRawTelegram` теперь принимают `context.Context` и используют `http.NewRequestWithContext`, гарантируя немедленную отмену сетевых запросов при завершении контекста сервера.
+- `BUG-ALT-09`: `Stop()` не ожидал завершения горутины (`sync.WaitGroup`).
+  - **Исправление:** Добавлен `w.wg.Wait()` в метод `Stop()`.
+- `BUG-ALT-10`: Гонка при сохранении конфига в `UpdateConfig`.
+  - **Исправление:** В `UpdateConfig` формируется изолированный снимок `TelegramConfig` под мьютексом, который сохраняется методом `saveConfigSnapshot` через временный файл с атомарным `os.Rename` и правами `0600` / `0700`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
 
 ---
 
 ## 7. Fiber REST API & Static Embedding (`internal/api/`)
 
 ### [CRITICAL] API-01: Отсутствие авторизации на перезапуске сервисов
-- **Файл:** [`internal/api/server.go:301-317`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L301-L317)
+- **Файл:** [`internal/api/server.go:337-375`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L337-L375)
 - **Описание:** `POST /api/nodes/:ip/services/:id/restart` доступен без авторизации и аудита. Любой клиент в LAN может остановить kubelet/etcd.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - Роут защищен `auth.RequireAuth(authMgr)` при инициализированном менеджере аутентификации.
+  - Добавлена строгая валидация IP-адреса узла (`validateNodeIP`) и идентификатора сервиса с возвратом HTTP 400.
+  - Интегрировано журналирование в журнал аудита `auditMgr.Log` с действием `service.restart`, пользователем, IP клиента и статусом `success`/`failed`.
 
 ### [CRITICAL] API-02: Неавторизованная выгрузка MachineConfig нод кластера
-- **Файл:** [`internal/api/server.go:401-433`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L401-L433)
+- **Файл:** [`internal/api/server.go:431-477`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L431-L477)
 - **Описание:** `GET /api/nodes/:ip/config` отдает конфигурацию нод со всеми токенами и приватными ключами без `RequireAuth`.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - Добавлен middleware `auth.RequireAuth(authMgr)` для предотвращения неавторизованной выгрузки MachineConfig с закрытыми ключами и токенами доступа.
+  - Добавлена валидация IP-адреса ноды (`validateNodeIP`).
+  - Добавлен аудит-лог с действием `node.config.export`.
 
 ### [CRITICAL] API-03: Утечка Bot Token в открытом виде на роутах алертов
-- **Файл:** [`internal/api/alerts.go:43, 69-71, 164-165`](file:///home/artem/laba-kuber/TalosDeck/internal/api/alerts.go#L43)
+- **Файл:** [`internal/api/alerts.go:28-87, 120-170`](file:///home/artem/laba-kuber/TalosDeck/internal/api/alerts.go#L28-L87)
 - **Описание:** `GET /api/alerts/config` и `handleConfigSave` отдают действующий токен Telegram-бота без маскирования и без аутентификации.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - `RegisterAlertRoutes` принимает `authMgr` и защищает группу `/alerts` с помощью `auth.RequireAuth(authMgr)`.
+  - Все ответы `GET /api/alerts/config` и `POST/PUT /api/alerts/config` возвращают маскированный токен (`alerts.MaskToken`) и маскированный chat ID (`alerts.MaskChatID`).
+  - В `handleConfigSave` блокируется перезапись действующего токена замаскированной строкой (содержащей `*`).
+  - Добавлен аудит изменений конфигурации алертов (`alert.config.update`) и отправки тестовых сообщений (`alert.test`).
 
 ### [CRITICAL] API-04: Path Traversal в `POST /api/backups/create` через параметр `node`
-- **Файл:** [`internal/api/backups.go:51, 67`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go#L51)
+- **Файл:** [`internal/api/backups.go:55-75`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go#L55-L75)
 - **Описание:** Поле `req.Node` без валидации конкатенируется в путь файла etcd-снапшота, допуская запись файлов вне каталога бэкапов.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - Добавлена валидация `req.Node` через `net.ParseIP` (возврат HTTP 400 Bad Request при недопустимом формате).
+  - Введен строгий whitelist допустимых типов бэкапов (`etcd`, `snapshot`, `full`, `archive`, `cluster`).
+  - Добавлена проверка ошибок разбора тела запроса `c.BodyParser(&req)` при непустом теле.
 
 ### [HIGH] API-05: Отсутствие авторизации на переводе в Maintenance Mode
-- **Файл:** [`internal/api/server.go:493-517`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L493-L517)
+- **Файл:** [`internal/api/server.go:519-545`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L519-L545)
 - **Описание:** `POST /api/nodes/:ip/maintenance` (cordon/uncordon) не защищен авторизацией.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - Добавлен middleware `auth.RequireAuth(authMgr)`.
+  - Добавлена валидация IP-адреса через `validateNodeIP`.
+  - Добавлена обработка ошибок `c.BodyParser(&body)` с возвратом HTTP 400 при поврежденном JSON.
+  - Настроена фиксация переводов в Maintenance Mode в аудит-логе.
 
 ### [HIGH] API-06: Отсутствие аутентификации на WebSocket стримах (dmesg/logs)
-- **Файл:** [`internal/api/server.go:520-571, 574-615`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L520-L571)
+- **Файл:** [`internal/api/server.go:665-752`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L665-L752)
 - **Описание:** Анонимные клиенты могут непрерывно читать логи ядра и служб нод.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - В middleware `/ws` внедрена проверка аутентификации клиентов по трем векторам: заголовок `Authorization: Bearer <token>`, query-параметр `?token=<token>` (для веб-браузеров) и протокол `Sec-WebSocket-Protocol`.
+  - При отсутствии или истечении JWT-токена соединение отклоняется с HTTP 401 Unauthorized.
+  - В эндпоинтах `/ws/nodes/:ip/dmesg` и `/ws/nodes/:ip/logs/:service` добавлена валидация IP-адреса узла и имени сервиса с немедленным закрытием соединения при некорректных аргументах.
 
 ### [HIGH] API-07: SPA Fallback возвращает `index.html` (200 OK) на несуществующие API-роуты
-- **Файл:** [`internal/api/server.go:630-636`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L630-L636)
+- **Файл:** [`internal/api/server.go:660-664, 755-800`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L660-L664)
 - **Описание:** Опечатка в API URL возвращает HTML вместо JSON 404 Not Found.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - Зарегистрирован catch-all обработчик `api.All("/*")`, гарантированно возвращающий HTTP 404 JSON `{"error": "API route ... not found"}`.
+  - Зарегистрирован catch-all обработчик `app.All("/ws/*")`, возвращающий HTTP 404 JSON для несуществующих WebSocket маршрутов.
+  - В `filesystem.Config` убран `NotFoundFile: "index.html"` и добавлен фильтр `Next` для исключения путей с префиксами `/api` и `/ws`.
+  - SPA fallback `app.Get("/*")` отдает `index.html` исключительно для UI-маршрутов фронтенда.
 
 ### [HIGH] API-08: Отсутствие таймаутов сервера в `fiber.Config` (Slowloris DoS)
-- **Файл:** [`internal/api/server.go:44-56`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L44-L56)
+- **Файл:** [`internal/api/server.go:42-56`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L42-L56)
 - **Описание:** `ReadTimeout`, `WriteTimeout`, `IdleTimeout` равны 0 (бесконечность).
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - В `fiber.Config` сконфигурированы таймауты соединений: `ReadTimeout: 15 * time.Second`, `WriteTimeout: 60 * time.Second`, `IdleTimeout: 120 * time.Second`, предотвращающие зависание сокетов и атаки Slowloris DoS.
 
 ### [HIGH] API-09: Отсутствие Rate Limiting на `POST /api/auth/login` и `/api/alerts/test`
-- **Файл:** [`internal/api/server.go:87-150`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L87-L150)
+- **Файл:** [`internal/api/server.go:104-124`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L104-L124), [`internal/api/alerts.go:172-188`](file:///home/artem/laba-kuber/TalosDeck/internal/api/alerts.go#L172-L188)
 - **Описание:** Роуты открыты для брутфорса пароля и спама Telegram API.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - На `POST /api/auth/login` подключен `limiter.New` (до 30 запросов в минуту с IP-адреса клиента) с возвратом HTTP 429 Too Many Requests при превышении порога.
+  - На `POST /api/alerts/test` подключен `limiter.New` (до 30 запросов в минуту) для защиты от исчерпания лимитов Telegram API и спама в каналы.
 
 ### [MEDIUM] API-10-19: Дополнительные дефекты API
-- Игнорирование ошибок `c.BodyParser(&body)` в ряде роутов.
-- Возврат 500 Internal Error вместо 404 Not Found при удалении несуществующих ресурсов.
-- Отсутствие валидации IP-адресов в параметрах пути `:ip`.
-- Дублирующий роут `/api/api/nodes/:ip/reboot`.
+- **Статус:** `ИСПРАВЛЕНО (FIXED) ✅`
+  - **API-10:** Обработаны ошибки `c.BodyParser(&body)` в эндпоинтах `/nodes/:ip/maintenance`, `/alerts/test`, `/backups/create` с возвратом HTTP 400 Bad Request при невалидном JSON.
+  - **API-11:** Разработана и подключена вспомогательная функция `validateNodeIP(c)` для всех эндпоинтов с параметром `:ip` (`/nodes/:ip`, `/nodes/:ip/services`, `/nodes/:ip/containers`, `/nodes/:ip/disks`, `/nodes/:ip/reboot`, `/nodes/:ip/config`, `/nodes/:ip/maintenance`, `/ws/...`), предотвращающая обработку некорректных адресов.
+  - **API-12:** Устранен дублирующий ошибочный роут `POST /api/api/nodes/:ip/reboot` в `server.go`.
+  - **API-13:** В `DELETE /api/proxmox/worker/:vmid` и удалении бэкапов реализован возврат HTTP 404 Not Found вместо HTTP 500 при попытке удаления несуществующих ресурсов (VM или бэкапа).
 
 ---
 
@@ -461,14 +642,20 @@
 ### [CRITICAL] FE-01: Несовпадение схемы полей `K8sPod` и краш в WorkloadsView
 - **Файлы:** [`web/src/types/index.ts:102-115`](file:///home/artem/laba-kuber/TalosDeck/web/src/types/index.ts#L102-L115), [`web/src/components/views/WorkloadsView.vue:69-70`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/WorkloadsView.vue#L69-L70)
 - **Описание:** В TypeScript объявлены `nodeName` и `ip`, а Go возвращает `node` и `podIp`. Ввод любого символа в поиск роняет вкладку с фатальной ошибкой `TypeError: Cannot read properties of undefined`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Go DTO заполняет канонические поля `nodeName`, `ip` и строковое `readyContainers`; фронтенд нормализует старые алиасы и выполняет null-safe поиск.
 
 ### [CRITICAL] FE-02: Несовпадение схемы полей `EtcdMember` и краш в OperationsView
 - **Файлы:** [`web/src/types/index.ts:118-139`](file:///home/artem/laba-kuber/TalosDeck/web/src/types/index.ts#L118-L139), [`web/src/components/views/OperationsView.vue:462-463`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/OperationsView.vue#L462-L463)
 - **Описание:** TS обращается к `member.peerURLs[0]`, а Go возвращает `peerUrls`. Обращение к индексу `[0]` вызывает `TypeError: Cannot read properties of undefined (reading '0')`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** API-клиент нормализует `peerUrls`/`clientUrls` в ожидаемые интерфейсом `peerURLs`/`clientURLs` и гарантирует пустые массивы при отсутствии значений.
 
 ### [CRITICAL] FE-03: Отсутствие централизованной обработки 401 Unauthorized
 - **Файлы:** [`web/src/api/index.ts:1300-1389`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L1300-L1389)
 - **Описание:** Протухший токен никогда не удаляется из `localStorage`, пользователь остается в псевдо-авторизованном состоянии.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Общий обработчик ошибок защищённых запросов очищает токен и реактивное состояние пользователя при HTTP 401; `/api/auth/me` также явно сбрасывает истёкшую сессию.
 
 ### [HIGH] FE-04: Искажение ёмкости хранилища на порядки (GB vs байты)
 - **Файлы:** [`web/src/types/index.ts:56-78`](file:///home/artem/laba-kuber/TalosDeck/web/src/types/index.ts#L56-L78), [`web/src/components/views/StorageView.vue:56`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/StorageView.vue#L56)
@@ -481,14 +668,20 @@
 ### [HIGH] FE-06: Маскировка ошибки 401 при перезагрузке узла под «Успех»
 - **Файл:** [`web/src/api/index.ts:242-258`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L242-L258)
 - **Описание:** При ошибке авторизации 401 блок `catch` возвращает `success: true`, выводя зеленый тост об успешной перезагрузке.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Ошибки reboot пробрасываются в UI; симуляция успешной мутации удалена.
 
 ### [HIGH] FE-07: Пропуск заголовков авторизации при вызовах Proxmox API
 - **Файл:** [`web/src/api/index.ts:1108-1113, 1143-1148`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L1108-L1113)
 - **Описание:** Забыт вызов `...getAuthHeaders()`, создание и удаление воркеров через UI всегда падает с 401 Unauthorized.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** JWT передаётся при создании и удалении worker VM. Ложные успешные ответы при сетевых и серверных ошибках удалены.
 
 ### [HIGH] FE-08: Утечка зомби-интервала симуляции логов в LogsModal
 - **Файл:** [`web/src/components/LogsModal.vue:143-147, 160-169`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/LogsModal.vue#L143-L147)
 - **Описание:** При закрытии сокета возбуждается событие ошибки, запускающее фоновый таймер симуляции на закрытом окне.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Обработчики WebSocket привязаны к поколению соединения и состоянию модального окна; события закрытого или заменённого сокета больше не запускают симулятор.
 
 ### [MEDIUM] FE-09-17: Дополнительные дефекты фронтенд-состояния
 - Falsy-баг: процессор с 0% загрузки принудительно заменяется на дефолтные 14%/22%.

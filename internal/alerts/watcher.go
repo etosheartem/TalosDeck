@@ -44,6 +44,8 @@ type Watcher struct {
 	alerts          *TelegramService
 	interval        time.Duration
 	mu              sync.RWMutex
+	checkMu         sync.Mutex
+	wg              sync.WaitGroup
 	running         bool
 	stopChan        chan struct{}
 	initialCheck    bool
@@ -76,11 +78,20 @@ func (w *Watcher) Start(ctx context.Context) {
 	}
 	w.running = true
 	w.stopChan = make(chan struct{})
+	stopChan := w.stopChan
+	w.wg.Add(1)
 	w.mu.Unlock()
 
 	log.Printf("[AlertWatcher] Background health watcher started (interval: %v)", w.interval)
 
-	go func() {
+	go func(stopCh chan struct{}) {
+		defer w.wg.Done()
+		defer func() {
+			w.mu.Lock()
+			w.running = false
+			w.mu.Unlock()
+		}()
+
 		// Run initial check right away
 		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		if err := w.CheckClusterHealth(checkCtx); err != nil {
@@ -93,7 +104,7 @@ func (w *Watcher) Start(ctx context.Context) {
 
 		for {
 			select {
-			case <-w.stopChan:
+			case <-stopCh:
 				log.Println("[AlertWatcher] Health watcher stopped")
 				return
 			case <-ctx.Done():
@@ -107,132 +118,249 @@ func (w *Watcher) Start(ctx context.Context) {
 				cCancel()
 			}
 		}
-	}()
+	}(stopChan)
 }
 
-// Stop gracefully signals the watcher background loop to terminate.
+// Stop gracefully signals the watcher background loop to terminate and waits for it (ALT-04, ALT-08).
 func (w *Watcher) Stop() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if !w.running {
+		w.mu.Unlock()
 		return
 	}
 	w.running = false
 	close(w.stopChan)
+	w.mu.Unlock()
+
+	w.wg.Wait()
 }
 
 // CheckClusterHealth checks node status and etcd health, detecting state transitions.
+// Network calls and alert dispatches are performed outside of state lock (ALT-02).
+// Alert sending failures preserve transition state for retry (ALT-01).
 func (w *Watcher) CheckClusterHealth(ctx context.Context) error {
 	if w.manager == nil {
 		return nil
 	}
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.checkMu.Lock()
+	defer w.checkMu.Unlock()
 
-	now := time.Now().UTC()
-
-	// 1. Inspect Cluster Nodes
+	// 1. Inspect Cluster Nodes (network I/O without holding w.mu - ALT-02)
 	nodes, err := w.manager.ListNodes(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to query node list: %w", err)
 	}
 
+	// 2. Inspect etcd Cluster Health (network I/O without holding w.mu - ALT-02)
+	etcdStatus, _ := w.manager.GetEtcdStatus(ctx)
+
+	now := time.Now().UTC()
+
+	type alertTask struct {
+		desc      string
+		sendFn    func() error
+		onSuccess func()
+	}
+	var alertsToSend []alertTask
+
+	w.mu.Lock()
+	isInitial := w.initialCheck
+
 	for _, n := range nodes {
 		prev, exists := w.nodeStates[n.IP]
+		nodeIP := n.IP
+		hostname := n.Hostname
+		ready := n.Ready
+		role := n.Role
+		cpuUsage := n.CPUUsage
+		servicesSummary := n.ServicesSummary
+
 		if !exists {
-			// First observation of this node
-			w.nodeStates[n.IP] = NodeStateSnapshot{
-				IP:          n.IP,
-				Hostname:    n.Hostname,
-				Ready:       n.Ready,
-				Role:        n.Role,
+			w.nodeStates[nodeIP] = NodeStateSnapshot{
+				IP:          nodeIP,
+				Hostname:    hostname,
+				Ready:       ready,
+				Role:        role,
 				LastSeen:    now,
 				LastChanged: now,
-				HighCPU:     n.CPUUsage >= 90,
+				HighCPU:     cpuUsage >= 90,
 			}
 
-			// If cluster was already initialized and a new node appears in NotReady state
-			if !w.initialCheck && !n.Ready && w.alerts != nil && w.alerts.IsEnabled() {
-				_ = w.alerts.SendNodeStatusAlert(n.IP, n.Hostname, "NotReady", "New node detected in NotReady state")
+			if !isInitial && !ready && w.alerts != nil && w.alerts.IsEnabled() {
+				alertsToSend = append(alertsToSend, alertTask{
+					desc: fmt.Sprintf("new NotReady node %s", hostname),
+					sendFn: func() error {
+						return w.alerts.SendNodeStatusAlert(nodeIP, hostname, "NotReady", "New node detected in NotReady state")
+					},
+					onSuccess: func() {},
+				})
 			}
 			continue
 		}
 
-		// State transition detection: Ready -> NotReady or NotReady -> Ready
-		if prev.Ready != n.Ready {
-			if n.Ready {
-				log.Printf("[AlertWatcher] ✅ Node %s (%s) RECOVERED to Ready", n.Hostname, n.IP)
-				if w.alerts != nil && w.alerts.IsEnabled() {
-					_ = w.alerts.SendNodeStatusAlert(n.IP, n.Hostname, "Ready", "Node communication re-established and healthy")
-				}
+		if prev.Ready != ready {
+			targetReady := ready
+			if targetReady {
+				alertsToSend = append(alertsToSend, alertTask{
+					desc: fmt.Sprintf("Node %s RECOVERED to Ready", hostname),
+					sendFn: func() error {
+						if w.alerts != nil && w.alerts.IsEnabled() {
+							return w.alerts.SendNodeStatusAlert(nodeIP, hostname, "Ready", "Node communication re-established and healthy")
+						}
+						return nil
+					},
+					onSuccess: func() {
+						w.mu.Lock()
+						defer w.mu.Unlock()
+						if s, ok := w.nodeStates[nodeIP]; ok {
+							s.Ready = true
+							s.LastChanged = time.Now().UTC()
+							w.nodeStates[nodeIP] = s
+						}
+					},
+				})
 			} else {
-				log.Printf("[AlertWatcher] 🚨 Node %s (%s) transitioned to NOT READY", n.Hostname, n.IP)
 				details := "Node is unreachable or reporting degraded core services"
-				if n.ServicesSummary != nil {
+				if servicesSummary != nil {
 					details = fmt.Sprintf("Services: etcd=%s, kubelet=%s, containerd=%s, apid=%s",
-						n.ServicesSummary.Etcd, n.ServicesSummary.Kubelet,
-						n.ServicesSummary.Containerd, n.ServicesSummary.Apid)
+						servicesSummary.Etcd, servicesSummary.Kubelet,
+						servicesSummary.Containerd, servicesSummary.Apid)
 				}
-				if w.alerts != nil && w.alerts.IsEnabled() {
-					_ = w.alerts.SendNodeStatusAlert(n.IP, n.Hostname, "NotReady", details)
-				}
-			}
-			prev.Ready = n.Ready
-			prev.LastChanged = now
-		}
-
-		// Resource check: CPU spike alert (>90%) with debounce
-		if n.CPUUsage >= 90 && !prev.HighCPU {
-			prev.HighCPU = true
-			log.Printf("[AlertWatcher] ⚠️ Node %s CPU usage exceeded 90%%: %d%%", n.Hostname, n.CPUUsage)
-			if w.alerts != nil && w.alerts.IsEnabled() {
-				_ = w.alerts.SendResourceAlert(n.IP, n.Hostname, "CPU", n.CPUUsage, "CPU utilization is critically high (>= 90%)")
-			}
-		} else if n.CPUUsage < 80 && prev.HighCPU {
-			prev.HighCPU = false
-			log.Printf("[AlertWatcher] ✅ Node %s CPU usage normalized: %d%%", n.Hostname, n.CPUUsage)
-			if w.alerts != nil && w.alerts.IsEnabled() {
-				_ = w.alerts.SendAlert(LevelRecovered, fmt.Sprintf("CPU Normalized on %s", n.Hostname),
-					fmt.Sprintf("Node: %s (%s)\nResource: CPU\nUsage: %d%%\nDetails: CPU utilization has returned to normal range", n.IP, n.Hostname, n.CPUUsage))
+				alertsToSend = append(alertsToSend, alertTask{
+					desc: fmt.Sprintf("Node %s NOT READY", hostname),
+					sendFn: func() error {
+						if w.alerts != nil && w.alerts.IsEnabled() {
+							return w.alerts.SendNodeStatusAlert(nodeIP, hostname, "NotReady", details)
+						}
+						return nil
+					},
+					onSuccess: func() {
+						w.mu.Lock()
+						defer w.mu.Unlock()
+						if s, ok := w.nodeStates[nodeIP]; ok {
+							s.Ready = false
+							s.LastChanged = time.Now().UTC()
+							w.nodeStates[nodeIP] = s
+						}
+					},
+				})
 			}
 		}
 
-		prev.Hostname = n.Hostname
-		prev.Role = n.Role
+		// CPU check
+		if cpuUsage >= 90 && !prev.HighCPU {
+			alertsToSend = append(alertsToSend, alertTask{
+				desc: fmt.Sprintf("Node %s CPU spike (%d%%)", hostname, cpuUsage),
+				sendFn: func() error {
+					if w.alerts != nil && w.alerts.IsEnabled() {
+						return w.alerts.SendResourceAlert(nodeIP, hostname, "CPU", cpuUsage, "CPU utilization is critically high (>= 90%)")
+					}
+					return nil
+				},
+				onSuccess: func() {
+					w.mu.Lock()
+					defer w.mu.Unlock()
+					if s, ok := w.nodeStates[nodeIP]; ok {
+						s.HighCPU = true
+						w.nodeStates[nodeIP] = s
+					}
+				},
+			})
+		} else if cpuUsage < 80 && prev.HighCPU {
+			alertsToSend = append(alertsToSend, alertTask{
+				desc: fmt.Sprintf("Node %s CPU normalized (%d%%)", hostname, cpuUsage),
+				sendFn: func() error {
+					if w.alerts != nil && w.alerts.IsEnabled() {
+						return w.alerts.SendAlert(LevelRecovered, fmt.Sprintf("CPU Normalized on %s", hostname),
+							fmt.Sprintf("Node: %s (%s)\nResource: CPU\nUsage: %d%%\nDetails: CPU utilization has returned to normal range", nodeIP, hostname, cpuUsage))
+					}
+					return nil
+				},
+				onSuccess: func() {
+					w.mu.Lock()
+					defer w.mu.Unlock()
+					if s, ok := w.nodeStates[nodeIP]; ok {
+						s.HighCPU = false
+						w.nodeStates[nodeIP] = s
+					}
+				},
+			})
+		}
+
+		prev.Hostname = hostname
+		prev.Role = role
 		prev.LastSeen = now
-		w.nodeStates[n.IP] = prev
+		w.nodeStates[nodeIP] = prev
 	}
 
-	// 2. Inspect etcd Cluster Health
-	etcdStatus, err := w.manager.GetEtcdStatus(ctx)
-	if err == nil && etcdStatus != nil {
+	if etcdStatus != nil {
 		if w.lastEtcdHealthy == nil {
 			healthy := etcdStatus.Healthy
 			w.lastEtcdHealthy = &healthy
-			if !w.initialCheck && !healthy && w.alerts != nil && w.alerts.IsEnabled() {
+			if !isInitial && !healthy && w.alerts != nil && w.alerts.IsEnabled() {
 				details := formatEtcdAlertDetails(etcdStatus)
-				_ = w.alerts.SendEtcdAlert(false, details)
+				alertsToSend = append(alertsToSend, alertTask{
+					desc: "etcd initial degraded",
+					sendFn: func() error {
+						return w.alerts.SendEtcdAlert(false, details)
+					},
+					onSuccess: func() {},
+				})
 			}
 		} else if *w.lastEtcdHealthy != etcdStatus.Healthy {
-			*w.lastEtcdHealthy = etcdStatus.Healthy
-			if etcdStatus.Healthy {
-				log.Printf("[AlertWatcher] ✅ etcd cluster RECOVERED to healthy state")
-				if w.alerts != nil && w.alerts.IsEnabled() {
-					_ = w.alerts.SendEtcdAlert(true, fmt.Sprintf("All %d member(s) healthy and operational", len(etcdStatus.Members)))
-				}
+			healthy := etcdStatus.Healthy
+			if healthy {
+				alertsToSend = append(alertsToSend, alertTask{
+					desc: "etcd RECOVERED",
+					sendFn: func() error {
+						if w.alerts != nil && w.alerts.IsEnabled() {
+							return w.alerts.SendEtcdAlert(true, fmt.Sprintf("All %d member(s) healthy and operational", len(etcdStatus.Members)))
+						}
+						return nil
+					},
+					onSuccess: func() {
+						w.mu.Lock()
+						defer w.mu.Unlock()
+						h := true
+						w.lastEtcdHealthy = &h
+					},
+				})
 			} else {
-				log.Printf("[AlertWatcher] 🚨 etcd cluster DEGRADED")
-				if w.alerts != nil && w.alerts.IsEnabled() {
-					details := formatEtcdAlertDetails(etcdStatus)
-					_ = w.alerts.SendEtcdAlert(false, details)
-				}
+				details := formatEtcdAlertDetails(etcdStatus)
+				alertsToSend = append(alertsToSend, alertTask{
+					desc: "etcd DEGRADED",
+					sendFn: func() error {
+						if w.alerts != nil && w.alerts.IsEnabled() {
+							return w.alerts.SendEtcdAlert(false, details)
+						}
+						return nil
+					},
+					onSuccess: func() {
+						w.mu.Lock()
+						defer w.mu.Unlock()
+						h := false
+						w.lastEtcdHealthy = &h
+					},
+				})
 			}
 		}
 	}
 
 	w.initialCheck = false
 	w.lastCheckTime = now
+	w.mu.Unlock()
+
+	// Dispatch alerts OUTSIDE w.mu (ALT-02)
+	// If dispatch fails, state transition is NOT marked, so it retries next tick (ALT-01)
+	for _, task := range alertsToSend {
+		if err := task.sendFn(); err != nil {
+			log.Printf("[AlertWatcher] Failed to send alert (%s): %v. State not updated, will retry on next tick.", task.desc, err)
+		} else {
+			task.onSuccess()
+		}
+	}
+
 	return nil
 }
 

@@ -136,22 +136,22 @@ func TestAuthAndAuditEndpoints(t *testing.T) {
 		}
 	})
 
-	// 6. POST /api/auth/logout
-	t.Run("POST /api/auth/logout", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
+	// 6. GET /api/audit without token -> 401 Unauthorized (SEC-02)
+	t.Run("GET /api/audit (unauthorized)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/audit", nil)
 		resp, err := app.Test(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("expected 200 OK, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401 Unauthorized without token on /api/audit, got %d", resp.StatusCode)
 		}
 	})
 
-	// 7. GET /api/audit -> verify events are recorded
-	t.Run("GET /api/audit", func(t *testing.T) {
+	// 7. GET /api/audit with valid token -> 200 OK
+	t.Run("GET /api/audit (authenticated)", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/audit", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := app.Test(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -168,5 +168,36 @@ func TestAuthAndAuditEndpoints(t *testing.T) {
 			t.Errorf("expected audit events to be returned, got 0")
 		}
 		t.Logf("Found %d audit events", len(events))
+	})
+
+	// 8. POST /api/auth/logout -> revokes token (SEC-08)
+	t.Run("POST /api/auth/logout", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", resp.StatusCode)
+		}
+
+		// Verify token is revoked: calling /api/auth/me should return authenticated: false
+		meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+		meReq.Header.Set("Authorization", "Bearer "+token)
+		meResp, _ := app.Test(meReq)
+		var meData map[string]any
+		_ = json.NewDecoder(meResp.Body).Decode(&meData)
+		if meData["authenticated"] != false {
+			t.Errorf("expected authenticated=false after logout, got %v", meData["authenticated"])
+		}
+
+		// Verify calling protected route with revoked token returns 401
+		auditReq := httptest.NewRequest(http.MethodGet, "/api/audit", nil)
+		auditReq.Header.Set("Authorization", "Bearer "+token)
+		auditResp, _ := app.Test(auditReq)
+		if auditResp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401 Unauthorized for revoked token, got %d", auditResp.StatusCode)
+		}
 	})
 }

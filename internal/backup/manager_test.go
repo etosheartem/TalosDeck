@@ -240,3 +240,150 @@ func TestLiveClusterBackups(t *testing.T) {
 		t.Errorf("expected 2 backups, got %d", len(list))
 	}
 }
+
+func TestPathTraversalProtection(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "talosdeck-traversal-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bm, err := NewBackupManager(tempDir, nil)
+	if err != nil {
+		t.Fatalf("failed to init backup manager: %v", err)
+	}
+
+	traversalPayloads := []string{
+		"..",
+		"../",
+		"../../",
+		"..\\",
+		"../data",
+		"../../etc/passwd",
+		"a/../../b",
+		"/etc/shadow",
+		".",
+		"",
+	}
+
+	for _, p := range traversalPayloads {
+		_, _, err := bm.GetBackup(p)
+		if err == nil {
+			t.Errorf("expected error for GetBackup(%q), got nil", p)
+		}
+
+		err = bm.DeleteBackup(p)
+		if err == nil {
+			t.Errorf("expected error for DeleteBackup(%q), got nil", p)
+		}
+	}
+}
+
+func TestSecurePermissionsAndIntegrity(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "talosdeck-perm-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bm, err := NewBackupManager(tempDir, nil)
+	if err != nil {
+		t.Fatalf("failed to init backup manager: %v", err)
+	}
+
+	// Verify directory permissions
+	dirStat, err := os.Stat(tempDir)
+	if err != nil {
+		t.Fatalf("failed to stat tempDir: %v", err)
+	}
+	// Perm should not be world-readable/executable
+	if dirStat.Mode().Perm()&0007 != 0 {
+		t.Errorf("expected directory to not be world-accessible, got perm: %v", dirStat.Mode().Perm())
+	}
+
+	// Create test backup
+	snapName := "etcd-10.42.0.110-test.snapshot"
+	snapData := []byte("integrity and security test content")
+	snapPath := filepath.Join(tempDir, snapName)
+	if err := os.WriteFile(snapPath, snapData, 0600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	hasher := sha256.New()
+	hasher.Write(snapData)
+	checksum := hex.EncodeToString(hasher.Sum(nil))
+
+	_ = os.WriteFile(snapPath+".sha256", []byte(checksum+"  "+snapName+"\n"), 0600)
+	_ = os.WriteFile(snapPath+".json", []byte(`{"id":"`+snapName+`","filename":"`+snapName+`","checksum":"`+checksum+`"}`), 0600)
+
+	// Test VerifyBackup
+	valid, computed, err := bm.VerifyBackup(snapName)
+	if err != nil || !valid {
+		t.Fatalf("expected valid backup, got valid=%v, computed=%s, err=%v", valid, computed, err)
+	}
+
+	// Corrupt file and verify detection
+	_ = os.WriteFile(snapPath, []byte("corrupted payload"), 0600)
+	valid, _, _ = bm.VerifyBackup(snapName)
+	if valid {
+		t.Errorf("expected corrupt backup to fail verification")
+	}
+}
+
+func TestDeleteBackup_SafetyAndOrphanCleanup(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "talosdeck-delete-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bm, err := NewBackupManager(tempDir, nil)
+	if err != nil {
+		t.Fatalf("failed to init backup manager: %v", err)
+	}
+
+	// 1. Refuse directory deletion (BKP-13)
+	subDir := filepath.Join(tempDir, "mysubdir")
+	_ = os.Mkdir(subDir, 0700)
+	if err := bm.DeleteBackup("mysubdir"); err == nil {
+		t.Errorf("expected error when trying to delete directory, got nil")
+	}
+
+	// 2. Orphan sidecar cleanup (BKP-12)
+	sidecarBase := filepath.Join(tempDir, "orphan-backup")
+	_ = os.WriteFile(sidecarBase+".sha256", []byte("12345"), 0600)
+	_ = os.WriteFile(sidecarBase+".json", []byte(`{"id":"orphan-backup"}`), 0600)
+
+	if err := bm.DeleteBackup("orphan-backup"); err != nil {
+		t.Fatalf("expected DeleteBackup to clean up orphan sidecars, got: %v", err)
+	}
+
+	if _, err := os.Stat(sidecarBase + ".sha256"); !os.IsNotExist(err) {
+		t.Errorf("expected orphan sha256 to be removed")
+	}
+	if _, err := os.Stat(sidecarBase + ".json"); !os.IsNotExist(err) {
+		t.Errorf("expected orphan json to be removed")
+	}
+}
+
+func TestConcurrencyGuard(t *testing.T) {
+	bm, err := NewBackupManager("", nil)
+	if err != nil {
+		t.Fatalf("failed to init backup manager: %v", err)
+	}
+
+	// Simulate in-flight backup
+	bm.isBackingUp.Store(true)
+
+	_, err = bm.CreateEtcdSnapshot(context.Background(), "10.42.0.110")
+	if err == nil || !strings.Contains(err.Error(), "already in progress") {
+		t.Errorf("expected 'already in progress' error, got: %v", err)
+	}
+
+	_, err = bm.CreateFullClusterBackup(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "already in progress") {
+		t.Errorf("expected 'already in progress' error, got: %v", err)
+	}
+
+	bm.isBackingUp.Store(false)
+}

@@ -13,7 +13,7 @@ import {
   ArrowDown,
 } from 'lucide-vue-next'
 import { t } from '../i18n'
-import { getDmesgWsUrl } from '../api'
+import { getAuthToken, getDmesgWsUrl } from '../api'
 import type { NodeOverview, DmesgLogLine } from '../types'
 
 const props = defineProps<{
@@ -36,6 +36,7 @@ const terminalBodyRef = ref<HTMLDivElement | null>(null)
 let socket: WebSocket | null = null
 let simulationTimer: ReturnType<typeof setInterval> | null = null
 let lineIdCounter = 0
+let connectionGeneration = 0
 
 // Sample simulated Talos kernel messages for fallback
 const SIMULATED_DMESG_TEMPLATES = [
@@ -115,15 +116,17 @@ const startSimulation = () => {
 const connectWebSocket = () => {
   if (!props.node) return
   closeWebSocket()
+	const generation = ++connectionGeneration
 
   connectionStatus.value = 'connecting'
   const wsUrl = getDmesgWsUrl(props.node.ip)
 
   try {
-    socket = new WebSocket(wsUrl)
+	const token = getAuthToken()
+	socket = token ? new WebSocket(wsUrl, token) : new WebSocket(wsUrl)
 
     const connectTimeout = setTimeout(() => {
-      if (socket && socket.readyState !== WebSocket.OPEN) {
+	  if (generation === connectionGeneration && props.open && socket && socket.readyState !== WebSocket.OPEN) {
         console.warn('WS timeout, starting simulated fallback stream')
         socket.close()
         startSimulation()
@@ -131,22 +134,26 @@ const connectWebSocket = () => {
     }, 2000)
 
     socket.onopen = () => {
+	  if (generation !== connectionGeneration || !props.open) return
       clearTimeout(connectTimeout)
       connectionStatus.value = 'connected'
       if (simulationTimer) clearInterval(simulationTimer)
     }
 
     socket.onmessage = (event) => {
+	  if (generation !== connectionGeneration || !props.open) return
       addLogLine(event.data)
     }
 
     socket.onerror = (err) => {
+	  if (generation !== connectionGeneration || !props.open) return
       console.warn('WS connection error, falling back to simulated stream:', err)
       clearTimeout(connectTimeout)
       startSimulation()
     }
 
     socket.onclose = () => {
+	  if (generation !== connectionGeneration) return
       if (connectionStatus.value === 'connected') {
         connectionStatus.value = 'disconnected'
       }
@@ -158,6 +165,7 @@ const connectWebSocket = () => {
 }
 
 const closeWebSocket = () => {
+	connectionGeneration++
   if (socket) {
     socket.close()
     socket = null

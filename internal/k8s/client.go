@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,7 +11,11 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -327,4 +332,145 @@ func formatDuration(d time.Duration) string {
 	}
 	days := int(d.Hours() / 24)
 	return fmt.Sprintf("%dd", days)
+}
+
+// CordonAndDrainNode marks a Kubernetes node as unschedulable (cordon) and evicts/deletes non-daemonset pods (drain)
+// prior to node decommissioning or VM deletion (PVE-07).
+func (m *K8sManager) CordonAndDrainNode(ctx context.Context, nodeName string) error {
+	if m == nil || m.clientset == nil {
+		return fmt.Errorf("kubernetes client is not available")
+	}
+
+	nodeName = strings.TrimSpace(nodeName)
+	if nodeName == "" {
+		return fmt.Errorf("nodeName is required for cordon and drain")
+	}
+
+	resolvedName, err := m.SetNodeMaintenance(ctx, nodeName, true)
+	if err != nil {
+		return err
+	}
+	nodeName = resolvedName
+
+	// 2. Drain: list pods scheduled on this node and evict/delete them
+	pods, err := m.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + nodeName,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list pods on node %s for drain: %w", nodeName, err)
+	}
+
+	drainable := make([]corev1.Pod, 0, len(pods.Items))
+	for _, pod := range pods.Items {
+		if skipPodDuringDrain(pod) {
+			continue
+		}
+		if len(pod.OwnerReferences) == 0 {
+			return fmt.Errorf("cannot safely drain node %s: pod %s/%s has no controller", nodeName, pod.Namespace, pod.Name)
+		}
+		drainable = append(drainable, pod)
+	}
+
+	for _, pod := range drainable {
+		gracePeriod := int64(30)
+		err := m.clientset.PolicyV1().Evictions(pod.Namespace).Evict(ctx, &policyv1.Eviction{
+			ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
+			DeleteOptions: &metav1.DeleteOptions{
+				GracePeriodSeconds: &gracePeriod,
+			},
+		})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to evict pod %s/%s from node %s: %w", pod.Namespace, pod.Name, nodeName, err)
+		}
+	}
+
+	// Eviction is asynchronous. Do not let the caller power off the VM until all
+	// non-daemonset workloads have actually left the node.
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		remaining, err := m.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+			FieldSelector: "spec.nodeName=" + nodeName,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to verify drain of node %s: %w", nodeName, err)
+		}
+
+		pending := 0
+		for _, pod := range remaining.Items {
+			if !skipPodDuringDrain(pod) {
+				pending++
+			}
+		}
+		if pending == 0 {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for %d workload pod(s) to leave node %s: %w", pending, nodeName, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// SetNodeMaintenance cordons or uncordons a node. The identifier may be either
+// its Kubernetes name or one of its internal/external IP addresses.
+func (m *K8sManager) SetNodeMaintenance(ctx context.Context, identifier string, enable bool) (string, error) {
+	if m == nil || m.clientset == nil {
+		return "", fmt.Errorf("kubernetes client is not available")
+	}
+
+	nodeName, err := m.resolveNodeName(ctx, strings.TrimSpace(identifier))
+	if err != nil {
+		return "", err
+	}
+
+	patch := []byte(fmt.Sprintf(`{"spec":{"unschedulable":%t}}`, enable))
+	if _, err := m.clientset.CoreV1().Nodes().Patch(ctx, nodeName, types.StrategicMergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		action := "uncordon"
+		if enable {
+			action = "cordon"
+		}
+		return "", fmt.Errorf("failed to %s node %s: %w", action, nodeName, err)
+	}
+
+	return nodeName, nil
+}
+
+func (m *K8sManager) resolveNodeName(ctx context.Context, identifier string) (string, error) {
+	if identifier == "" {
+		return "", fmt.Errorf("node identifier is required")
+	}
+	if net.ParseIP(identifier) == nil {
+		if _, err := m.clientset.CoreV1().Nodes().Get(ctx, identifier, metav1.GetOptions{}); err != nil {
+			return "", fmt.Errorf("failed to find Kubernetes node %s: %w", identifier, err)
+		}
+		return identifier, nil
+	}
+
+	nodes, err := m.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve Kubernetes node IP %s: %w", identifier, err)
+	}
+	for _, node := range nodes.Items {
+		for _, address := range node.Status.Addresses {
+			if address.Address == identifier {
+				return node.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("Kubernetes node with IP %s was not found", identifier)
+}
+
+func skipPodDuringDrain(pod corev1.Pod) bool {
+	if _, mirror := pod.Annotations[corev1.MirrorPodAnnotationKey]; mirror {
+		return true
+	}
+	for _, owner := range pod.OwnerReferences {
+		if owner.Kind == "DaemonSet" {
+			return true
+		}
+	}
+	return false
 }
