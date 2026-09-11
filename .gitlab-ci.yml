@@ -41,13 +41,14 @@ update-gitops:
     - git config --global user.email "ci@gitlab.lan"
   script:
     - echo "Updating GitOps manifest with new image tag ${CI_COMMIT_SHORT_SHA}..."
-    - REPO_URL="http://oauth2:${GITLAB_TOKEN}@gitlab.lan:8080/${CI_PROJECT_PATH}.git"
-    - git remote set-url origin "${REPO_URL}"
-    - git fetch origin main
-    - git checkout -B main origin/main
-    - sed -i -E "s/newTag: .*/newTag: \"${CI_COMMIT_SHORT_SHA}\"/" gitops/talosdeck/kustomization.yaml
-    - git diff gitops/talosdeck/kustomization.yaml
     - |
+      set -eu
+      REPO_URL="http://oauth2:${GITLAB_TOKEN}@gitlab.lan:8080/${CI_PROJECT_PATH}.git"
+      git remote set-url origin "${REPO_URL}"
+      git fetch origin main
+      git checkout -B main origin/main
+      sed -i -E "s/newTag: .*/newTag: \"${CI_COMMIT_SHORT_SHA}\"/" gitops/talosdeck/kustomization.yaml
+      git diff gitops/talosdeck/kustomization.yaml
       if git diff --quiet gitops/talosdeck/kustomization.yaml; then
         echo "GitOps manifest already up-to-date."
       else
