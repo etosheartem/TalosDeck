@@ -1,7 +1,7 @@
 # ==============================================================================
 # Stage 1: Build the frontend (Vue 3 + Tailwind CSS with Bun)
 # ==============================================================================
-FROM oven/bun:1.2.4-alpine AS frontend-builder
+FROM oven/bun:1.3.14-alpine AS frontend-builder
 WORKDIR /app/web
 
 # Install frontend dependencies with lockfile caching
