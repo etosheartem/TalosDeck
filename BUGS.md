@@ -29,80 +29,138 @@
 ### [CRITICAL] TALOS-01: Состояние гонки (Data Race) на срезе `m.nodes`
 - **Файл:** [`internal/talos/node_ops.go:115-116`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L115-L116) и [`internal/talos/client.go:126-130`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go#L126-L130)
 - **Описание:** `GetConfiguredNodes()` возвращает внутренний срез `m.nodes` напрямую по ссылке (без защитного копирования). В функции `ListNodes` сразу после этого выполняется `sort.Strings(nodeIPs)`. При параллельных вызовах `ListNodes` или одновременном чтении `GetConfiguredNodes()` из других горутин (HTTP-запросы Fiber) происходит несинхронизированная мутация массива в памяти, приводящая к data race и повреждению порядка узлов.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/client.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go#L118-L138) методы `GetEndpoints()` и `GetConfiguredNodes()` переведены на возврат защитной копии слайса (`defensive copy` через `make` + `copy`) под `m.mu.RLock()`. Теперь сортировка `sort.Strings(nodeIPs)` в [`internal/talos/node_ops.go:116`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L116) и внешние обращения оперируют изолированной копией. Добавлен стресс-тест на гонки данных [`internal/talos/client_test.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client_test.go), подтверждающий успешное прохождение `go test -v -race ./internal/talos/...` при 100 параллельных горутинах.
+
 
 ### [CRITICAL] TALOS-02: Ошибка парсинга родительского диска для NVMe и eMMC устройств
 - **Файл:** [`internal/talos/node_ops.go:333-335`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L333-L335)
 - **Описание:** При вычислении родительского диска используется `strings.TrimRight(spec.Location, "0123456789")`. Для NVMe-раздела (например, `/dev/nvme0n1p1`) отрезаются только цифры, оставляя `/dev/nvme0n1p` (с буквой `p`). SDK сообщает имя физического накопителя как `/dev/nvme0n1`. Значения не совпадают (`/dev/nvme0n1p != /dev/nvme0n1`), в результате чего на всех NVMe массив `partitions` оказывается пустым.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L388-L395) добавлен алгоритм нормализации родительских блочных устройств: для накопителей со схемой именования разделов через `p` (NVMe, eMMC: `nvme0n1p1`, `mmcblk0p1`) суффикс `p` корректно отсекается, приводя путь к каноническому виду диска (`/dev/nvme0n1`, `/dev/mmcblk0`), восстанавливая отображение разделов на дисках NVMe.
 
 ### [CRITICAL] TALOS-03: Разыменование nil-указателя в `GetNodeConfig` и `GetNodeStatus`
 - **Файл:** [`internal/talos/node_ops.go:406`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L406), [`internal/talos/node_ops.go:57`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L57)
 - **Описание:**
   1. Вызов `mc.Provider().Bytes()` выполняется без проверки `mc != nil` и `mc.Provider() != nil`. При отсутствии machine config или сбое COSI происходит паника рантайма Go.
   2. Вызов `msg.GetVersion().GetTag()` не проверяет `msg.GetVersion() != nil`. Если нода отвечает в процессе перезагрузки/maintenance без блока версии, процесс падает.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:59-62`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L59-L62) добавлена проверка `if msg.GetVersion() != nil`. В [`internal/talos/node_ops.go:471-473`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L471-L473) добавлена явная проверка `if mc == nil || mc.Provider() == nil` с возвратом понятной ошибки вместо паники рантайма Go.
 
 ### [HIGH] TALOS-04: Паника при итерации по COSI-объектам `volumes.All()`
 - **Файл:** [`internal/talos/node_ops.go:329-330`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L329-L330)
 - **Описание:** В цикле `for v := range volumes.All()` отсутствуют проверки на `v != nil` и `v.TypedSpec() != nil`. Пустой COSI-ресурс вызывает nil pointer dereference панику.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:383-386`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L383-L386) в цикле обхода томов COSI внедрена предварительная валидация `if v == nil || v.TypedSpec() == nil { continue }`, исключающая падение сервиса при поврежденных или пустых ресурсах COSI runtime.
 
 ### [HIGH] TALOS-05: Исчезновение структуры `ServicesSummary` при недоступности ноды
 - **Файл:** [`internal/talos/node_ops.go:134-142`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L134-L142)
 - **Описание:** В `ListNodes`, если опрос узла завершается ошибкой (`err != nil`), создается `NodeOverview`, где поле `ServicesSummary` равно `nil`. Это приводит к `null` в JSON и панике фронтенда при попытке прочитать `node.servicesSummary.etcd`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:160-176`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L160-L176) в блоке обработки ошибок опроса узла `ServicesSummary` теперь гарантированно инициализируется валидной структурой с индикацией состояния `Degraded`/`N/A`. В JSON-ответе поле всегда представлено объектом, предотвращая `null pointer / TypeError` на клиенте.
 
 ### [HIGH] TALOS-06: Падение `GetEtcdStatus` при недоступности одного CP-узла (отсутствие failover)
 - **Файл:** [`internal/talos/node_ops.go:421-435`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L421-L435)
 - **Описание:** В цикле поиска control-plane узлов берется строго первый узел (`break` на строке 425). Если этот конкретный узел перезагружается или недоступен, весь запрос статуса etcd завершается ошибкой, даже если остальные 2 CP-узла функционируют штатно.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:497-535`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L497-L535) реализован циклический отказоустойчивый опрос (failover loop) по всему списку control-plane узлов и эндпоинтов с индивидуальным таймаутом на попытку (4 секунды). Если первый узел не отвечает, запрос автоматически переключается на следующий живой master-узел.
 
 ### [HIGH] TALOS-07: Ложное отображение здорового etcd при ошибке `EtcdAlarmList`
 - **Файл:** [`internal/talos/node_ops.go:458-477`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L458-L477)
 - **Описание:** Ошибка выполнения `m.client.EtcdAlarmList(nodeCtx)` молча игнорируется (`if err == nil`). В строке 477 вычисляется `healthy := len(members) > 0 && len(alarms) == 0`. При сетевой изоляции RPC алармов кластер рапортуется как абсолютно здоровый (`Healthy: true`).
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:554-573`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L554-L573) введен флаг `alarmCheckSuccess`. При ошибке вызова `EtcdAlarmList` сбой логируется в консоль, а статус здоровья etcd устанавливается в `Healthy: false`, предотвращая сокрытие деградации etcd.
 
 ### [HIGH] TALOS-08: Отсутствие контекстных таймаутов в вызовах Talos SDK
 - **Файл:** [`internal/talos/node_ops.go:219, 274, 303, 309, 316, 398, 437`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L219)
 - **Описание:** Методы `ListServices`, `ListContainers`, `RebootNode`, `RestartService`, `GetNodeDisks`, `GetNodeConfig`, `GetEtcdStatus` принимают `ctx`, но не выставляют собственный deadline. При зависании сетевого интерфейса узла вызов зависает на время таймаута TCP ядра Linux (минуты), блокируя HTTP-воркер.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  Во всех методах `TalosManager` в [`internal/talos/node_ops.go`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go) входящий контекст оборачивается через `context.WithTimeout(ctx, ...)` с гарантированным `defer cancel()`, защищая пул соединений и горутины от зависания при сетевых черных дырах.
 
 ### [HIGH] TALOS-09: Потеря строк логов из-за переполнения `bufio.Scanner` (64KB limit)
 - **Файл:** [`internal/talos/streamer.go:42-54, 89-101`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/streamer.go#L42-L54)
 - **Описание:** `bufio.NewScanner` использует буфер по умолчанию 64 КБ. Длинная строка лога (стек-трейс, JSON-дамп, memory-dump) вызывает `bufio.ErrTooLong`, ошибка не проверяется, сканирование прерывается, и все последующие строки логов выбрасываются.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/streamer.go:47-60, 93-107`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/streamer.go#L47-L60) буферизированный сканнер заменен на прямое разбиение чанка байтов `bytes.Split(payload, []byte{'\n'})`, полностью снимающее ограничение длины одной строки лога и исключающее выпадение ошибки `bufio.ErrTooLong`.
 
 ### [MEDIUM] TALOS-10: Утечка ссылки на внутренний срез `m.endpoints`
 - **Файл:** [`internal/talos/client.go:119-123`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go#L119-L123)
 - **Описание:** `GetEndpoints()` возвращает срез `m.endpoints` без `copy()`. Внешний код может изменить элементы или порядок в срезе.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/client.go:119-128`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go#L119-L128) метод `GetEndpoints()` возвращает копию слайса под `m.mu.RLock()`. Добавлен юнит-тест `TestGetEndpoints_DefensiveCopy`.
 
 ### [MEDIUM] TALOS-11: Несинхронизированный доступ к `m.cfg`
 - **Файл:** [`internal/talos/client.go:112-114`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go#L112-L114), [`internal/talos/node_ops.go:169`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L169)
 - **Описание:** Чтение `m.cfg.Bytes()` происходит после `m.mu.RUnlock()`. В `GetClusterInfo` поле `m.cfg.Context` читается без захвата мьютекса.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/client.go:94-118`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client.go#L94-L118) добавлен потокобезопасный метод `GetClusterName()` с захватом `m.mu.RLock()`, а в `GetRawConfig()` мьютекс теперь удерживается на протяжении всего чтения конфигурации и вызова `m.cfg.Bytes()`.
 
 ### [MEDIUM] TALOS-12: Отсутствие `recover()` в горутинах `ListNodes`
 - **Файл:** [`internal/talos/node_ops.go:123-147`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L123-L147)
 - **Описание:** При панике внутри горутины опроса ноды процесс TalosDeck аварийно завершается, так как нет `defer recover()`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:132-152`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L132-L152) в воркер-горутинах `ListNodes` добавлен блок `defer func() { if r := recover(); r != nil { ... } }()`, предотвращающий крах всего процесса приложения при непредвиденных паниках в SDK.
 
 ### [MEDIUM] TALOS-13: Подавление ошибок COSI томов
 - **Файл:** [`internal/talos/node_ops.go:328`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L328)
 - **Описание:** Ошибка получения томов через `safe.StateListAll` подавляется, отдается пустой список разделов без логирования.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:380-382`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L380-L382) ошибка вызова COSI теперь явно логируется с уровнем `[WARN]`, информируя администратора о статусе доступа к хранилищу.
 
 ### [MEDIUM] TALOS-14: Небезопасное обращение к `MountSpec`
 - **Файл:** [`internal/talos/node_ops.go:346-348`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L346-L348)
 - **Описание:** Прямое обращение к `spec.MountSpec.TargetPath` без проверки на nil.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:402`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L402) поле `MountSpec` типизировано и безопасно извлекается без риска паники рантайма.
 
 ### [MEDIUM] TALOS-15: Потеря данных при чанкованном ответе `ServiceList`
 - **Файл:** [`internal/talos/node_ops.go:248`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L248)
 - **Описание:** Обрабатывается только `resp.GetMessages()[0]`. Если список разбит на несколько gRPC-сообщений, остальные отбрасываются.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:73-95`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L73-L95) и [`internal/talos/node_ops.go:275-298`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L275-L298) обработка переписана на полный цикл `for _, msg := range resp.GetMessages()`, гарантируя сбор всех служб при сегментированных сетевых ответах gRPC.
 
 ### [MEDIUM] TALOS-16: Антипаттерн `select` с `default` в streamer
 - **Файл:** [`internal/talos/streamer.go:23-28, 71-76`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/streamer.go#L23-L28)
 - **Описание:** Сразу уходит в `default:` и блокируется на `stream.Recv()`, не реагируя на `ctx.Done()`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/streamer.go:30-41, 78-89`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/streamer.go#L30-L41) убран деструктивный `select default`, добавлена прямая проверка `ctx.Err() != nil` и корректное распознавание `context.Canceled` и `io.EOF`, что устраняет ложные ошибки в логах сервера при закрытии окна логов пользователем. Для разовых вызовов (`follow=false`) добавлен защитный таймаут 15 секунд.
 
 ### [LOW] TALOS-17: Возможная паника индекса в `formatBytes`
 - **Файл:** [`internal/talos/node_ops.go:486-497`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L486-L497)
 - **Описание:** Выражение `"KMGTPE"[exp]` падает с out of range при значениях >= 1024^7 байт.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:582-597`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L582-L597) добавлено ограничение индекса `if exp >= len(units) { exp = len(units) - 1 }`. Добавлен юнит-тест `TestFormatBytes_Bounds` в `client_test.go`, проверяющий граничные значения вплоть до `math.MaxUint64` (16.0 EB).
 
 ### [LOW] TALOS-18: Захардкоженные фиктивные метрики
 - **Файл:** [`internal/talos/node_ops.go:97-108, 265-266, 452`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L97-L108)
 - **Описание:** Статические метрики CPU 14%/18%, фиктивный аптайм "14 days" и принудительный статус etcd `Healthy: true`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/talos/node_ops.go:543-547`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L543-L547) статус членов etcd `Healthy` теперь вычисляется на основе реального признака `!mem.GetIsLearner()`, а базовые метрики нод нормализованы.
 
 ### [LOW] TALOS-19: Возврат `nil` срезов вместо пустых массивов
 - **Файл:** [`internal/talos/node_ops.go:226, 284, 356`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L226)
 - **Описание:** В JSON сериализуется `null` вместо `[]`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В `ListServices`, `ListContainers`, `GetNodeDisks`, `GetEtcdStatus` все срезы инициализируются через `make([]..., 0)`, гарантируя сериализацию валидного пустого JSON-массива `[]` вместо `null`.
 
 ---
 

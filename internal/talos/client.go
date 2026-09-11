@@ -72,22 +72,40 @@ func NewTalosManager(talosconfigPath string, extraNodes ...string) (*TalosManage
 	}, nil
 }
 
-// Close terminates the Talos client connection.
+// Close terminates the Talos client connection thread-safely.
 func (m *TalosManager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.client != nil {
-		return m.client.Close()
+		err := m.client.Close()
+		m.client = nil
+		return err
 	}
 	return nil
 }
 
 // GetClient returns the raw Talos client.
 func (m *TalosManager) GetClient() *client.Client {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.client
 }
 
 // GetConfig returns the Talos config.
 func (m *TalosManager) GetConfig() *config.Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.cfg
+}
+
+// GetClusterName returns the cluster name/context thread-safely.
+func (m *TalosManager) GetClusterName() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cfg != nil && m.cfg.Context != "" {
+		return m.cfg.Context
+	}
+	return "talos-cluster"
 }
 
 // GetConfigPath returns the file path to talosconfig.
@@ -100,11 +118,10 @@ func (m *TalosManager) GetConfigPath() string {
 // GetRawConfig returns the raw YAML bytes of the active talosconfig.
 func (m *TalosManager) GetRawConfig() ([]byte, error) {
 	m.mu.RLock()
-	path := m.talosconfigPath
-	m.mu.RUnlock()
+	defer m.mu.RUnlock()
 
-	if path != "" {
-		data, err := os.ReadFile(path)
+	if m.talosconfigPath != "" {
+		data, err := os.ReadFile(m.talosconfigPath)
 		if err == nil {
 			return data, nil
 		}
@@ -115,16 +132,26 @@ func (m *TalosManager) GetRawConfig() ([]byte, error) {
 	return nil, fmt.Errorf("no talosconfig loaded")
 }
 
-// GetEndpoints returns configured cluster endpoints.
+// GetEndpoints returns configured cluster endpoints (defensive copy).
 func (m *TalosManager) GetEndpoints() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.endpoints
+	if m.endpoints == nil {
+		return nil
+	}
+	res := make([]string, len(m.endpoints))
+	copy(res, m.endpoints)
+	return res
 }
 
-// GetConfiguredNodes returns configured node IPs.
+// GetConfiguredNodes returns configured node IPs (defensive copy to prevent data races).
 func (m *TalosManager) GetConfiguredNodes() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.nodes
+	if m.nodes == nil {
+		return nil
+	}
+	res := make([]string, len(m.nodes))
+	copy(res, m.nodes)
+	return res
 }
