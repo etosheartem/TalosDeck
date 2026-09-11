@@ -11,6 +11,7 @@ import type { ClusterInfo, NodeOverview, TabKey } from './types'
 import Sidebar from './components/Sidebar.vue'
 import TopBar from './components/TopBar.vue'
 import ClusterStats from './components/ClusterStats.vue'
+import HealthPanel from './components/HealthPanel.vue'
 import NodesView from './components/views/NodesView.vue'
 import StorageView from './components/views/StorageView.vue'
 import MachineConfigView from './components/views/MachineConfigView.vue'
@@ -312,10 +313,12 @@ const onRebootError = (errMsg: string) => {
         <div v-show="activeTab === 'nodes'" class="space-y-4">
           <!-- Cluster Statistics Summary -->
           <ClusterStats :cluster="cluster" />
+          <HealthPanel :nodes="nodes" :etcdHealthy="etcdHealthy" />
 
           <!-- Nodes View Section -->
           <NodesView
             :nodes="nodes"
+            :loading="loading"
             @open-services="onOpenServices"
             @open-logs="onOpenLogs"
             @open-reboot="onOpenReboot"

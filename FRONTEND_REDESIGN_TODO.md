@@ -19,7 +19,7 @@ The frontend should read like an operator console: dense, calm, predictable, and
 - [x] Replace node cards with a full-width operations table.
 - [x] Keep node services, logs, and reboot actions available from each row.
 - [ ] Move alert configuration from Operations into a dedicated Settings area.
-- [ ] Add a persistent problems/events panel to the cluster overview.
+- [x] Add a persistent problems panel to the cluster overview.
 - [ ] Add a node details drawer so routine inspection does not open several modals.
 
 ## Data states
@@ -29,7 +29,7 @@ The frontend should read like an operator console: dense, calm, predictable, and
 - [x] Surface refresh failures instead of only writing them to the browser console.
 - [x] Show the timestamp of the last successful refresh.
 - [x] Remove production fallback values from Proxmox metrics.
-- [ ] Add consistent loading skeletons for tables and detail panels.
+- [x] Add a loading skeleton for the primary nodes table.
 
 ## Remaining screens
 

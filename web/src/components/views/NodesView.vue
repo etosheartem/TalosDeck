@@ -7,7 +7,7 @@ import type { NodeOverview, ProxmoxStatusResponse, CreateWorkerResult } from '..
 import NodeCard from '../NodeCard.vue'
 import AddWorkerModal from '../AddWorkerModal.vue'
 
-const props = defineProps<{ nodes: NodeOverview[] }>()
+const props = defineProps<{ nodes: NodeOverview[]; loading: boolean }>()
 const emit = defineEmits<{
   (e: 'open-services', node: NodeOverview): void
   (e: 'open-logs', node: NodeOverview): void
@@ -103,7 +103,10 @@ const handleWorkerCreated = (result: CreateWorkerResult) => {
         </div>
       </div>
 
-      <div v-if="filteredNodes.length" class="panel overflow-x-auto">
+      <div v-if="loading && !nodes.length" class="panel overflow-hidden p-3" aria-label="Loading nodes">
+        <div v-for="row in 4" :key="row" class="skeleton-row"><span/><span/><span/><span/></div>
+      </div>
+      <div v-else-if="filteredNodes.length" class="panel overflow-x-auto">
         <table class="nodes-table">
           <thead>
             <tr>
@@ -170,6 +173,8 @@ th { height: 34px; padding: 0 12px; border-bottom: 1px solid var(--border); colo
 .empty-state { display: flex; min-height: 120px; align-items: center; justify-content: center; gap: 10px; padding: 24px; color: var(--text-muted); font-size: 11px; }
 .empty-state p + p { margin-top: 3px; color: var(--text-faint); }
 .danger-state { color: var(--danger); border-color: #553038; background: color-mix(in srgb, var(--danger-muted) 40%, var(--surface)); }
+.skeleton-row { display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:24px;height:56px;align-items:center;border-bottom:1px solid var(--border) }
+.skeleton-row:last-child{border-bottom:0}.skeleton-row span{height:8px;border-radius:3px;background:var(--border);opacity:.7}
 @media (max-width: 900px) {
   .host-strip { align-items: flex-start; flex-wrap: wrap; }
   .host-metrics { order: 3; width: 100%; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 10px; }
