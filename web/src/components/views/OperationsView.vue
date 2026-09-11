@@ -406,17 +406,17 @@ const startRollingReboot = async () => {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
     <!-- Header -->
     <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
       <div>
         <div class="flex items-center gap-2.5">
-          <h2 class="text-xl font-bold tracking-tight text-zinc-100 flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
             <Zap class="w-5 h-5 text-amber-400" />
             <span>{{ t('operations_title') }}</span>
           </h2>
           <span class="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-zinc-800 text-emerald-400 border border-zinc-700/60 flex items-center gap-1.5">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 "></span>
             <span>etcd Quorum OK</span>
           </span>
         </div>
@@ -428,7 +428,7 @@ const startRollingReboot = async () => {
       <button
         @click="activeSubTab === 'audit' ? loadAuditLogs() : loadEtcd()"
         :disabled="activeSubTab === 'audit' ? loadingAudit : loadingEtcd"
-        class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
+        class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
         :title="t('refresh')"
       >
         <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', (activeSubTab === 'audit' ? loadingAudit : loadingEtcd) ? 'animate-spin' : '']" />
@@ -441,9 +441,9 @@ const startRollingReboot = async () => {
       <button
         @click="activeSubTab = 'overview'"
         :class="[
-          'flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border',
+          'flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer border',
           activeSubTab === 'overview'
-            ? 'bg-zinc-800 text-zinc-100 border-zinc-700 shadow-sm'
+            ? 'bg-zinc-800 text-zinc-100 border-zinc-700 '
             : 'text-zinc-400 hover:text-zinc-200 bg-zinc-950/60 border-transparent hover:bg-zinc-900',
         ]"
       >
@@ -454,9 +454,9 @@ const startRollingReboot = async () => {
       <button
         @click="activeSubTab = 'audit'"
         :class="[
-          'flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border',
+          'flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer border',
           activeSubTab === 'audit'
-            ? 'bg-zinc-800 text-zinc-100 border-zinc-700 shadow-sm'
+            ? 'bg-zinc-800 text-zinc-100 border-zinc-700 '
             : 'text-zinc-400 hover:text-zinc-200 bg-zinc-950/60 border-transparent hover:bg-zinc-900',
         ]"
       >
@@ -472,16 +472,16 @@ const startRollingReboot = async () => {
     </div>
 
     <!-- Overview SubTab Content -->
-    <div v-show="activeSubTab === 'overview'" class="space-y-6">
+    <div v-show="activeSubTab === 'overview'" class="space-y-4">
       <!-- etcd Health Overview Card -->
-      <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-5 backdrop-blur-sm space-y-4 shadow-md">
+      <div class="bg-[#11151a] border border-[#252c34] rounded-lg p-5  space-y-4 ">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800/70">
         <div class="flex items-center gap-3">
-          <div :class="['p-2.5 rounded-xl border', etcd?.healthy ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60' : 'bg-red-950/60 text-red-400 border-red-800/60']">
+          <div :class="['p-2.5 rounded-md border', etcd?.healthy ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60' : 'bg-red-950/60 text-red-400 border-red-800/60']">
             <Database class="w-5 h-5" />
           </div>
           <div>
-            <h3 class="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
               <span>{{ t('etcd_health_title') }}</span>
               <span :class="['text-xs font-semibold px-2 py-0.5 rounded border', etcd?.healthy ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/60' : 'bg-red-950/80 text-red-400 border-red-800/60']">
                 {{ etcd?.healthy ? t('etcd_quorum_ok') : 'Degraded' }}
@@ -504,7 +504,7 @@ const startRollingReboot = async () => {
       </div>
 
       <!-- Alarms Banner -->
-      <div :class="['rounded-xl p-3 border flex items-center justify-between gap-3 text-xs', etcd?.alarms?.length ? 'bg-red-950/30 border-red-800/60' : 'bg-zinc-950/70 border-zinc-800']">
+      <div :class="['rounded-md p-3 border flex items-center justify-between gap-3 text-xs', etcd?.alarms?.length ? 'bg-red-950/30 border-red-800/60' : 'bg-zinc-950/70 border-zinc-800']">
         <div class="flex items-center gap-2.5">
           <ShieldCheck class="w-4 h-4 text-emerald-400 shrink-0" />
           <span class="text-zinc-300">{{ etcd?.alarms?.length ? 'Active etcd alarms' : t('etcd_no_alarms') }}</span>
@@ -513,7 +513,7 @@ const startRollingReboot = async () => {
       </div>
 
       <!-- Members Table -->
-      <div class="overflow-x-auto rounded-xl border border-zinc-800/70 bg-zinc-950/50">
+      <div class="overflow-x-auto rounded-md border border-zinc-800/70 bg-zinc-950/50">
         <table class="w-full text-left text-xs">
           <thead>
             <tr class="border-b border-zinc-800 text-[11px] text-zinc-400 uppercase tracking-wider bg-zinc-900/80">
@@ -578,15 +578,15 @@ const startRollingReboot = async () => {
     </div>
 
     <!-- Telegram Alerting & Cluster Health Monitor Panel (Phase 5) -->
-    <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-5 backdrop-blur-sm space-y-5 shadow-md">
+    <div class="bg-[#11151a] border border-[#252c34] rounded-lg p-5  space-y-5 ">
       <!-- Panel Header -->
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800/70">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-sky-950/60 text-sky-400 border border-sky-800/60 shadow-[0_0_12px_rgba(56,189,248,0.25)]">
+          <div class="p-2.5 rounded-md bg-sky-950/60 text-sky-400 border border-sky-800/60 shadow-[0_0_12px_rgba(56,189,248,0.25)]">
             <Bell class="w-5 h-5" />
           </div>
           <div>
-            <h3 class="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
               <span>{{ t('alerts_panel_title') }}</span>
               <span
                 :class="[
@@ -598,7 +598,7 @@ const startRollingReboot = async () => {
               >
                 <span
                   v-if="alertsConfig?.enabled && alertsConfig?.watcher_running"
-                  class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"
+                  class="w-1.5 h-1.5 rounded-full bg-emerald-400 "
                 ></span>
                 <span>{{ alertsConfig?.enabled && alertsConfig?.watcher_running ? t('alerts_status_active') : t('alerts_status_disabled') }}</span>
               </span>
@@ -659,7 +659,7 @@ const startRollingReboot = async () => {
                   :type="showBotToken ? 'text' : 'password'"
                   v-model="botToken"
                   :placeholder="alertsConfig?.bot_token_masked ? (showBotToken ? alertsConfig.bot_token_masked : '••••••••••••••••••••') : t('alerts_bot_token_placeholder')"
-                  class="w-full bg-zinc-950 border border-zinc-800 focus:border-sky-500 rounded-xl px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none transition-colors pr-10"
+                  class="w-full bg-zinc-950 border border-zinc-800 focus:border-sky-500 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none transition-colors pr-10"
                 />
                 <button
                   type="button"
@@ -683,7 +683,7 @@ const startRollingReboot = async () => {
                 type="text"
                 v-model="chatID"
                 :placeholder="alertsConfig?.chat_id_masked || '-1001234567890'"
-                class="w-full bg-zinc-950 border border-zinc-800 focus:border-sky-500 rounded-xl px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none transition-colors"
+                class="w-full bg-zinc-950 border border-zinc-800 focus:border-sky-500 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none transition-colors"
               />
               <p class="text-[10px] text-zinc-500">
                 {{ t('alerts_chat_id_hint') }}
@@ -698,7 +698,7 @@ const startRollingReboot = async () => {
               <select
                 id="alerts-min-level"
                 v-model="minLevel"
-                class="w-full bg-zinc-950 border border-zinc-800 focus:border-sky-500 rounded-xl px-3 py-2 text-xs text-zinc-100 focus:outline-none transition-colors cursor-pointer"
+                class="w-full bg-zinc-950 border border-zinc-800 focus:border-sky-500 rounded-md px-3 py-2 text-xs text-zinc-100 focus:outline-none transition-colors cursor-pointer"
               >
                 <option value="INFO">{{ t('alerts_level_info') }}</option>
                 <option value="WARNING">{{ t('alerts_level_warning') }}</option>
@@ -708,7 +708,7 @@ const startRollingReboot = async () => {
           </div>
 
           <!-- Enable Switch -->
-          <div class="flex items-center justify-between p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80">
+          <div class="flex items-center justify-between p-3 rounded-md bg-zinc-950/60 border border-zinc-800/80">
             <div class="flex items-center gap-2.5">
               <input
                 id="alerts-enabled-checkbox"
@@ -730,7 +730,7 @@ const startRollingReboot = async () => {
             <button
               @click="handleSaveAlerts"
               :disabled="savingAlerts"
-              class="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 active:scale-95 text-xs font-semibold text-white transition-all cursor-pointer disabled:opacity-50 shadow-md shadow-sky-950/50"
+              class="flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-sky-600 hover:bg-sky-500 active:scale-95 text-xs font-semibold text-white transition-all cursor-pointer disabled:opacity-50  shadow-sky-950/50"
             >
               <RefreshCw v-if="savingAlerts" class="w-3.5 h-3.5 animate-spin" />
               <Check v-else class="w-3.5 h-3.5" />
@@ -740,7 +740,7 @@ const startRollingReboot = async () => {
             <button
               @click="handleSendTestAlert"
               :disabled="testingAlerts"
-              class="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
+              class="flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
             >
               <RefreshCw v-if="testingAlerts" class="w-3.5 h-3.5 animate-spin text-sky-400" />
               <Send v-else class="w-3.5 h-3.5 text-sky-400" />
@@ -763,7 +763,7 @@ const startRollingReboot = async () => {
           <!-- Alerts List Container -->
           <div
             v-if="!alertsConfig?.recent_alerts?.length && !alertsConfig?.recentAlerts?.length"
-            class="h-[260px] rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-4 flex flex-col items-center justify-center text-center space-y-2.5"
+            class="h-[260px] rounded-md border border-zinc-800/80 bg-zinc-950/50 p-4 flex flex-col items-center justify-center text-center space-y-2.5"
           >
             <ShieldCheck class="w-7 h-7 text-emerald-400/80" />
             <p class="text-xs text-zinc-400 leading-relaxed max-w-[280px]">
@@ -773,12 +773,12 @@ const startRollingReboot = async () => {
 
           <div
             v-else
-            class="h-[260px] overflow-y-auto space-y-2 pr-1 rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-2.5 custom-scrollbar"
+            class="h-[260px] overflow-y-auto space-y-2 pr-1 rounded-md border border-zinc-800/70 bg-zinc-950/40 p-2.5 custom-scrollbar"
           >
             <div
               v-for="alert in (alertsConfig?.recent_alerts || alertsConfig?.recentAlerts || [])"
               :key="alert.id"
-              class="p-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 hover:border-zinc-700/80 transition-all space-y-1 text-xs"
+              class="p-2.5 rounded-md bg-zinc-900/90 border border-zinc-800/80 hover:border-zinc-700/80 transition-all space-y-1 text-xs"
             >
               <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-1.5 font-bold text-zinc-200">
@@ -837,14 +837,14 @@ const startRollingReboot = async () => {
     </div>
 
     <!-- Backup & Disaster Recovery -->
-    <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-5 space-y-4 shadow-md">
+    <div class="bg-[#11151a] border border-[#252c34] rounded-lg p-5 space-y-4 ">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800/70">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-violet-950/60 text-violet-400 border border-violet-800/60">
+          <div class="p-2.5 rounded-md bg-violet-950/60 text-violet-400 border border-violet-800/60">
             <FileText class="w-5 h-5" />
           </div>
           <div>
-            <h3 class="text-base font-bold text-zinc-100">Backup & Disaster Recovery</h3>
+            <h3 class="text-sm font-semibold text-zinc-100">Backup & Disaster Recovery</h3>
             <p class="text-xs text-zinc-400 mt-0.5">Etcd snapshots and full cluster recovery archives</p>
           </div>
         </div>
@@ -852,18 +852,18 @@ const startRollingReboot = async () => {
           <button
             @click="handleCreateBackup('etcd')"
             :disabled="creatingBackup !== null"
-            class="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs font-semibold text-zinc-200 disabled:opacity-50 cursor-pointer"
+            class="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs font-semibold text-zinc-200 disabled:opacity-50 cursor-pointer"
           >
             {{ creatingBackup === 'etcd' ? 'Creating…' : 'Etcd snapshot' }}
           </button>
           <button
             @click="handleCreateBackup('full')"
             :disabled="creatingBackup !== null"
-            class="px-3 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white disabled:opacity-50 cursor-pointer"
+            class="px-3 py-2 rounded-md bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white disabled:opacity-50 cursor-pointer"
           >
             {{ creatingBackup === 'full' ? 'Creating…' : 'Full backup' }}
           </button>
-          <button @click="loadBackups" :disabled="loadingBackups" class="p-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-50 cursor-pointer" title="Refresh backups">
+          <button @click="loadBackups" :disabled="loadingBackups" class="p-2 rounded-md bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-50 cursor-pointer" title="Refresh backups">
             <RefreshCw :class="['w-3.5 h-3.5', loadingBackups ? 'animate-spin' : '']" />
           </button>
         </div>
@@ -872,7 +872,7 @@ const startRollingReboot = async () => {
       <div v-if="backups.length === 0 && !loadingBackups" class="py-6 text-center text-xs text-zinc-500">
         No backups created yet
       </div>
-      <div v-else class="overflow-x-auto rounded-xl border border-zinc-800/70">
+      <div v-else class="overflow-x-auto rounded-md border border-zinc-800/70">
         <table class="w-full text-left text-xs">
           <thead class="bg-zinc-950/70 text-zinc-400 uppercase text-[10px] tracking-wider">
             <tr>
@@ -907,16 +907,16 @@ const startRollingReboot = async () => {
 
     <!-- Quick Operations Grid -->
     <div class="space-y-3">
-      <h3 class="text-base font-bold text-zinc-100 flex items-center gap-2">
+      <h3 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
         <Sliders class="w-4 h-4 text-cyan-400" />
         <span>{{ t('ops_quick_actions') }}</span>
       </h3>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <!-- Operation 1: Rolling Reboot -->
-        <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:border-zinc-700/80 transition-all shadow-md">
+        <div class="bg-[#11151a] border border-[#252c34] rounded-lg p-5 flex flex-col justify-between space-y-4 hover:border-zinc-700/80 transition-all ">
           <div class="space-y-2">
-            <div class="p-2.5 rounded-xl bg-violet-950/60 text-violet-400 border border-violet-800/50 w-fit">
+            <div class="p-2.5 rounded-md bg-violet-950/60 text-violet-400 border border-violet-800/50 w-fit">
               <RotateCw class="w-5 h-5" />
             </div>
             <h4 class="text-sm font-bold text-zinc-100">{{ t('ops_rolling_reboot') }}</h4>
@@ -927,7 +927,7 @@ const startRollingReboot = async () => {
 
           <button
             @click="isRollingOpen = true"
-            class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-violet-950/70 hover:bg-violet-900/80 border border-violet-800/70 text-xs font-semibold text-violet-200 transition-all cursor-pointer active:scale-95 shadow-sm"
+            class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-violet-950/70 hover:bg-violet-900/80 border border-violet-800/70 text-xs font-semibold text-violet-200 transition-all cursor-pointer active:scale-95 "
           >
             <Play class="w-3.5 h-3.5" />
             <span>{{ t('ops_rolling_reboot') }}</span>
@@ -935,9 +935,9 @@ const startRollingReboot = async () => {
         </div>
 
         <!-- Operation 2: Maintenance Mode Toggle -->
-        <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:border-zinc-700/80 transition-all shadow-md">
+        <div class="bg-[#11151a] border border-[#252c34] rounded-lg p-5 flex flex-col justify-between space-y-4 hover:border-zinc-700/80 transition-all ">
           <div class="space-y-2">
-            <div class="p-2.5 rounded-xl bg-amber-950/60 text-amber-400 border border-amber-800/50 w-fit">
+            <div class="p-2.5 rounded-md bg-amber-950/60 text-amber-400 border border-amber-800/50 w-fit">
               <Wrench class="w-5 h-5" />
             </div>
             <h4 class="text-sm font-bold text-zinc-100">{{ t('ops_maintenance_mode') }}</h4>
@@ -953,7 +953,7 @@ const startRollingReboot = async () => {
               <select
                 id="ops-target-node"
                 v-model="targetNodeIP"
-                class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:outline-none focus:border-amber-500/70 cursor-pointer"
+                class="w-full bg-zinc-950 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:outline-none focus:border-amber-500/70 cursor-pointer"
               >
                 <option
                   v-for="node in nodes"
@@ -969,7 +969,7 @@ const startRollingReboot = async () => {
           <button
             @click="handleToggleMaintenance"
             :disabled="maintenanceLoading || props.nodes.length === 0"
-            class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-amber-950/70 hover:bg-amber-900/80 border border-amber-800/70 text-xs font-semibold text-amber-200 transition-all cursor-pointer active:scale-95 disabled:opacity-50 shadow-sm"
+            class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-amber-950/70 hover:bg-amber-900/80 border border-amber-800/70 text-xs font-semibold text-amber-200 transition-all cursor-pointer active:scale-95 disabled:opacity-50 "
           >
             <Wrench class="w-3.5 h-3.5" />
             <span>{{ maintenanceLoading ? t('loading') : t('ops_apply_maintenance') }}</span>
@@ -977,9 +977,9 @@ const startRollingReboot = async () => {
         </div>
 
         <!-- Operation 3: Bootstrap Check Diagnostics -->
-        <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-5 flex flex-col justify-between space-y-4 hover:border-zinc-700/80 transition-all shadow-md">
+        <div class="bg-[#11151a] border border-[#252c34] rounded-lg p-5 flex flex-col justify-between space-y-4 hover:border-zinc-700/80 transition-all ">
           <div class="space-y-2">
-            <div class="p-2.5 rounded-xl bg-cyan-950/60 text-cyan-400 border border-cyan-800/50 w-fit">
+            <div class="p-2.5 rounded-md bg-cyan-950/60 text-cyan-400 border border-cyan-800/50 w-fit">
               <Stethoscope class="w-5 h-5" />
             </div>
             <h4 class="text-sm font-bold text-zinc-100">{{ t('ops_bootstrap_check') }}</h4>
@@ -991,7 +991,7 @@ const startRollingReboot = async () => {
           <button
             @click="startBootstrapCheck"
             :disabled="checkingBootstrap"
-            class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-cyan-950/70 hover:bg-cyan-900/80 border border-cyan-800/70 text-xs font-semibold text-cyan-200 transition-all cursor-pointer active:scale-95 disabled:opacity-50 shadow-sm"
+            class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-cyan-950/70 hover:bg-cyan-900/80 border border-cyan-800/70 text-xs font-semibold text-cyan-200 transition-all cursor-pointer active:scale-95 disabled:opacity-50 "
           >
             <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', checkingBootstrap ? 'animate-spin' : '']" />
             <span>{{ checkingBootstrap ? t('ops_checking') : t('ops_run_check') }}</span>
@@ -1003,7 +1003,7 @@ const startRollingReboot = async () => {
     <!-- Bootstrap Diagnostics Results (if run) -->
     <div
       v-if="bootstrapResults.length > 0"
-      :class="['bg-zinc-900/90 border rounded-2xl p-5 space-y-3.5 backdrop-blur-md shadow-lg', bootstrapHasErrors ? 'border-red-800/50 shadow-red-950/20' : 'border-cyan-800/50 shadow-cyan-950/20']"
+      :class="['bg-zinc-900/90 border rounded-lg p-5 space-y-3.5  ', bootstrapHasErrors ? 'border-red-800/50 shadow-red-950/20' : 'border-cyan-800/50 shadow-cyan-950/20']"
     >
       <div class="flex items-center justify-between pb-2 border-b border-zinc-800">
         <h4 class="text-sm font-bold text-zinc-100 flex items-center gap-2">
@@ -1018,7 +1018,7 @@ const startRollingReboot = async () => {
         <div
           v-for="item in bootstrapResults"
           :key="item.id"
-          class="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800 flex items-start gap-3"
+          class="p-3 rounded-md bg-zinc-950/70 border border-zinc-800 flex items-start gap-3"
         >
           <div :class="['p-1.5 rounded-lg border shrink-0 mt-0.5', item.status === 'success' ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/60' : item.status === 'warning' ? 'bg-amber-950/80 text-amber-400 border-amber-800/60' : 'bg-red-950/80 text-red-400 border-red-800/60']">
             <Check v-if="item.status === 'success'" class="w-3.5 h-3.5" />
@@ -1040,7 +1040,7 @@ const startRollingReboot = async () => {
     <!-- Audit Trail SubTab Content -->
     <div v-show="activeSubTab === 'audit'" class="space-y-4">
       <!-- Search and Filter Bar -->
-      <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-md">
+      <div class="bg-[#11151a] border border-[#252c34] rounded-lg p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 ">
         <!-- Search Input -->
         <div class="relative flex-1">
           <Search class="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1048,13 +1048,13 @@ const startRollingReboot = async () => {
             type="text"
             v-model="auditSearch"
             :placeholder="t('audit_search')"
-            class="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3.5 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-cyan-500/70 transition-colors"
+            class="w-full bg-zinc-950 border border-zinc-800 rounded-md pl-9 pr-3.5 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-cyan-500/70 transition-colors"
           />
         </div>
 
         <!-- Action Filter & Refresh -->
         <div class="flex items-center gap-2 shrink-0">
-          <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs">
+          <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs">
             <Filter class="w-3.5 h-3.5 text-zinc-400" />
             <select
               v-model="auditActionFilter"
@@ -1075,7 +1075,7 @@ const startRollingReboot = async () => {
           <button
             @click="loadAuditLogs"
             :disabled="loadingAudit"
-            class="p-2 rounded-xl bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+            class="p-2 rounded-md bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
             :title="t('refresh')"
           >
             <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', loadingAudit ? 'animate-spin' : '']" />
@@ -1084,7 +1084,7 @@ const startRollingReboot = async () => {
       </div>
 
       <!-- Audit Events Table Card -->
-      <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl overflow-hidden shadow-md">
+      <div class="bg-[#11151a] border border-[#252c34] rounded-lg overflow-hidden ">
         <div class="overflow-x-auto">
           <table class="w-full text-left text-xs">
             <thead>
@@ -1209,13 +1209,13 @@ const startRollingReboot = async () => {
     <div
       v-if="isRollingOpen"
       @click.self="!rollingInProgress && (isRollingOpen = false)"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80  animate-fade-in"
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="rolling-reboot-modal-title"
-        class="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-5 relative"
+        class="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-lg p-6  space-y-5 relative"
       >
         <!-- Close Button -->
         <button
@@ -1229,25 +1229,25 @@ const startRollingReboot = async () => {
         </button>
 
         <div class="flex items-center gap-3">
-          <div class="p-3 rounded-xl bg-violet-950/60 text-violet-400 border border-violet-800/60">
+          <div class="p-3 rounded-md bg-violet-950/60 text-violet-400 border border-violet-800/60">
             <RotateCw class="w-5 h-5" />
           </div>
           <div>
-            <h3 id="rolling-reboot-modal-title" class="text-base font-bold text-zinc-100">{{ t('ops_rolling_confirm_title') }}</h3>
+            <h3 id="rolling-reboot-modal-title" class="text-sm font-semibold text-zinc-100">{{ t('ops_rolling_confirm_title') }}</h3>
             <p class="text-xs text-zinc-400 mt-0.5">Cluster Rolling Upgrade & Reboot</p>
           </div>
         </div>
 
-        <p class="text-xs text-zinc-300 leading-relaxed bg-zinc-950 p-3.5 rounded-xl border border-zinc-800/80">
+        <p class="text-xs text-zinc-300 leading-relaxed bg-zinc-950 p-3.5 rounded-md border border-zinc-800/80">
           {{ t('ops_rolling_confirm_text') }}
         </p>
 
         <!-- Empty State if no nodes -->
-        <div v-if="!rollingInProgress && rollingNodes.length === 0" class="p-3.5 rounded-xl bg-amber-950/30 border border-amber-900/40 text-xs text-amber-300">
+        <div v-if="!rollingInProgress && rollingNodes.length === 0" class="p-3.5 rounded-md bg-amber-950/30 border border-amber-900/40 text-xs text-amber-300">
           {{ t('node_empty_title') || 'No nodes available' }}
         </div>
 
-		<div v-if="rollingError" class="p-3.5 rounded-xl bg-red-950/30 border border-red-900/40 text-xs text-red-300">
+		<div v-if="rollingError" class="p-3.5 rounded-md bg-red-950/30 border border-red-900/40 text-xs text-red-300">
 			{{ rollingError }}
 		</div>
 
@@ -1281,7 +1281,7 @@ const startRollingReboot = async () => {
             @click="isRollingOpen = false"
             :disabled="rollingInProgress"
             :aria-label="t('reboot_cancel_btn')"
-            class="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 transition-all cursor-pointer disabled:opacity-50"
+            class="px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 transition-all cursor-pointer disabled:opacity-50"
           >
             {{ t('reboot_cancel_btn') }}
           </button>
@@ -1289,7 +1289,7 @@ const startRollingReboot = async () => {
             @click="startRollingReboot"
             :disabled="rollingInProgress || rollingNodes.length === 0"
             :aria-label="t('ops_start_rolling')"
-            class="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white transition-all cursor-pointer disabled:opacity-50 shadow-lg shadow-violet-950/50"
+            class="flex items-center gap-1.5 px-4 py-2 rounded-md bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white transition-all cursor-pointer disabled:opacity-50  shadow-violet-950/50"
           >
             <Play class="w-3.5 h-3.5" />
             <span>{{ t('ops_start_rolling') }}</span>

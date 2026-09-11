@@ -86,14 +86,14 @@ const filteredServices = computed(() => {
 <template>
   <div
     v-if="open && node"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm animate-fade-in"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/75  animate-fade-in"
     @click.self="emit('close')"
   >
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="services-modal-title"
-      class="w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl shadow-black/80 overflow-hidden"
+      class="w-full max-w-3xl max-h-[85vh] flex flex-col rounded-lg bg-zinc-950 border border-zinc-800  overflow-hidden"
     >
       <!-- Header -->
       <div class="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/60 flex items-center justify-between">
@@ -102,7 +102,7 @@ const filteredServices = computed(() => {
             <Server class="w-5 h-5" />
           </div>
           <div>
-            <h2 class="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <h2 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
               <span id="services-modal-title">{{ t('services_title') }}</span>
               <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 font-mono">
                 {{ node.hostname }} ({{ node.ip }})
@@ -144,7 +144,7 @@ const filteredServices = computed(() => {
               :class="[
                 'px-2.5 py-1 rounded-md transition-all cursor-pointer',
                 filterState === 'all'
-                  ? 'bg-zinc-800 text-white shadow-sm'
+                  ? 'bg-zinc-800 text-white '
                   : 'text-zinc-400 hover:text-zinc-200',
               ]"
             >
@@ -155,7 +155,7 @@ const filteredServices = computed(() => {
               :class="[
                 'px-2.5 py-1 rounded-md transition-all cursor-pointer',
                 filterState === 'running'
-                  ? 'bg-zinc-800 text-white shadow-sm'
+                  ? 'bg-zinc-800 text-white '
                   : 'text-zinc-400 hover:text-zinc-200',
               ]"
             >
@@ -166,7 +166,7 @@ const filteredServices = computed(() => {
               :class="[
                 'px-2.5 py-1 rounded-md transition-all cursor-pointer',
                 filterState === 'issues'
-                  ? 'bg-zinc-800 text-rose-300 shadow-sm'
+                  ? 'bg-zinc-800 text-rose-300 '
                   : 'text-zinc-400 hover:text-zinc-200',
               ]"
             >
@@ -258,7 +258,7 @@ const filteredServices = computed(() => {
               <span
                 :class="[
                   'w-1.5 h-1.5 rounded-full',
-                  svc.state === 'Running' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400',
+                  svc.state === 'Running' ? 'bg-emerald-400 ' : 'bg-rose-400',
                 ]"
               ></span>
               <span>{{ svc.state }}</span>

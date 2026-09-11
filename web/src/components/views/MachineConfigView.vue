@@ -125,7 +125,7 @@ const jumpToSection = (section: string) => {
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
       <div>
         <div class="flex items-center gap-2.5">
-          <h2 class="text-xl font-bold tracking-tight text-zinc-100 flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
             <FileCode2 class="w-5 h-5 text-cyan-400" />
             <span>{{ t('config_title') }}</span>
           </h2>
@@ -143,7 +143,7 @@ const jumpToSection = (section: string) => {
         <button
           @click="copyConfig"
           :disabled="!configData"
-          class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
+          class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
           :title="t('config_copy')"
         >
           <Check v-if="copied" class="w-3.5 h-3.5 text-emerald-400" />
@@ -154,7 +154,7 @@ const jumpToSection = (section: string) => {
         <button
           @click="downloadConfig"
           :disabled="!configData"
-          class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
+          class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
           :title="t('config_download')"
         >
           <Download class="w-3.5 h-3.5 text-cyan-400" />
@@ -164,7 +164,7 @@ const jumpToSection = (section: string) => {
         <button
           @click="loadConfig"
           :disabled="loading"
-          class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
+          class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
           :title="t('config_refresh')"
         >
           <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', loading ? 'animate-spin' : '']" />
@@ -176,7 +176,7 @@ const jumpToSection = (section: string) => {
     <!-- Empty state when no nodes available -->
     <div
       v-if="!selectedNode"
-      class="py-16 px-6 text-center rounded-2xl bg-amber-950/20 border border-amber-900/40"
+      class="py-16 px-6 text-center rounded-lg bg-amber-950/20 border border-amber-900/40"
     >
       <AlertTriangle class="w-10 h-10 mx-auto text-amber-400 mb-3" />
       <p class="text-sm font-semibold text-amber-200">
@@ -189,7 +189,7 @@ const jumpToSection = (section: string) => {
 
     <template v-else>
       <!-- Node Selector Pill Bar & Search -->
-      <div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 p-3 bg-zinc-900/80 border border-zinc-800/80 rounded-2xl backdrop-blur-sm max-w-full overflow-hidden">
+      <div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 p-3 bg-zinc-900/80 border border-zinc-800/80 rounded-lg  max-w-full overflow-hidden">
         <!-- Node Selector Pills -->
         <div class="flex items-center gap-2 overflow-x-auto max-w-full pb-1 lg:pb-0">
           <span class="text-xs font-semibold text-zinc-400 whitespace-nowrap pl-1 hidden sm:inline">
@@ -200,9 +200,9 @@ const jumpToSection = (section: string) => {
             :key="node.ip"
             @click="selectedNodeIP = node.ip"
             :class="[
-              'flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-mono font-medium transition-all cursor-pointer whitespace-nowrap border shrink-0',
+              'flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-all cursor-pointer whitespace-nowrap border shrink-0',
               selectedNodeIP === node.ip
-                ? 'bg-zinc-800 text-cyan-300 border-cyan-500/50 shadow-md shadow-cyan-950/30'
+                ? 'bg-zinc-800 text-cyan-300 border-cyan-500/50  shadow-cyan-950/30'
                 : 'bg-zinc-950/60 text-zinc-400 hover:text-zinc-200 border-zinc-800/80 hover:border-zinc-700',
             ]"
           >
@@ -221,7 +221,7 @@ const jumpToSection = (section: string) => {
               v-model="searchQuery"
               type="text"
               :placeholder="t('config_search_placeholder')"
-              class="w-full pl-8 pr-8 py-1.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-500/70 font-mono"
+              class="w-full pl-8 pr-8 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-500/70 font-mono"
             />
             <button
               v-if="searchQuery"
@@ -255,15 +255,10 @@ const jumpToSection = (section: string) => {
       </div>
 
       <!-- YAML Code Viewer Window -->
-      <div class="rounded-2xl border border-zinc-800 bg-zinc-950/90 shadow-2xl overflow-hidden backdrop-blur-md max-w-full">
+      <div class="rounded-lg border border-zinc-800 bg-[#0d1014]  overflow-hidden  max-w-full">
         <!-- Window Title Bar -->
         <div class="flex items-center justify-between px-4 py-2.5 bg-zinc-900/90 border-b border-zinc-800 text-xs max-w-full overflow-x-auto">
           <div class="flex items-center gap-2">
-            <div class="flex items-center gap-1.5 mr-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-rose-500/80"></span>
-              <span class="w-2.5 h-2.5 rounded-full bg-amber-500/80"></span>
-              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500/80"></span>
-            </div>
             <span class="font-mono text-zinc-300 font-semibold truncate">
               {{ selectedNode.hostname }}-config.yaml
             </span>

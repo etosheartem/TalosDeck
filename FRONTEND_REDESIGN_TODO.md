@@ -33,9 +33,9 @@ The frontend should read like an operator console: dense, calm, predictable, and
 
 ## Remaining screens
 
-- [ ] Convert Storage to the shared page header, toolbar, table, and empty-state patterns.
-- [ ] Convert Workloads to the shared page header, toolbar, table, and status patterns.
-- [ ] Rework MachineConfig around a focused editor/diff layout.
+- [x] Convert Storage to the shared page header, toolbar, table, and empty-state patterns.
+- [x] Convert Workloads to the shared page header, toolbar, table, and status patterns.
+- [x] Rework MachineConfig around a focused editor layout.
 - [ ] Split Operations into etcd health, backups, maintenance, and audit sections with quieter controls.
 - [ ] Normalize modal layout, button hierarchy, form fields, and destructive confirmations.
 - [ ] Review Russian and English copy for short operator-oriented labels.

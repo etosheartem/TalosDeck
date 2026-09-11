@@ -231,7 +231,7 @@ const filteredLogs = computed(() => {
 <template>
   <div
     v-if="open && node"
-    class="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in"
+    class="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80  animate-fade-in"
     @click.self="emit('close')"
   >
     <div
@@ -239,7 +239,7 @@ const filteredLogs = computed(() => {
       aria-modal="true"
       aria-labelledby="logs-modal-title"
       :class="[
-        'w-full flex flex-col rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl shadow-black overflow-hidden font-mono transition-all duration-300',
+        'w-full flex flex-col rounded-lg bg-zinc-950 border border-zinc-800  overflow-hidden font-mono transition-all duration-300',
         isFullscreen ? 'h-full max-w-full rounded-none' : 'max-w-5xl h-[85vh]',
       ]"
     >
@@ -263,11 +263,11 @@ const filteredLogs = computed(() => {
                   :class="[
                     'w-2 h-2 rounded-full',
                     connectionStatus === 'connected'
-                      ? 'bg-emerald-400 animate-pulse'
+                      ? 'bg-emerald-400 '
                       : connectionStatus === 'simulated'
                       ? 'bg-cyan-400'
                       : connectionStatus === 'connecting'
-                      ? 'bg-amber-400 animate-pulse'
+                      ? 'bg-amber-400 '
                       : 'bg-rose-500',
                   ]"
                 ></span>

@@ -40,22 +40,22 @@ const handleConfirm = async () => {
 <template>
   <div
     v-if="open && node"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80  animate-fade-in"
     @click.self="emit('close')"
   >
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="reboot-modal-title"
-      class="w-full max-w-md rounded-2xl bg-zinc-950 border border-rose-900/50 shadow-2xl shadow-rose-950/30 overflow-hidden"
+      class="w-full max-w-md rounded-lg bg-zinc-950 border border-rose-900/50  shadow-rose-950/30 overflow-hidden"
     >
       <!-- Header with Danger Icon -->
       <div class="px-6 pt-6 pb-4 flex items-start gap-4">
-        <div class="p-3 rounded-xl bg-rose-950/70 border border-rose-800/80 text-rose-400 shrink-0">
+        <div class="p-3 rounded-md bg-rose-950/70 border border-rose-800/80 text-rose-400 shrink-0">
           <AlertTriangle class="w-6 h-6" />
         </div>
         <div class="flex-1">
-          <h2 id="reboot-modal-title" class="text-base font-bold text-zinc-100">
+          <h2 id="reboot-modal-title" class="text-sm font-semibold text-zinc-100">
             {{ t('reboot_title') }}
           </h2>
           <p class="text-xs text-zinc-400 mt-1">
@@ -76,7 +76,7 @@ const handleConfirm = async () => {
 
       <!-- Warning Description Box -->
       <div class="px-6 py-3">
-        <div class="p-3 rounded-xl bg-rose-950/30 border border-rose-900/40 text-xs text-rose-300/90 leading-relaxed">
+        <div class="p-3 rounded-md bg-rose-950/30 border border-rose-900/40 text-xs text-rose-300/90 leading-relaxed">
           {{ t('reboot_danger_text') }}
         </div>
       </div>
@@ -93,7 +93,7 @@ const handleConfirm = async () => {
         <button
           @click="handleConfirm"
           :disabled="loading"
-          class="flex items-center gap-2 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-900/40 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+          class="flex items-center gap-2 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold  shadow-rose-900/40 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
         >
           <RotateCw :class="['w-3.5 h-3.5', loading ? 'animate-spin' : '']" />
           <span>{{ loading ? t('reboot_in_progress') : t('reboot_confirm_btn') }}</span>

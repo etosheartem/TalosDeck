@@ -230,24 +230,24 @@ const handleSubmit = async () => {
 <template>
   <div
     v-if="open"
-    class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md overflow-y-auto animate-fade-in"
+    class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80  overflow-y-auto animate-fade-in"
     @click.self="!isCreating && emit('close')"
   >
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-worker-modal-title"
-      class="w-full max-w-2xl rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl shadow-cyan-950/20 overflow-hidden flex flex-col max-h-[92vh] my-auto"
+      class="w-full max-w-2xl rounded-lg bg-zinc-950 border border-zinc-800  shadow-cyan-950/20 overflow-hidden flex flex-col max-h-[92vh] my-auto"
     >
       <!-- Modal Header -->
       <div class="px-6 py-4.5 border-b border-zinc-800/80 bg-zinc-900/40 flex items-center justify-between shrink-0">
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-inner">
+          <div class="w-9 h-9 rounded-md bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-inner">
             <Server class="w-5 h-5" />
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h2 id="add-worker-modal-title" class="text-base font-bold text-zinc-100 tracking-tight">
+              <h2 id="add-worker-modal-title" class="text-sm font-semibold text-zinc-100 tracking-tight">
                 {{ t('add_worker_title') }}
               </h2>
               <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-950 border border-cyan-700/60 text-cyan-300">
@@ -272,11 +272,11 @@ const handleSubmit = async () => {
       </div>
 
       <!-- Modal Body (Scrollable) -->
-      <div class="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+      <div class="p-6 space-y-4 overflow-y-auto custom-scrollbar flex-1">
         <!-- Error Banner if Any -->
         <div
           v-if="errorMessage"
-          class="p-3.5 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs flex items-start gap-2.5 animate-shake"
+          class="p-3.5 rounded-md bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs flex items-start gap-2.5 animate-shake"
         >
           <AlertCircle class="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
           <div class="flex-1">
@@ -286,7 +286,7 @@ const handleSubmit = async () => {
         </div>
 
         <!-- 1. Proxmox VE Host Live Resources -->
-        <div class="rounded-xl bg-zinc-900/60 border border-zinc-800/80 p-4 space-y-3">
+        <div class="rounded-md bg-zinc-900/60 border border-zinc-800/80 p-4 space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <Activity class="w-4 h-4 text-cyan-400" />
@@ -307,7 +307,7 @@ const handleSubmit = async () => {
                     : 'bg-amber-950/60 border-amber-800/60 text-amber-400',
                 ]"
               >
-                <span :class="['w-1.5 h-1.5 rounded-full', isHostConfigured ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400']" />
+                <span :class="['w-1.5 h-1.5 rounded-full', isHostConfigured ? 'bg-emerald-400 ' : 'bg-amber-400']" />
                 {{ isHostConfigured ? t('proxmox_status_connected') : t('proxmox_status_unconfigured') }}
               </span>
               <button
@@ -398,7 +398,7 @@ const handleSubmit = async () => {
         <!-- 2. Creating State Progress Banner (shown when isCreating is true) -->
         <div
           v-if="isCreating"
-          class="rounded-xl bg-cyan-950/30 border border-cyan-500/40 p-5 space-y-4 animate-fade-in"
+          class="rounded-md bg-cyan-950/30 border border-cyan-500/40 p-5 space-y-4 animate-fade-in"
         >
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2.5">
@@ -431,7 +431,7 @@ const handleSubmit = async () => {
                 <span v-else>1</span>
               </div>
               <span class="flex-1">{{ t('add_worker_step_alloc') }}</span>
-              <span v-if="currentStep === 1" class="text-[11px] font-mono text-cyan-400 animate-pulse">Running...</span>
+              <span v-if="currentStep === 1" class="text-[11px] font-mono text-cyan-400 ">Running...</span>
             </div>
 
             <div
@@ -445,7 +445,7 @@ const handleSubmit = async () => {
                 <span v-else>2</span>
               </div>
               <span class="flex-1">{{ t('add_worker_step_create') }}</span>
-              <span v-if="currentStep === 2" class="text-[11px] font-mono text-cyan-400 animate-pulse">Running...</span>
+              <span v-if="currentStep === 2" class="text-[11px] font-mono text-cyan-400 ">Running...</span>
             </div>
 
             <div
@@ -459,7 +459,7 @@ const handleSubmit = async () => {
                 <span v-else>3</span>
               </div>
               <span class="flex-1">{{ t('add_worker_step_iso') }}</span>
-              <span v-if="currentStep === 3" class="text-[11px] font-mono text-cyan-400 animate-pulse">Running...</span>
+              <span v-if="currentStep === 3" class="text-[11px] font-mono text-cyan-400 ">Running...</span>
             </div>
 
             <div
@@ -472,7 +472,7 @@ const handleSubmit = async () => {
                 <span>4</span>
               </div>
               <span class="flex-1">{{ t('add_worker_step_start') }}</span>
-              <span v-if="currentStep === 4" class="text-[11px] font-mono text-cyan-400 animate-pulse">Running...</span>
+              <span v-if="currentStep === 4" class="text-[11px] font-mono text-cyan-400 ">Running...</span>
             </div>
           </div>
         </div>
@@ -494,7 +494,7 @@ const handleSubmit = async () => {
                   type="text"
                   :placeholder="t('add_worker_name_placeholder')"
                   :class="[
-                    'w-full pl-9 pr-3 py-2 rounded-xl bg-zinc-900 border text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 transition-all',
+                    'w-full pl-9 pr-3 py-2 rounded-md bg-zinc-900 border text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 transition-all',
                     !isNameValid
                       ? 'border-rose-500/70 focus:border-rose-500 focus:ring-rose-500/30'
                       : 'border-zinc-800 focus:border-cyan-500/70 focus:ring-cyan-500/30'
@@ -524,13 +524,13 @@ const handleSubmit = async () => {
                   type="number"
                   min="100"
                   max="9999"
-                  class="flex-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/30 transition-all"
+                  class="flex-1 px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/30 transition-all"
                 />
                 <button
                   type="button"
                   @click="refreshVMID"
                   :disabled="loadingVMID"
-                  class="p-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-cyan-300 transition-colors cursor-pointer disabled:opacity-40"
+                  class="p-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-cyan-300 transition-colors cursor-pointer disabled:opacity-40"
                   :title="t('add_worker_refresh_vmid')"
                 >
                   <RotateCw :class="['w-4 h-4', loadingVMID ? 'animate-spin' : '']" />
@@ -544,7 +544,7 @@ const handleSubmit = async () => {
             <label class="block text-xs font-semibold text-zinc-300">
               {{ t('add_worker_role') }}
             </label>
-            <div class="p-3 rounded-xl bg-zinc-900/90 border border-cyan-500/40 flex items-start gap-3">
+            <div class="p-3 rounded-md bg-zinc-900/90 border border-cyan-500/40 flex items-start gap-3">
               <div class="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0 mt-0.5">
                 <Cpu class="w-4 h-4" />
               </div>
@@ -584,9 +584,9 @@ const handleSubmit = async () => {
                 type="button"
                 @click="cores = c"
                 :class="[
-                  'py-1.5 px-3 rounded-xl text-xs font-mono font-medium border transition-all cursor-pointer text-center',
+                  'py-1.5 px-3 rounded-md text-xs font-mono font-medium border transition-all cursor-pointer text-center',
                   cores === c
-                    ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200 shadow-sm'
+                    ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200 '
                     : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700',
                 ]"
               >
@@ -626,9 +626,9 @@ const handleSubmit = async () => {
                 type="button"
                 @click="memoryGB = r"
                 :class="[
-                  'py-1.5 px-2 rounded-xl text-xs font-mono font-medium border transition-all cursor-pointer text-center',
+                  'py-1.5 px-2 rounded-md text-xs font-mono font-medium border transition-all cursor-pointer text-center',
                   memoryGB === r
-                    ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-200 shadow-sm'
+                    ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-200 '
                     : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700',
                 ]"
               >
@@ -668,9 +668,9 @@ const handleSubmit = async () => {
                 type="button"
                 @click="diskGB = d"
                 :class="[
-                  'py-1.5 px-2 rounded-xl text-xs font-mono font-medium border transition-all cursor-pointer text-center',
+                  'py-1.5 px-2 rounded-md text-xs font-mono font-medium border transition-all cursor-pointer text-center',
                   diskGB === d
-                    ? 'bg-fuchsia-500/20 border-fuchsia-500/50 text-fuchsia-200 shadow-sm'
+                    ? 'bg-fuchsia-500/20 border-fuchsia-500/50 text-fuchsia-200 '
                     : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700',
                 ]"
               >
@@ -692,7 +692,7 @@ const handleSubmit = async () => {
           <!-- Row 6: Network & AutoStart Options -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
             <!-- Storage & Bridge info -->
-            <div class="p-3 rounded-xl bg-zinc-900/60 border border-zinc-800/80 space-y-1.5 text-xs text-zinc-400">
+            <div class="p-3 rounded-md bg-zinc-900/60 border border-zinc-800/80 space-y-1.5 text-xs text-zinc-400">
               <div class="flex items-center justify-between">
                 <span>{{ t('add_worker_storage') }}:</span>
                 <span class="font-mono text-zinc-200 font-semibold">{{ storage }}</span>
@@ -704,7 +704,7 @@ const handleSubmit = async () => {
             </div>
 
             <!-- Auto-start checkbox -->
-            <label class="p-3 rounded-xl bg-zinc-900/60 border border-zinc-800/80 flex items-center gap-3 cursor-pointer hover:border-zinc-700 transition-colors">
+            <label class="p-3 rounded-md bg-zinc-900/60 border border-zinc-800/80 flex items-center gap-3 cursor-pointer hover:border-zinc-700 transition-colors">
               <input
                 v-model="autoStart"
                 type="checkbox"
@@ -730,7 +730,7 @@ const handleSubmit = async () => {
             type="button"
             @click="emit('close')"
             :disabled="isCreating"
-            class="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 transition-colors cursor-pointer disabled:opacity-50"
+            class="px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 transition-colors cursor-pointer disabled:opacity-50"
           >
             {{ t('close') }}
           </button>
@@ -739,7 +739,7 @@ const handleSubmit = async () => {
             type="button"
             @click="handleSubmit"
             :disabled="isCreating || !isNameValid"
-            class="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white text-xs font-semibold shadow-lg shadow-cyan-900/40 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+            class="flex items-center gap-2 px-5 py-2 rounded-md bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white text-xs font-semibold  shadow-cyan-900/40 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
           >
             <RotateCw v-if="isCreating" class="w-4 h-4 animate-spin" />
             <Zap v-else class="w-4 h-4" />

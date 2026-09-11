@@ -24,7 +24,7 @@ const emit = defineEmits<{
   >
     <div
       v-if="show"
-      class="fixed bottom-5 left-5 right-5 sm:left-auto z-50 max-w-sm rounded-xl p-3.5 shadow-2xl backdrop-blur-md flex items-center gap-3 border text-xs font-medium"
+      class="fixed bottom-5 left-5 right-5 sm:left-auto z-50 max-w-sm rounded-md p-3.5   flex items-center gap-3 border text-xs font-medium"
       :class="[
         type === 'success'
           ? 'bg-emerald-950/90 text-emerald-200 border-emerald-800/80 shadow-emerald-950/50'
