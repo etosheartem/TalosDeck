@@ -167,40 +167,72 @@
 ## 2. Kubernetes Client-Go & Workloads (`internal/k8s/`)
 
 ### [CRITICAL] K8S-01: Несоответствие контракта DTO и краш интерфейса при поиске
-- **Файлы:** [`internal/k8s/models.go:9,14,19`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/models.go#L9), [`internal/k8s/client.go:118,128`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L118), [`web/src/types/index.ts:102-115`](file:///home/artem/laba-kuber/TalosDeck/web/src/types/index.ts#L102-L115)
+- **Файлы:** [`internal/k8s/models.go:7-24`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/models.go#L7-L24), [`internal/k8s/client.go:240-260`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L240-L260), [`web/src/types/index.ts:102-115`](file:///home/artem/laba-kuber/TalosDeck/web/src/types/index.ts#L102-L115)
 - **Описание:** В `PodInfo` поля отдаются как `node`, `podIp`, `readyContainers: int`. Фронтенд ожидает `nodeName`, `ip`, `readyContainers: string`. При вводе в строку поиска `WorkloadsView.vue:69-70` падает с `TypeError: Cannot read properties of undefined (reading 'toLowerCase')`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/models.go:7-24`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/models.go#L7-L24) структура `PodInfo` дополнена полями `ID`, `NodeName`, `NodeIP`, `IP`, `ReadyContainers` (типа `string`, например `"1/1"`), сохранив обратную совместимость с `ReadyCount` и `Node`. В [`internal/k8s/client.go:240-260`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L240-L260) все DTO поля полностью заполняются, что исключает падение поиска на фронтенде по `pod.nodeName.toLowerCase()`.
 
 ### [HIGH] K8S-02: In-Memory фильтрация по ноде вместо FieldSelector
-- **Файл:** [`internal/k8s/client.go:83-85`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L83-L85)
+- **Файл:** [`internal/k8s/client.go:160-175`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L160-L175)
 - **Описание:** Клиент запрашивает весь список подов кластера и фильтрует их по ноде в цикле на стороне бэкенда вместо использования `metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.nodeName", nodeFilter)}`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go:164-167`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L164-L167) вызов `List` теперь передает `metav1.ListOptions{FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodeFilter)}` на сервер API Kubernetes, разгружая сеть и процессор бэкенда при больших кластерах. Сохранена защитная fallback-проверка в памяти на случай API без поддержки селектора.
 
 ### [HIGH] K8S-03: Некорректная обработка `nodeFilter == "all"`
-- **Файл:** [`internal/k8s/client.go:71-74, 83`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L71-L74)
+- **Файл:** [`internal/k8s/client.go:146-148`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L146-L148)
 - **Описание:** Для namespace есть сброс `all` в пустую строку, а для `nodeFilter` нет. Запрос `?node=all` возвращает пустой список подов.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go:146-148`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L146-L148) добавлена нормализация параметра `if nodeFilter == "all" { nodeFilter = "" }`, аналогично параметру `namespace`.
 
 ### [HIGH] K8S-04: Игнорирование аварийного состояния `TerminatedState`
-- **Файл:** [`internal/k8s/client.go:94-101`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L94-L101)
+- **Файл:** [`internal/k8s/client.go:197-221`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L197-L221)
 - **Описание:** Проверяется только `Waiting.Reason`. При `Terminated` (`OOMKilled`, `Error`) статус остается `Running`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go:197-221`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L197-L221) добавлен глубокий анализ `cs.State.Terminated`: обрабатываются явные причины (например, `OOMKilled`), ненулевые коды завершения (`Error:137`), системные сигналы (`Signal:9`) и `Completed`.
 
 ### [MEDIUM] K8S-05: Игнорирование `InitContainerStatuses`
-- **Файл:** [`internal/k8s/client.go:95, 103-108`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L95)
+- **Файл:** [`internal/k8s/client.go:180-195`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L180-L195)
 - **Описание:** Падения и рестарты init-контейнеров не учитываются в статусе пода и общем счетчике рестартов.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go:180-195`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L180-L195) добавлен разбор `InitContainerStatuses`: счетчик рестартов каждого init-контейнера суммируется в общий `Restarts`, а при сбоях (CrashLoopBackOff, ошибка выполнения) статус пода формируется как `Init:<Reason>` или `Init:ExitCode:<code>`.
 
 ### [MEDIUM] K8S-06: Рассинхронизация таймаутов API k8s и UI
-- **Файл:** [`internal/k8s/client.go:59`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L59), [`web/src/api/index.ts:942`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L942)
+- **Файл:** [`internal/k8s/client.go:88, 160`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L88), [`web/src/api/index.ts:939-956`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L939-L956)
 - **Описание:** Бэкенд ожидает k8s API до 10 сек, а фронтенд обрывает запрос через 3 сек, переключаясь на MOCK-данные.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go:88, 160`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L88) таймаут клиента Kubernetes согласован на 8 секунд с явным контролем через контекст, а на фронтенде в [`web/src/api/index.ts:940-955`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L940-L955) таймаут `AbortController` увеличен до 6 секунд и очищается в блоке `finally`.
 
 ### [MEDIUM] K8S-07: Отсутствие Informer / кэширования и пагинации
-- **Файл:** [`internal/k8s/client.go:76, 148`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L76)
+- **Файл:** [`internal/k8s/client.go:20-25, 149-160, 274-280`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L20-L25)
 - **Описание:** Каждый запрос к дашборду делает прямой uncached `List` в etcd без пагинации (`Limit`/`Continue`).
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go:20-25, 149-160`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L20-L25) внедрен потокобезопасный in-memory TTL-кэш (`2*time.Second`) с `sync.RWMutex`. Он предотвращает лавинные запросы (polling storms) на etcd/kube-apiserver от сотен сессий браузера при опросе рабочих нагрузок.
 
 ### [MEDIUM] K8S-08: Отсутствие проверки на nil-pointer в `ListPods` и `ListNamespaces`
-- **Файл:** [`internal/k8s/client.go:70, 147`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L70)
+- **Файл:** [`internal/k8s/client.go:136-140, 285-288`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L136-L140)
 - **Описание:** Нет проверки `if m == nil || m.clientset == nil`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go:136-140, 285-288`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L136-L140) добавлены предварительные проверки на `m == nil || m.clientset == nil` с возвратом понятной ошибки инициализации вместо паники рантайма. Поведение протестировано юнит-тестом `TestK8sManager_NilSafety`.
 
 ### [LOW] K8S-09: Хардкод абсолютного пути к kubeconfig
-- **Файл:** [`internal/k8s/client.go:27, 45-55`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L27)
+- **Файл:** [`internal/k8s/client.go:37-67`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L37-L67)
 - **Описание:** Захардкожен `/home/artem/laba-kuber/kubeconfig`, нет поддержки `rest.InClusterConfig()`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`internal/k8s/client.go:37-67`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L37-L67) реализована многоуровневая цепочка загрузки конфигурации:
+  1. `rest.InClusterConfig()` (для работы внутри пода Kubernetes).
+  2. Переменная окружения `KUBECONFIG` и переданный параметр `kubeconfigPath`.
+  3. Стандартные системные пути (`~/.kube/config`, `./kubeconfig`).
+  4. Динамический генератор `kubeconfigBytesProvider` через Talos API.
+  Все ошибки загрузки аккумулируются и логируются для детальной диагностики в случае сбоя.
 
 ---
 

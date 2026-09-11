@@ -937,11 +937,10 @@ export const MOCK_PODS: K8sPod[] = [
 ]
 
 export const fetchK8sPods = async (): Promise<K8sPod[]> => {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 6000)
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
     const res = await fetch('/api/k8s/pods', { signal: controller.signal })
-    clearTimeout(timeoutId)
     if (res.ok) {
       const data = await res.json()
       if (Array.isArray(data)) {
@@ -950,6 +949,8 @@ export const fetchK8sPods = async (): Promise<K8sPod[]> => {
     }
   } catch (err) {
     console.warn('Endpoint /api/k8s/pods not reachable, using fallback:', err)
+  } finally {
+    clearTimeout(timeoutId)
   }
 
   return MOCK_PODS
