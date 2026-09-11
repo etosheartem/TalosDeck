@@ -11,7 +11,6 @@ if [[ -z "${KUBECONFIG:-}" ]]; then
   KUBECONFIG_CANDIDATES=(
     "${REPO_DIR}/../kubeconfig"
     "${REPO_DIR}/kubeconfig"
-    "/home/artem/laba-kuber/kubeconfig"
     "${HOME}/.kube/config"
   )
   for k in "${KUBECONFIG_CANDIDATES[@]}"; do
@@ -29,7 +28,6 @@ if [[ -z "${TALOSCONFIG_PATH}" ]]; then
   CANDIDATES=(
     "${REPO_DIR}/../cluster-config/talosconfig"
     "${REPO_DIR}/cluster-config/talosconfig"
-    "/home/artem/laba-kuber/cluster-config/talosconfig"
     "${HOME}/.talos/config"
   )
   for c in "${CANDIDATES[@]}"; do

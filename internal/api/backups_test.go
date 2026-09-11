@@ -14,6 +14,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"talosdeck/internal/audit"
 	"talosdeck/internal/auth"
 	"talosdeck/internal/backup"
 	"talosdeck/internal/talos"
@@ -30,10 +31,15 @@ func TestBackupAPIEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to init backup manager: %v", err)
 	}
+	auditMgr, err := audit.NewAuditManager(filepath.Join(t.TempDir(), "audit.log"), 20)
+	if err != nil {
+		t.Fatalf("failed to init audit manager: %v", err)
+	}
+	defer auditMgr.Close()
 
 	app := fiber.New()
 	apiGroup := app.Group("/api")
-	RegisterBackupRoutes(apiGroup, bm)
+	RegisterBackupRoutes(apiGroup, bm, auditMgr)
 
 	// 1. GET /api/backups -> initially empty array []
 	req := httptest.NewRequest(http.MethodGet, "/api/backups", nil)
@@ -111,6 +117,10 @@ func TestBackupAPIEndpoints(t *testing.T) {
 	if !bytes.Equal(dlBytes, testContent) {
 		t.Errorf("downloaded content does not match: got %s, expected %s", string(dlBytes), string(testContent))
 	}
+	downloadEvents := auditMgr.GetEvents(10, "backup.download", "")
+	if len(downloadEvents) != 1 || downloadEvents[0].Status != "success" {
+		t.Fatalf("expected successful backup.download audit event, got %#v", downloadEvents)
+	}
 
 	// 5. POST /api/backups/create with invalid type -> 400 Bad Request
 	createBadBody := bytes.NewBufferString(`{"type": "invalid-type"}`)
@@ -147,6 +157,10 @@ func TestBackupAPIEndpoints(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", resp.StatusCode)
+	}
+	downloadEvents = auditMgr.GetEvents(10, "backup.download", "")
+	if len(downloadEvents) != 2 || downloadEvents[0].Status != "failed" {
+		t.Fatalf("expected failed backup.download audit event, got %#v", downloadEvents)
 	}
 }
 

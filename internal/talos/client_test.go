@@ -90,10 +90,23 @@ func TestFormatBytes_Bounds(t *testing.T) {
 	}
 }
 
+func TestCalculateCPUUsage(t *testing.T) {
+	mgr := &TalosManager{}
+
+	if got := mgr.calculateCPUUsage("10.42.0.110", 25, 100); got != 25 {
+		t.Fatalf("first sample: got %d%%, want 25%%", got)
+	}
+	if got := mgr.calculateCPUUsage("10.42.0.110", 55, 200); got != 30 {
+		t.Fatalf("delta sample: got %d%%, want 30%%", got)
+	}
+	if got := mgr.calculateCPUUsage("10.42.0.111", 150, 100); got != 100 {
+		t.Fatalf("clamped sample: got %d%%, want 100%%", got)
+	}
+}
+
 func TestGetClusterName_ThreadSafety(t *testing.T) {
 	mgr := &TalosManager{}
 	if name := mgr.GetClusterName(); name != "talos-cluster" {
 		t.Errorf("expected talos-cluster, got %s", name)
 	}
 }
-

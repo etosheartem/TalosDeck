@@ -184,8 +184,8 @@ const handleSubmit = async () => {
     errorMessage.value = 'Имя ноды должно соответствовать RFC 1123 (строчные буквы a-z, цифры 0-9, дефис, длина 1-63)'
     return
   }
-  if (vmid.value <= 0) {
-    errorMessage.value = 'Некорректный VMID'
+  if (!Number.isInteger(vmid.value) || vmid.value < 100 || vmid.value > 9999) {
+    errorMessage.value = 'VMID должен быть целым числом от 100 до 9999'
     return
   }
 

@@ -138,30 +138,33 @@ export const fetchNodes = async (): Promise<{ nodes: NodeOverview[]; isMock: boo
     }
 
     const data = await res.json()
-    if (Array.isArray(data) && data.length > 0) {
-      const parsed: NodeOverview[] = data.map((item: any, idx: number) => {
-        const hostname = item.hostname || `talos-node-${idx + 1}`
-        const isCP = hostname.includes('cp') || hostname.includes('master') || idx === 0
-        return {
-          ip: item.ip || '10.42.0.110',
-          hostname: hostname,
-          version: item.version || 'v1.14.0',
-          ready: item.ready !== undefined ? Boolean(item.ready) : true,
-          role: item.role || (isCP ? 'controlplane' : 'worker'),
-          uptime: item.uptime || '14 days',
-          cpuUsage: item.cpuUsage ?? 0,
-          memoryUsage: item.memoryUsage || (isCP ? '2.1 / 8.0 GB' : '3.4 / 16.0 GB'),
-          kubernetesVersion: item.kubernetesVersion || 'v1.32.2',
-          servicesSummary: item.servicesSummary || {
-            etcd: isCP ? 'Healthy' : 'N/A',
-            kubelet: 'Healthy',
-            containerd: 'Healthy',
-            apid: 'Healthy',
-          },
-        }
-      })
-      return { nodes: parsed, isMock: false }
+    if (!Array.isArray(data)) {
+      throw new Error('Invalid /api/nodes response: expected an array')
     }
+
+    const parsed: NodeOverview[] = data.map((item: any, idx: number) => {
+      const hostname = item.hostname || `talos-node-${idx + 1}`
+      const isCP = hostname.includes('cp') || hostname.includes('master') || idx === 0
+      return {
+        ip: item.ip || '10.42.0.110',
+        hostname,
+        version: item.version || 'v1.14.0',
+        ready: item.ready !== undefined ? Boolean(item.ready) : true,
+        role: item.role || (isCP ? 'controlplane' : 'worker'),
+        uptime: item.uptime || '14 days',
+        cpuUsage: item.cpuUsage ?? 0,
+        memoryUsage: item.memoryUsage || (isCP ? '2.1 / 8.0 GB' : '3.4 / 16.0 GB'),
+        kubernetesVersion: item.kubernetesVersion || 'v1.32.2',
+        servicesSummary: item.servicesSummary || {
+          etcd: isCP ? 'Healthy' : 'N/A',
+          kubelet: 'Healthy',
+          containerd: 'Healthy',
+          apid: 'Healthy',
+        },
+      }
+    })
+
+    return { nodes: parsed, isMock: false }
   } catch (err) {
     console.warn('Backend /api/nodes not reachable, using fallback mock data:', err)
   }

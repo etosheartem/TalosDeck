@@ -236,15 +236,28 @@ func copyAndSanitizeDetails(src map[string]any) map[string]any {
 	for k, v := range src {
 		if isSensitiveKey(k) {
 			dst[k] = "***MASKED***"
-		} else if str, ok := v.(string); ok {
-			dst[k] = sanitizeStringValue(str)
-		} else if nestedMap, ok := v.(map[string]any); ok {
-			dst[k] = copyAndSanitizeDetails(nestedMap)
 		} else {
-			dst[k] = v
+			dst[k] = copyAndSanitizeValue(v)
 		}
 	}
 	return dst
+}
+
+func copyAndSanitizeValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return sanitizeStringValue(typed)
+	case map[string]any:
+		return copyAndSanitizeDetails(typed)
+	case []any:
+		result := make([]any, len(typed))
+		for i, item := range typed {
+			result[i] = copyAndSanitizeValue(item)
+		}
+		return result
+	default:
+		return typed
+	}
 }
 
 func deepCopyDetails(src map[string]any) map[string]any {
@@ -253,11 +266,22 @@ func deepCopyDetails(src map[string]any) map[string]any {
 	}
 	dst := make(map[string]any, len(src))
 	for k, v := range src {
-		if nestedMap, ok := v.(map[string]any); ok {
-			dst[k] = deepCopyDetails(nestedMap)
-		} else {
-			dst[k] = v
-		}
+		dst[k] = deepCopyDetailValue(v)
 	}
 	return dst
+}
+
+func deepCopyDetailValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return deepCopyDetails(typed)
+	case []any:
+		result := make([]any, len(typed))
+		for i, item := range typed {
+			result[i] = deepCopyDetailValue(item)
+		}
+		return result
+	default:
+		return typed
+	}
 }

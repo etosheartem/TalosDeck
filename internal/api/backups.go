@@ -146,8 +146,20 @@ func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra .
 	}
 	downloadHandlers = append(downloadHandlers, func(c *fiber.Ctx) error {
 		id := c.Params("id")
+		user := auth.GetContextUser(c, authMgr)
+		ip := auth.GetClientIP(c)
 		info, filePath, err := bm.GetBackup(id)
 		if err != nil {
+			if auditMgr != nil {
+				auditMgr.Log(audit.AuditEvent{
+					Action:  "backup.download",
+					User:    user,
+					IP:      ip,
+					Status:  "failed",
+					Details: map[string]any{"id": id, "error": err.Error()},
+				})
+			}
+
 			statusCode := fiber.StatusNotFound
 			if strings.Contains(err.Error(), "path traversal") || strings.Contains(err.Error(), "invalid backup ID") {
 				statusCode = fiber.StatusBadRequest
@@ -157,7 +169,32 @@ func RegisterBackupRoutes(router fiber.Router, bm *backup.BackupManager, extra .
 			})
 		}
 
-		return c.Download(filePath, info.Filename)
+		if err := c.Download(filePath, info.Filename); err != nil {
+			if auditMgr != nil {
+				auditMgr.Log(audit.AuditEvent{
+					Action:  "backup.download",
+					User:    user,
+					IP:      ip,
+					Status:  "failed",
+					Details: map[string]any{"id": id, "filename": info.Filename, "error": err.Error()},
+				})
+			}
+			return err
+		}
+
+		if auditMgr != nil {
+			auditMgr.Log(audit.AuditEvent{
+				Action: "backup.download",
+				User:   user,
+				IP:     ip,
+				Status: "success",
+				Details: map[string]any{
+					"id": id, "filename": info.Filename, "size": info.HumanSize, "type": info.Type,
+				},
+			})
+		}
+
+		return nil
 	})
 	router.Get("/backups/:id/download", downloadHandlers...)
 

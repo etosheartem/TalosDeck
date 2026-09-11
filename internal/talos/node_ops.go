@@ -34,6 +34,38 @@ type cpuSnapshot struct {
 	usage int
 }
 
+func (m *TalosManager) calculateCPUUsage(nodeIP string, busy, total float64) int {
+	m.metricsMu.Lock()
+	defer m.metricsMu.Unlock()
+
+	if m.cpuSamples == nil {
+		m.cpuSamples = make(map[string]cpuSnapshot)
+	}
+
+	usage := 0
+	previous, hasPrevious := m.cpuSamples[nodeIP]
+	if hasPrevious {
+		usage = previous.usage
+		if total > previous.total && busy >= previous.busy {
+			usage = int(((busy - previous.busy) / (total - previous.total)) * 100)
+		}
+	} else if total > 0 {
+		// On the first sample, use the counters accumulated since boot. Later
+		// samples use deltas between polls for a responsive dashboard value.
+		usage = int((busy / total) * 100)
+	}
+
+	if usage < 0 {
+		usage = 0
+	} else if usage > 100 {
+		usage = 100
+	}
+
+	m.cpuSamples[nodeIP] = cpuSnapshot{busy: busy, total: total, usage: usage}
+
+	return usage
+}
+
 // GetNodeStatus fetches the runtime status, version, and health of a single node.
 func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeOverview, error) {
 	nodeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -140,23 +172,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 
 			// CPUStat contains counters accumulated since boot. Calculate usage from
 			// the delta between dashboard polls instead of reporting a lifetime average.
-			m.metricsMu.Lock()
-			if m.cpuSamples == nil {
-				m.cpuSamples = make(map[string]cpuSnapshot)
-			}
-			previous, hasPrevious := m.cpuSamples[nodeIP]
-			usage := previous.usage
-			if hasPrevious && total > previous.total && busy >= previous.busy {
-				usage = int(((busy - previous.busy) / (total - previous.total)) * 100)
-				if usage < 0 {
-					usage = 0
-				} else if usage > 100 {
-					usage = 100
-				}
-			}
-			m.cpuSamples[nodeIP] = cpuSnapshot{busy: busy, total: total, usage: usage}
-			m.metricsMu.Unlock()
-			overview.CPUUsage = usage
+			overview.CPUUsage = m.calculateCPUUsage(nodeIP, busy, total)
 		}
 	}
 

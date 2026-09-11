@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: talosdeck-data
+  namespace: talosdeck
+  labels:
+    app: talosdeck
+    app.kubernetes.io/name: talosdeck
+    app.kubernetes.io/part-of: talosdeck
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

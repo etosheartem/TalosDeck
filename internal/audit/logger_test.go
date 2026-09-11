@@ -126,6 +126,35 @@ func TestAuditSecurityAndRace(t *testing.T) {
 		t.Errorf("expected non-sensitive node to be preserved, got %v", d["node"])
 	}
 
+	// Sensitive values and nested maps inside slices are sanitized and copied (SEC-16).
+	nested := map[string]any{"token": "secret-token", "value": "safe"}
+	detailSlice := []any{nested, "bearer nested-secret"}
+	am.Log(AuditEvent{Action: "slice.details", Details: map[string]any{"items": detailSlice}})
+	nested["value"] = "mutated"
+	detailSlice[1] = "mutated"
+
+	sliceEvents := am.GetEvents(1, "slice.details", "")
+	if len(sliceEvents) != 1 {
+		t.Fatalf("expected one slice.details event")
+	}
+	items, ok := sliceEvents[0].Details["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("expected copied []any details, got %#v", sliceEvents[0].Details["items"])
+	}
+	itemMap, ok := items[0].(map[string]any)
+	if !ok || itemMap["token"] != "***MASKED***" || itemMap["value"] != "safe" {
+		t.Errorf("nested slice map was not sanitized and copied: %#v", items[0])
+	}
+	if secret, ok := items[1].(string); !ok || !strings.Contains(secret, "***MASKED***") {
+		t.Errorf("slice string was not sanitized: %#v", items[1])
+	}
+
+	items[0].(map[string]any)["value"] = "reader mutation"
+	reloadedSlice := am.GetEvents(1, "slice.details", "")[0].Details["items"].([]any)
+	if reloadedSlice[0].(map[string]any)["value"] != "safe" {
+		t.Error("GetEvents returned a slice sharing internal nested map state")
+	}
+
 	// 3. Race condition & defensive copy test (SEC-04)
 	detailsMap := map[string]any{"counter": 0}
 	am.Log(AuditEvent{Action: "race.test", Details: detailsMap})
