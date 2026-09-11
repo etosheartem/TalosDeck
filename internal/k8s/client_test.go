@@ -124,7 +124,8 @@ func TestK8sManager_ListPods_FilteringAndStatus(t *testing.T) {
 	mgr := &K8sManager{
 		clientset: fakeClient,
 		cache: podCache{
-			ttl: 1 * time.Second,
+			entries: make(map[string]podCacheEntry),
+			ttl:     1 * time.Second,
 		},
 	}
 
@@ -191,6 +192,22 @@ func TestK8sManager_ListPods_FilteringAndStatus(t *testing.T) {
 	}
 	if len(cachedPods) != len(allPods) {
 		t.Errorf("expected same length from cache")
+	}
+
+	if _, err := mgr.ListPods(ctx, "default", "all"); err != nil {
+		t.Fatalf("filtered ListPods failed: %v", err)
+	}
+	if _, err := mgr.ListPods(ctx, "all", "all"); err != nil {
+		t.Fatalf("second cached ListPods failed: %v", err)
+	}
+	listActions := 0
+	for _, action := range fakeClient.Actions() {
+		if action.GetVerb() == "list" && action.GetResource().Resource == "pods" {
+			listActions++
+		}
+	}
+	if listActions != 2 {
+		t.Fatalf("expected two API list calls for two cache keys, got %d", listActions)
 	}
 }
 

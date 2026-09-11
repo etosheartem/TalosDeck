@@ -602,6 +602,7 @@ func (m *TalosManager) GetNodeDisks(ctx context.Context, nodeIP string) ([]*Disk
 			})
 
 			prettySize := formatBytes(d.GetSize())
+			bus := detectDiskBus(d.GetDeviceName(), d.GetType().String(), d.GetBusPath(), d.GetSubsystem(), d.GetModalias())
 
 			disks = append(disks, &DiskInfo{
 				DeviceName: d.GetDeviceName(),
@@ -610,6 +611,7 @@ func (m *TalosManager) GetNodeDisks(ctx context.Context, nodeIP string) ([]*Disk
 				PrettySize: prettySize,
 				Model:      d.GetModel(),
 				Serial:     d.GetSerial(),
+				Bus:        bus,
 				Type:       d.GetType().String(),
 				SystemDisk: d.GetSystemDisk(),
 				Readonly:   d.GetReadonly(),
@@ -816,6 +818,28 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 		RaftTerm:    raftTerm,
 		RaftIndex:   raftIndex,
 	}, nil
+}
+
+func detectDiskBus(deviceName, diskType, busPath, subsystem, modalias string) string {
+	haystack := strings.ToLower(strings.Join([]string{deviceName, diskType, busPath, subsystem, modalias}, " "))
+	for _, candidate := range []struct {
+		needle string
+		label  string
+	}{
+		{"nvme", "NVMe"},
+		{"virtio", "VirtIO"},
+		{"/vd", "VirtIO"},
+		{"scsi", "SCSI"},
+		{"sata", "SATA"},
+		{"ata", "SATA"},
+		{"usb", "USB"},
+		{"mmc", "MMC"},
+	} {
+		if strings.Contains(haystack, candidate.needle) {
+			return candidate.label
+		}
+	}
+	return "Unknown"
 }
 
 func calculateFilesystemUsage(size, available uint64) (uint64, int) {

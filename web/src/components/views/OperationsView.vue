@@ -29,6 +29,7 @@ import {
   X,
   XCircle,
   FileText,
+  Download,
 } from 'lucide-vue-next'
 import { t } from '../../i18n'
 import type {
@@ -38,6 +39,7 @@ import type {
   AlertsConfig,
   UpdateAlertsPayload,
   AuditLogEvent,
+  BackupInfo,
 } from '../../types'
 import {
   fetchEtcdHealth,
@@ -49,6 +51,10 @@ import {
   fetchAuditLogs,
   rebootNode,
   waitForNodeReboot,
+  fetchBackups,
+  createBackup,
+  downloadBackup,
+  deleteBackup,
 } from '../../api'
 
 const props = defineProps<{
@@ -161,6 +167,66 @@ const bootstrapResults = ref<BootstrapCheckItem[]>([])
 const bootstrapPassedCount = computed(() => bootstrapResults.value.filter((item) => item.status === 'success').length)
 const bootstrapHasErrors = computed(() => bootstrapResults.value.some((item) => item.status === 'error'))
 
+// Backup and disaster recovery state
+const backups = ref<BackupInfo[]>([])
+const loadingBackups = ref(false)
+const creatingBackup = ref<'full' | 'etcd' | null>(null)
+const deletingBackupID = ref('')
+
+const loadBackups = async () => {
+  loadingBackups.value = true
+  try {
+    backups.value = await fetchBackups()
+  } catch (err) {
+    console.error('Failed to load backups:', err)
+  } finally {
+    loadingBackups.value = false
+  }
+}
+
+const handleCreateBackup = async (type: 'full' | 'etcd') => {
+  creatingBackup.value = type
+  try {
+    const controlPlane = props.nodes.find((node) => node.role === 'controlplane')
+    const backup = await createBackup(type, type === 'etcd' ? controlPlane?.ip || '' : '')
+    backups.value = [backup, ...backups.value.filter((item) => item.id !== backup.id)]
+    emit('show-toast', { message: `Backup ${backup.filename} created`, type: 'success' })
+    loadAuditLogs()
+  } catch (err: any) {
+    emit('show-toast', { message: err?.message || 'Failed to create backup', type: 'error' })
+  } finally {
+    creatingBackup.value = null
+  }
+}
+
+const handleDownloadBackup = async (backup: BackupInfo) => {
+  try {
+    await downloadBackup(backup)
+  } catch (err: any) {
+    emit('show-toast', { message: err?.message || 'Failed to download backup', type: 'error' })
+  }
+}
+
+const handleDeleteBackup = async (backup: BackupInfo) => {
+  if (!window.confirm(`Delete backup ${backup.filename}?`)) return
+  deletingBackupID.value = backup.id
+  try {
+    await deleteBackup(backup.id)
+    backups.value = backups.value.filter((item) => item.id !== backup.id)
+    emit('show-toast', { message: `Backup ${backup.filename} deleted`, type: 'success' })
+    loadAuditLogs()
+  } catch (err: any) {
+    emit('show-toast', { message: err?.message || 'Failed to delete backup', type: 'error' })
+  } finally {
+    deletingBackupID.value = ''
+  }
+}
+
+const formatBackupTime = (timestamp: string) => {
+  const date = new Date(timestamp)
+  return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString()
+}
+
 const loadEtcd = async () => {
   loadingEtcd.value = true
   try {
@@ -266,6 +332,7 @@ onMounted(() => {
   loadEtcd()
   loadAlertsConfig()
   loadAuditLogs()
+  loadBackups()
   if (props.nodes.length > 0) {
     targetNodeIP.value = props.nodes[0].ip
   }
@@ -410,18 +477,18 @@ const startRollingReboot = async () => {
       <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-5 backdrop-blur-sm space-y-4 shadow-md">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800/70">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-emerald-950/60 text-emerald-400 border border-emerald-800/60 shadow-[0_0_12px_rgba(16,185,129,0.25)]">
+          <div :class="['p-2.5 rounded-xl border', etcd?.healthy ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60' : 'bg-red-950/60 text-red-400 border-red-800/60']">
             <Database class="w-5 h-5" />
           </div>
           <div>
             <h3 class="text-base font-bold text-zinc-100 flex items-center gap-2">
               <span>{{ t('etcd_health_title') }}</span>
-              <span class="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60">
-                {{ t('etcd_quorum_ok') }}
+              <span :class="['text-xs font-semibold px-2 py-0.5 rounded border', etcd?.healthy ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/60' : 'bg-red-950/80 text-red-400 border-red-800/60']">
+                {{ etcd?.healthy ? t('etcd_quorum_ok') : 'Degraded' }}
               </span>
             </h3>
             <p class="text-xs text-zinc-400 mt-0.5">
-              {{ t('etcd_leader') }}: <span class="text-zinc-200 font-mono font-semibold">{{ etcd?.leaderName || 'talos-cp-1' }}</span> (ID: {{ etcd?.leaderId }})
+              {{ t('etcd_leader') }}: <span class="text-zinc-200 font-mono font-semibold">{{ etcd?.leaderName || 'Not elected' }}</span> (ID: {{ etcd?.leaderId || '—' }})
             </p>
           </div>
         </div>
@@ -431,18 +498,18 @@ const startRollingReboot = async () => {
             Raft Term: <span class="text-zinc-200 font-bold">{{ etcd?.raftTerm ?? 0 }}</span>
           </div>
           <div class="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-400 border border-zinc-800">
-            DB Size: <span class="text-cyan-300 font-bold">{{ etcd?.totalDbSize || '24.8 MB' }}</span>
+            DB Size: <span class="text-cyan-300 font-bold">{{ etcd?.totalDbSize || '—' }}</span>
           </div>
         </div>
       </div>
 
       <!-- Alarms Banner -->
-      <div class="rounded-xl p-3 bg-zinc-950/70 border border-zinc-800 flex items-center justify-between gap-3 text-xs">
+      <div :class="['rounded-xl p-3 border flex items-center justify-between gap-3 text-xs', etcd?.alarms?.length ? 'bg-red-950/30 border-red-800/60' : 'bg-zinc-950/70 border-zinc-800']">
         <div class="flex items-center gap-2.5">
           <ShieldCheck class="w-4 h-4 text-emerald-400 shrink-0" />
-          <span class="text-zinc-300">{{ t('etcd_no_alarms') }}</span>
+          <span class="text-zinc-300">{{ etcd?.alarms?.length ? 'Active etcd alarms' : t('etcd_no_alarms') }}</span>
         </div>
-        <span class="text-[11px] font-mono text-zinc-500">0 active alarms</span>
+        <span class="text-[11px] font-mono text-zinc-500">{{ etcd?.alarms?.length || 0 }} active alarms</span>
       </div>
 
       <!-- Members Table -->
@@ -766,6 +833,75 @@ const startRollingReboot = async () => {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Backup & Disaster Recovery -->
+    <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-5 space-y-4 shadow-md">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800/70">
+        <div class="flex items-center gap-3">
+          <div class="p-2.5 rounded-xl bg-violet-950/60 text-violet-400 border border-violet-800/60">
+            <FileText class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-zinc-100">Backup & Disaster Recovery</h3>
+            <p class="text-xs text-zinc-400 mt-0.5">Etcd snapshots and full cluster recovery archives</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            @click="handleCreateBackup('etcd')"
+            :disabled="creatingBackup !== null"
+            class="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs font-semibold text-zinc-200 disabled:opacity-50 cursor-pointer"
+          >
+            {{ creatingBackup === 'etcd' ? 'Creating…' : 'Etcd snapshot' }}
+          </button>
+          <button
+            @click="handleCreateBackup('full')"
+            :disabled="creatingBackup !== null"
+            class="px-3 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white disabled:opacity-50 cursor-pointer"
+          >
+            {{ creatingBackup === 'full' ? 'Creating…' : 'Full backup' }}
+          </button>
+          <button @click="loadBackups" :disabled="loadingBackups" class="p-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-50 cursor-pointer" title="Refresh backups">
+            <RefreshCw :class="['w-3.5 h-3.5', loadingBackups ? 'animate-spin' : '']" />
+          </button>
+        </div>
+      </div>
+
+      <div v-if="backups.length === 0 && !loadingBackups" class="py-6 text-center text-xs text-zinc-500">
+        No backups created yet
+      </div>
+      <div v-else class="overflow-x-auto rounded-xl border border-zinc-800/70">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-zinc-950/70 text-zinc-400 uppercase text-[10px] tracking-wider">
+            <tr>
+              <th class="px-3 py-2.5">Backup</th>
+              <th class="px-3 py-2.5">Type</th>
+              <th class="px-3 py-2.5">Created</th>
+              <th class="px-3 py-2.5">Size</th>
+              <th class="px-3 py-2.5 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-zinc-800/60">
+            <tr v-for="backup in backups" :key="backup.id" class="hover:bg-zinc-800/30">
+              <td class="px-3 py-2.5 font-mono text-cyan-300">{{ backup.filename }}</td>
+              <td class="px-3 py-2.5 text-zinc-300 uppercase">{{ backup.type }}</td>
+              <td class="px-3 py-2.5 text-zinc-400">{{ formatBackupTime(backup.timestamp) }}</td>
+              <td class="px-3 py-2.5 font-mono text-zinc-300">{{ backup.humanSize }}</td>
+              <td class="px-3 py-2.5">
+                <div class="flex justify-end gap-2">
+                  <button @click="handleDownloadBackup(backup)" class="p-1.5 rounded-lg bg-cyan-950/60 border border-cyan-800/50 text-cyan-300 hover:bg-cyan-900/60 cursor-pointer" title="Download backup">
+                    <Download class="w-3.5 h-3.5" />
+                  </button>
+                  <button @click="handleDeleteBackup(backup)" :disabled="deletingBackupID === backup.id" class="p-1.5 rounded-lg bg-red-950/60 border border-red-800/50 text-red-300 hover:bg-red-900/60 disabled:opacity-50 cursor-pointer" title="Delete backup">
+                    <XCircle class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 

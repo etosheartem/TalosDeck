@@ -322,8 +322,17 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	}
 
 	watcher := cfg.AlertWatcher
+	ownsWatcher := false
 	if watcher == nil && manager != nil {
 		watcher = alerts.NewWatcher(manager, alertSvc, 30*time.Second)
+		watcher.Start(context.Background())
+		ownsWatcher = true
+	}
+	if ownsWatcher {
+		app.Hooks().OnShutdown(func() error {
+			watcher.Stop()
+			return nil
+		})
 	}
 
 	RegisterAlertRoutes(api, alertSvc, watcher, authMgr, auditMgr)

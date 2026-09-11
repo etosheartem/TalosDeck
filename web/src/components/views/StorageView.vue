@@ -65,8 +65,8 @@ const totalUsed = computed(() => {
   for (const nd of nodeDisks.value) {
     for (const d of nd.disks) {
       for (const p of d.partitions) {
-        if (p.used) {
-          usedGB += sizeToGiB(p.used)
+		if (p.usedBytes !== undefined || p.used) {
+		  usedGB += sizeToGiB(p.usedBytes ?? p.used ?? 0)
         }
       }
     }
@@ -292,17 +292,22 @@ const filteredNodeDisks = computed(() => {
                   {{ disk.size }}
                 </div>
 
-                <div
-                  :class="[
+				<div
+				  v-if="disk.healthy !== undefined"
+				  :class="[
                     'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border',
                     disk.healthy
                       ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60 shadow-[0_0_10px_rgba(16,185,129,0.25)]'
                       : 'bg-rose-950/60 text-rose-400 border-rose-800/60',
                   ]"
                 >
-                  <CheckCircle2 class="w-3.5 h-3.5" />
-                  <span>{{ disk.healthy ? 'Healthy' : 'Alert' }}</span>
-                </div>
+				  <CheckCircle2 class="w-3.5 h-3.5" />
+				  <span>{{ disk.healthy ? 'Healthy' : 'Alert' }}</span>
+				</div>
+				<div v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border bg-zinc-900 text-zinc-400 border-zinc-800">
+				  <Activity class="w-3.5 h-3.5" />
+				  <span>Unknown</span>
+				</div>
               </div>
             </div>
 

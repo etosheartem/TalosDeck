@@ -142,10 +142,62 @@ func (m *BackupManager) cleanStaleTempFiles() {
 		return
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".temp-etcd-") {
+		if strings.HasPrefix(entry.Name(), ".temp-etcd-") || strings.HasSuffix(entry.Name(), ".tmp") {
 			_ = os.Remove(filepath.Join(m.storageDir, entry.Name()))
 		}
 	}
+}
+
+func createBackupTempFile(finalPath string) (*os.File, string, error) {
+	file, err := os.CreateTemp(filepath.Dir(finalPath), "."+filepath.Base(finalPath)+".*.tmp")
+	if err != nil {
+		return nil, "", err
+	}
+	if err := file.Chmod(0600); err != nil {
+		file.Close()
+		_ = os.Remove(file.Name())
+		return nil, "", err
+	}
+	return file, file.Name(), nil
+}
+
+func publishBackup(tempPath, finalPath, checksum string, info *BackupInfo) error {
+	metadata, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize backup metadata: %w", err)
+	}
+
+	shaTemp := tempPath + ".sha256.tmp"
+	metaTemp := tempPath + ".json.tmp"
+	cleanup := func() {
+		_ = os.Remove(shaTemp)
+		_ = os.Remove(metaTemp)
+	}
+	defer cleanup()
+
+	if err := os.WriteFile(shaTemp, []byte(fmt.Sprintf("%s  %s\n", checksum, filepath.Base(finalPath))), 0600); err != nil {
+		return fmt.Errorf("failed to write sha256 sidecar file: %w", err)
+	}
+	if err := os.WriteFile(metaTemp, metadata, 0600); err != nil {
+		return fmt.Errorf("failed to write metadata sidecar file: %w", err)
+	}
+
+	shaPath := finalPath + ".sha256"
+	metaPath := finalPath + ".json"
+	if err := os.Rename(shaTemp, shaPath); err != nil {
+		return fmt.Errorf("failed to publish sha256 sidecar: %w", err)
+	}
+	if err := os.Rename(metaTemp, metaPath); err != nil {
+		_ = os.Remove(shaPath)
+		return fmt.Errorf("failed to publish metadata sidecar: %w", err)
+	}
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		_ = os.Remove(shaPath)
+		_ = os.Remove(metaPath)
+		return fmt.Errorf("failed to publish backup file: %w", err)
+	}
+
+	return nil
 }
 
 // SetMaxBackups configures the retention quota limit.
@@ -226,7 +278,7 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 	}
 
 	now := time.Now().UTC()
-	timestampStr := now.Format("20060102-150405")
+	timestampStr := now.Format("20060102-150405.000000000")
 	filename := fmt.Sprintf("etcd-%s-%s.snapshot", sanitizeFilename(targetIP), timestampStr)
 	targetPath := filepath.Join(m.storageDir, filename)
 
@@ -238,35 +290,31 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 	}
 	defer reader.Close()
 
-	// 3. Write snapshot to disk with 0600 permissions (BKP-05) while calculating SHA256
-	outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	// 3. Stream to a hidden file and publish atomically only after it is complete.
+	outFile, tempPath, err := createBackupTempFile(targetPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create snapshot file %s: %w", targetPath, err)
 	}
+	defer os.Remove(tempPath)
 
 	hasher := sha256.New()
 	multiWriter := io.MultiWriter(outFile, hasher)
 
 	written, copyErr := io.Copy(multiWriter, reader)
+	syncErr := outFile.Sync()
 	closeErr := outFile.Close() // BKP-09: check Close error
 
 	if copyErr != nil {
-		_ = os.Remove(targetPath)
 		return nil, fmt.Errorf("failed to stream etcd snapshot to file: %w", copyErr)
 	}
 	if closeErr != nil {
-		_ = os.Remove(targetPath)
 		return nil, fmt.Errorf("failed to flush snapshot file to disk: %w", closeErr)
+	}
+	if syncErr != nil {
+		return nil, fmt.Errorf("failed to sync snapshot file to disk: %w", syncErr)
 	}
 
 	checksum := hex.EncodeToString(hasher.Sum(nil))
-
-	// 4. Save sidecar .sha256 file with 0600 permissions (BKP-05, BKP-09)
-	shaPath := targetPath + ".sha256"
-	if err := os.WriteFile(shaPath, []byte(fmt.Sprintf("%s  %s\n", checksum, filename)), 0600); err != nil {
-		_ = os.Remove(targetPath)
-		return nil, fmt.Errorf("failed to write sha256 sidecar file: %w", err)
-	}
 
 	clusterName := m.talosManager.GetConfig().Context
 	if clusterName == "" {
@@ -286,18 +334,8 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 		Description: fmt.Sprintf("Etcd database snapshot from control plane %s", targetIP),
 	}
 
-	// 5. Save sidecar .json metadata with 0600 permissions (BKP-05, BKP-09)
-	metaPath := targetPath + ".json"
-	metaBytes, err := json.MarshalIndent(info, "", "  ")
-	if err != nil {
-		_ = os.Remove(targetPath)
-		_ = os.Remove(shaPath)
-		return nil, fmt.Errorf("failed to serialize backup metadata: %w", err)
-	}
-	if err := os.WriteFile(metaPath, metaBytes, 0600); err != nil {
-		_ = os.Remove(targetPath)
-		_ = os.Remove(shaPath)
-		return nil, fmt.Errorf("failed to write metadata sidecar file: %w", err)
+	if err := publishBackup(tempPath, targetPath, checksum, info); err != nil {
+		return nil, err
 	}
 
 	// Rotate backups according to retention policy
@@ -331,7 +369,7 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	}
 
 	now := time.Now().UTC()
-	timestampStr := now.Format("20060102-150405")
+	timestampStr := now.Format("20060102-150405.000000000")
 
 	// 1. Gather cluster info
 	clusterInfo, _ := m.talosManager.GetClusterInfo(ctx)
@@ -436,11 +474,12 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	filename := fmt.Sprintf("cluster-backup-%s-%s.tar.gz", safeClusterName, timestampStr)
 	archivePath := filepath.Join(m.storageDir, filename)
 
-	// BKP-05: Create archive with 0600 permissions
-	outFile, err := os.OpenFile(archivePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	// Build in a hidden file so list/download can only observe complete archives.
+	outFile, archiveTempPath, err := createBackupTempFile(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backup archive file %s: %w", archivePath, err)
 	}
+	defer os.Remove(archiveTempPath)
 
 	hasher := sha256.New()
 	archiveWriter := io.MultiWriter(outFile, hasher)
@@ -480,14 +519,12 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	metaBytes, _ := json.MarshalIndent(metaObj, "", "  ")
 	if err := addFileToTar("metadata.json", metaBytes); err != nil {
 		outFile.Close()
-		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to write metadata.json to archive: %w", err)
 	}
 
 	// Add talosconfig
 	if err := addFileToTar("talosconfig", talosconfigBytes); err != nil {
 		outFile.Close()
-		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to write talosconfig to archive: %w", err)
 	}
 
@@ -496,7 +533,6 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		tarPath := fmt.Sprintf("machine-configs/%s", cfgName)
 		if err := addFileToTar(tarPath, data); err != nil {
 			outFile.Close()
-			_ = os.Remove(archivePath)
 			return nil, fmt.Errorf("failed to write machine config %s to archive: %w", cfgName, err)
 		}
 	}
@@ -511,55 +547,46 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	}
 	if err := tarWriter.WriteHeader(etcdHdr); err != nil {
 		outFile.Close()
-		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to write etcd snapshot header to archive: %w", err)
 	}
 
 	tempFileReader, err := os.Open(tempSnapshotPath)
 	if err != nil {
 		outFile.Close()
-		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to open temp snapshot for archiving: %w", err)
 	}
 	_, copyTarErr := io.Copy(tarWriter, tempFileReader)
 	tempFileReader.Close()
 	if copyTarErr != nil {
 		outFile.Close()
-		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to copy etcd snapshot into archive: %w", copyTarErr)
 	}
 
 	// Flush and close archive
 	if err := tarWriter.Close(); err != nil {
 		outFile.Close()
-		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to close tar writer: %w", err)
 	}
 	if err := gzWriter.Close(); err != nil {
 		outFile.Close()
-		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to close gzip writer: %w", err)
 	}
 	// BKP-09: check Close error
+	if err := outFile.Sync(); err != nil {
+		_ = outFile.Close()
+		return nil, fmt.Errorf("failed to sync archive file: %w", err)
+	}
 	if err := outFile.Close(); err != nil {
-		_ = os.Remove(archivePath)
 		return nil, fmt.Errorf("failed to close archive file: %w", err)
 	}
 
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 
 	// Get final archive file size
-	finalStat, err := os.Stat(archivePath)
+	finalStat, err := os.Stat(archiveTempPath)
 	var finalSize int64
 	if err == nil {
 		finalSize = finalStat.Size()
-	}
-
-	// BKP-05, BKP-09: Save sidecar .sha256 with 0600 and check error
-	shaPath := archivePath + ".sha256"
-	if err := os.WriteFile(shaPath, []byte(fmt.Sprintf("%s  %s\n", checksum, filename)), 0600); err != nil {
-		_ = os.Remove(archivePath)
-		return nil, fmt.Errorf("failed to write sha256 sidecar file: %w", err)
 	}
 
 	info := &BackupInfo{
@@ -575,17 +602,8 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		Description: fmt.Sprintf("Full disaster recovery archive: %d nodes, talosconfig, machine configs, etcd snapshot", len(nodes)),
 	}
 
-	// BKP-05, BKP-09: Save sidecar .json metadata with 0600 and check error
-	infoBytes, err := json.MarshalIndent(info, "", "  ")
-	if err != nil {
-		_ = os.Remove(archivePath)
-		_ = os.Remove(shaPath)
-		return nil, fmt.Errorf("failed to serialize backup metadata: %w", err)
-	}
-	if err := os.WriteFile(archivePath+".json", infoBytes, 0600); err != nil {
-		_ = os.Remove(archivePath)
-		_ = os.Remove(shaPath)
-		return nil, fmt.Errorf("failed to write metadata sidecar file: %w", err)
+	if err := publishBackup(archiveTempPath, archivePath, checksum, info); err != nil {
+		return nil, err
 	}
 
 	// Rotate backups according to retention policy

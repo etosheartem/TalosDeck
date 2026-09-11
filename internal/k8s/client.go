@@ -24,10 +24,13 @@ import (
 // podCache stores a short-lived cache of pods to prevent flooding the API server.
 type podCache struct {
 	sync.RWMutex
+	entries map[string]podCacheEntry
+	ttl     time.Duration
+}
+
+type podCacheEntry struct {
 	pods      []PodInfo
 	updatedAt time.Time
-	key       string
-	ttl       time.Duration
 }
 
 // K8sManager manages interaction with the Kubernetes cluster workloads.
@@ -123,7 +126,8 @@ func NewK8sManager(kubeconfigPath string, kubeconfigBytesProvider func(ctx conte
 	return &K8sManager{
 		clientset: cs,
 		cache: podCache{
-			ttl: 2 * time.Second,
+			entries: make(map[string]podCacheEntry),
+			ttl:     2 * time.Second,
 		},
 	}, nil
 }
@@ -147,9 +151,9 @@ func (m *K8sManager) ListPods(ctx context.Context, namespace, nodeFilter string)
 
 	// Check short-lived cache to protect etcd/apiserver from polling storms
 	m.cache.RLock()
-	if m.cache.key == cacheKey && time.Since(m.cache.updatedAt) < m.cache.ttl && len(m.cache.pods) > 0 {
-		cached := make([]PodInfo, len(m.cache.pods))
-		copy(cached, m.cache.pods)
+	entry, found := m.cache.entries[cacheKey]
+	if found && time.Since(entry.updatedAt) < m.cache.ttl {
+		cached := append([]PodInfo(nil), entry.pods...)
 		m.cache.RUnlock()
 		return cached, nil
 	}
@@ -278,9 +282,19 @@ func (m *K8sManager) ListPods(ctx context.Context, namespace, nodeFilter string)
 
 	// Store in cache
 	m.cache.Lock()
-	m.cache.key = cacheKey
-	m.cache.pods = results
-	m.cache.updatedAt = time.Now()
+	if m.cache.entries == nil {
+		m.cache.entries = make(map[string]podCacheEntry)
+	}
+	now := time.Now()
+	for key, cached := range m.cache.entries {
+		if now.Sub(cached.updatedAt) >= m.cache.ttl {
+			delete(m.cache.entries, key)
+		}
+	}
+	m.cache.entries[cacheKey] = podCacheEntry{
+		pods:      append([]PodInfo(nil), results...),
+		updatedAt: now,
+	}
 	m.cache.Unlock()
 
 	return results, nil

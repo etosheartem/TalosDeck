@@ -20,7 +20,7 @@ export interface NodeOverview {
 
 export interface ClusterInfo {
   name: string
-  healthy: boolean
+  healthy?: boolean
   talosVersion: string
   kubernetesVersion: string
   endpoint: string
@@ -137,7 +137,7 @@ export interface EtcdClusterHealth {
   members: EtcdMember[]
   leaderId: string
   leaderName: string
-  alarms: string[]
+  alarms: Array<string | { memberId: string; alarm: string }>
   totalDbSize: string
   raftTerm: number
   raftIndex: number
@@ -149,6 +149,20 @@ export interface BootstrapCheckItem {
   description: string
   status: 'pending' | 'success' | 'warning' | 'error'
   detail?: string
+}
+
+export interface BackupInfo {
+  id: string
+  filename: string
+  size: number
+  humanSize: string
+  timestamp: string
+  type: 'etcd' | 'full'
+  checksum: string
+  clusterName?: string
+  node?: string
+  nodeCount?: number
+  description?: string
 }
 
 // Proxmox VE Integration interfaces

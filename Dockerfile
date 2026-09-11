@@ -15,7 +15,7 @@ RUN bun run build
 # ==============================================================================
 # Stage 2: Build the Go backend binary (with embedded frontend)
 # ==============================================================================
-FROM golang:1.24-alpine AS backend-builder
+FROM golang:1.27-alpine AS backend-builder
 WORKDIR /app
 
 RUN apk add --no-cache ca-certificates git

@@ -84,8 +84,8 @@ func TestFormatBytes_Bounds(t *testing.T) {
 
 	for _, tc := range tests {
 		res := formatBytes(tc.input)
-		if res == "" {
-			t.Errorf("formatBytes(%d) returned empty string", tc.input)
+		if res != tc.expected {
+			t.Errorf("formatBytes(%d) = %q, want %q", tc.input, res, tc.expected)
 		}
 	}
 }
@@ -123,6 +123,23 @@ func TestCalculateFilesystemUsage(t *testing.T) {
 				t.Fatalf("got (%d, %d), want (%d, %d)", used, percent, tt.wantUsed, tt.wantUsedPercent)
 			}
 		})
+	}
+}
+
+func TestDetectDiskBus(t *testing.T) {
+	tests := []struct {
+		device, diskType, busPath, subsystem, modalias string
+		want                                           string
+	}{
+		{device: "nvme0n1", diskType: "NVME", want: "NVMe"},
+		{device: "/dev/vda", busPath: "/devices/pci/virtio2", want: "VirtIO"},
+		{device: "sda", modalias: "scsi:t-0x00", want: "SCSI"},
+		{device: "mystery", want: "Unknown"},
+	}
+	for _, tt := range tests {
+		if got := detectDiskBus(tt.device, tt.diskType, tt.busPath, tt.subsystem, tt.modalias); got != tt.want {
+			t.Errorf("detectDiskBus(%q) = %q, want %q", tt.device, got, tt.want)
+		}
 	}
 }
 

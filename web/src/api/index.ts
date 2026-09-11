@@ -9,6 +9,7 @@ import type {
   K8sPod,
   EtcdClusterHealth,
   BootstrapCheckItem,
+  BackupInfo,
   ProxmoxStatusResponse,
   CreateWorkerParams,
   CreateWorkerResult,
@@ -148,19 +149,14 @@ export const fetchNodes = async (): Promise<{ nodes: NodeOverview[]; isMock: boo
       return {
         ip: item.ip || '10.42.0.110',
         hostname,
-        version: item.version || 'v1.14.0',
+		version: item.version,
         ready: item.ready !== undefined ? Boolean(item.ready) : true,
         role: item.role || (isCP ? 'controlplane' : 'worker'),
-        uptime: item.uptime || '14 days',
-        cpuUsage: item.cpuUsage ?? 0,
-        memoryUsage: item.memoryUsage || (isCP ? '2.1 / 8.0 GB' : '3.4 / 16.0 GB'),
-        kubernetesVersion: item.kubernetesVersion || 'v1.32.2',
-        servicesSummary: item.servicesSummary || {
-          etcd: isCP ? 'Healthy' : 'N/A',
-          kubelet: 'Healthy',
-          containerd: 'Healthy',
-          apid: 'Healthy',
-        },
+		uptime: item.uptime,
+		cpuUsage: item.cpuUsage ?? 0,
+		memoryUsage: item.memoryUsage,
+		kubernetesVersion: item.kubernetesVersion,
+		servicesSummary: item.servicesSummary,
       }
     })
 
@@ -549,7 +545,7 @@ const normalizePhysicalDisk = (raw: any): PhysicalDisk => {
     sizeBytes,
     bus: raw.bus || 'Unknown',
     type: normalizeDiskType(raw.type),
-    healthy: raw.healthy ?? true,
+	healthy: typeof raw.healthy === 'boolean' ? raw.healthy : undefined,
     temp: raw.temp,
     readOnly: raw.readOnly ?? raw.readonly ?? false,
     partitions: partitions.map((partition: any) => {
@@ -774,8 +770,14 @@ export const fetchEtcdHealth = async (): Promise<EtcdClusterHealth> => {
     if (res.ok) {
       const data = await res.json()
       if (data && data.members) {
-        return {
-          ...data,
+		return {
+			...data,
+			leaderId: data.leaderId || '',
+			leaderName: data.leaderName || '',
+			totalDbSize: data.totalDbSize || '',
+			raftTerm: Number(data.raftTerm || 0),
+			raftIndex: Number(data.raftIndex || 0),
+			alarms: Array.isArray(data.alarms) ? data.alarms : [],
           members: data.members.map((member: any) => ({
             ...member,
             name: member.name || member.hostname || '',
@@ -1148,6 +1150,49 @@ export const runBootstrapCheck = async (): Promise<BootstrapCheckItem[]> => {
 		workloadCheck('cni-network', 'CNI Fabric & PodCIDR', 'CNI system pod health', cniPods),
 		workloadCheck('coredns-service', 'CoreDNS Resolution', 'CoreDNS pod health', dnsPods),
 	]
+}
+
+export const fetchBackups = async (): Promise<BackupInfo[]> => {
+  const res = await fetchWithTimeout('/api/backups', { headers: { ...getAuthHeaders() } })
+  if (!res.ok) throw await responseError(res, 'Failed to list backups')
+  const data = await res.json()
+  if (!Array.isArray(data)) throw new Error('Invalid backups response')
+  return data
+}
+
+export const createBackup = async (type: 'full' | 'etcd', node = ''): Promise<BackupInfo> => {
+  const res = await fetchWithTimeout('/api/backups/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ type, node }),
+  }, 190000)
+  if (!res.ok) throw await responseError(res, 'Failed to create backup')
+  const data = await res.json()
+  return data.backup
+}
+
+export const downloadBackup = async (backup: BackupInfo): Promise<void> => {
+  const res = await fetchWithTimeout(`/api/backups/${encodeURIComponent(backup.id)}/download`, {
+    headers: { ...getAuthHeaders() },
+  }, 60000)
+  if (!res.ok) throw await responseError(res, 'Failed to download backup')
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = backup.filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export const deleteBackup = async (id: string): Promise<void> => {
+  const res = await fetchWithTimeout(`/api/backups/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { ...getAuthHeaders() },
+  })
+  if (!res.ok) throw await responseError(res, 'Failed to delete backup')
 }
 
 export const toggleMaintenanceMode = async (

@@ -66,6 +66,7 @@ type DiskInfo struct {
 	PrettySize string          `json:"prettySize"`
 	Model      string          `json:"model"`
 	Serial     string          `json:"serial"`
+	Bus        string          `json:"bus,omitempty"`
 	Type       string          `json:"type"`
 	SystemDisk bool            `json:"systemDisk"`
 	Readonly   bool            `json:"readonly"`

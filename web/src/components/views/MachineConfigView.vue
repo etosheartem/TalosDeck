@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   FileCode2,
   Copy,
@@ -25,6 +25,7 @@ const loading = ref(false)
 const configData = ref<MachineConfigData | null>(null)
 const searchQuery = ref('')
 const copied = ref(false)
+let requestGeneration = 0
 
 const selectedNode = computed<NodeOverview | undefined>(() => {
   if (!props.nodes || props.nodes.length === 0) return undefined
@@ -32,50 +33,47 @@ const selectedNode = computed<NodeOverview | undefined>(() => {
 })
 
 const loadConfig = async () => {
-  if (!selectedNode.value?.ip) return
+  const node = selectedNode.value
+  if (!node?.ip) return
+  const nodeIP = node.ip
+  const generation = ++requestGeneration
   loading.value = true
   try {
-    const isCP = selectedNode.value.role === 'controlplane'
-    configData.value = await fetchNodeConfig(
-      selectedNode.value.ip,
-      selectedNode.value.hostname,
-      isCP,
-    )
+    const result = await fetchNodeConfig(nodeIP, node.hostname, node.role === 'controlplane')
+    if (generation === requestGeneration && selectedNodeIP.value === nodeIP) {
+      configData.value = result
+    }
   } catch (err) {
     console.error('Failed to load node config:', err)
   } finally {
-    loading.value = false
+    if (generation === requestGeneration) loading.value = false
   }
 }
-
-onMounted(() => {
-  if (props.nodes && props.nodes.length > 0) {
-    selectedNodeIP.value = props.nodes[0].ip
-    loadConfig()
-  }
-})
 
 watch(
   () => props.nodes,
   (newNodes) => {
-    if (!newNodes || newNodes.length === 0) {
-      selectedNodeIP.value = ''
-      configData.value = null
-      return
-    }
-    if (!selectedNodeIP.value || !newNodes.some((n) => n.ip === selectedNodeIP.value)) {
-      selectedNodeIP.value = newNodes[0].ip
-      loadConfig()
-    }
+	if (!newNodes || newNodes.length === 0) {
+	  requestGeneration++
+	  selectedNodeIP.value = ''
+	  configData.value = null
+	  loading.value = false
+	  return
+	}
+	if (!selectedNodeIP.value || !newNodes.some((n) => n.ip === selectedNodeIP.value)) {
+	  selectedNodeIP.value = newNodes[0].ip
+	}
   },
-  { deep: true },
+  { deep: true, immediate: true },
 )
 
-watch(selectedNodeIP, (newIP) => {
-  if (newIP) {
-    loadConfig()
-  }
-})
+watch(
+  selectedNodeIP,
+  (newIP) => {
+    if (newIP) loadConfig()
+  },
+  { immediate: true },
+)
 
 // Parsed lines for line numbering & search highlight
 const lines = computed(() => {

@@ -9,44 +9,33 @@
 
 | Статус | Critical | High | Medium | Low | Всего |
 |:---|---:|---:|---:|---:|---:|
-| ⬜ Открыто | 0 | 0 | 12 | 0 | **12** |
-| ✅ Исправлено | 24 | 57 | 71 | 40 | **192** |
+| ⬜ Открыто | 0 | 0 | 0 | 0 | **0** |
+| ✅ Исправлено | 24 | 57 | 83 | 40 | **204** |
 | **Итого** | **24** | **57** | **83** | **40** | **204** |
 
-**Прогресс:** 192 из 204 исправлено (94%), 12 открыто.
+**Прогресс:** 204 из 204 исправлено (100%), открытых задач нет.
 > Исходный аудит (175 дефектов) закрыт на 100%. 11 сентября 2026 г. проведён второй раунд — 5 параллельных агентов нашли 29 новых дефектов (в т.ч. недоделанные фиксы ранее закрытых карточек), они добавлены ниже как открытые.
 
 ## Открытые задачи
 
 | Статус | Приоритет | ID | Подсистема | Кол-во | Проблема |
 |:---:|:---:|:---|:---|---:|:---|
-| ⬜ OPEN | 🟡 Medium | `TALOS-21` | Talos SDK | 1 | Фиктивная проверка в `TestFormatBytes_Bounds` |
-| ⬜ OPEN | 🟡 Medium | `K8S-10` | Kubernetes | 1 | Недоделанный фикс K8S-07 — TTL-кэш подов хранит только один ключ |
-| ⬜ OPEN | 🟡 Medium | `BKP-15` | Backup | 1 | Бэкапы пишутся не атомарно — гонка List/Download на битый архив |
-| ⬜ OPEN | 🟡 Medium | `API-20` | REST API | 1 | `SetupServer` никогда не запускает автосозданный `AlertWatcher` |
-| ⬜ OPEN | 🟡 Medium | `FE-21` | Frontend state | 1 | Race condition в ServicesModal — устаревший ответ перезаписывает данные |
-| ⬜ OPEN | 🟡 Medium | `FE-22` | Frontend state | 1 | MachineConfigView — дублирующий запрос и гонка при переключении нод |
-| ⬜ OPEN | 🟡 Medium | `FE-25` | Frontend state | 1 | Шина диска (bus) и признак healthy никогда не приходят с бэкенда |
-| ⬜ OPEN | 🟡 Medium | `FE-26` | Frontend state | 1 | Готовый REST API бэкапов не подключён к UI |
-| ⬜ OPEN | 🟡 Medium | `FE-27` | Frontend state | 1 | Частичный сбой метрик подменяется фейковыми правдоподобными значениями |
-| ⬜ OPEN | 🟡 Medium | `FE-28` | Frontend state | 1 | `EtcdClusterHealth` обязательные в TS поля — `omitempty` в Go |
-| ⬜ OPEN | 🟡 Medium | `OPS-26` | DevOps / CI | 1 | `make k8s-deploy` глушит ошибку неудачного роллаута |
-| ⬜ OPEN | 🟡 Medium | `OPS-27` | DevOps / CI | 1 | Рассинхрон версии Go между `go.mod` и `Dockerfile` |
+| ✅ FIXED | — | — | — | 0 | Открытых задач нет |
 
 ## Прогресс по подсистемам
 
 | Подсистема | Исправлено | Открыто | Всего | Прогресс |
 |:---|---:|---:|---:|---:|
-| **Talos SDK** | 22 | 1 | 23 | 96% |
-| **Kubernetes** | 9 | 1 | 10 | 90% |
+| **Talos SDK** | 23 | 0 | 23 | 100% |
+| **Kubernetes** | 10 | 0 | 10 | 100% |
 | **Proxmox** | 17 | 0 | 17 | 100% |
-| **Backup** | 14 | 1 | 15 | 93% |
+| **Backup** | 15 | 0 | 15 | 100% |
 | **Security** | 16 | 0 | 16 | 100% |
 | **Alerts** | 16 | 0 | 16 | 100% |
-| **REST API** | 20 | 1 | 21 | 95% |
-| **Frontend state** | 22 | 6 | 28 | 79% |
+| **REST API** | 21 | 0 | 21 | 100% |
+| **Frontend state** | 28 | 0 | 28 | 100% |
 | **Frontend UX/UI** | 30 | 0 | 30 | 100% |
-| **DevOps / CI** | 26 | 2 | 28 | 93% |
+| **DevOps / CI** | 28 | 0 | 28 | 100% |
 
 ## Как обновлять трекер
 
@@ -207,6 +196,8 @@
 ### [MEDIUM] TALOS-21: Фиктивная проверка в `TestFormatBytes_Bounds`
 - **Файл:** [`internal/talos/client_test.go:71-91`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/client_test.go#L71-L91)
 - **Описание:** Тест объявляет таблицу `{input, expected}`, но в цикле проверки реально сравнивается только `if res == "" { t.Errorf(...) }` — `tc.expected` нигде не сверяется с фактическим результатом. Любая регрессия в `formatBytes` (неверная единица измерения, смещённый индекс, испорченный формат) не будет обнаружена этим тестом, пока строка просто непустая — заявленное в TALOS-17 покрытие граничных значений фактически не верифицирует корректность вывода.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Табличный тест теперь сравнивает результат с `expected` для каждого значения, включая `math.MaxUint64`.
 
 ### [LOW] TALOS-22: `m.metricsMu.Lock()`/`Unlock()` без `defer` в `GetNodeStatus`
 - **Файл:** [`internal/talos/node_ops.go:143-158`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/node_ops.go#L143-L158)
@@ -295,6 +286,8 @@
 ### [MEDIUM] K8S-10: Недоделанный фикс K8S-07 — TTL-кэш подов хранит только один ключ
 - **Файл:** [`internal/k8s/client.go:24-31, 146-156`](file:///home/artem/laba-kuber/TalosDeck/internal/k8s/client.go#L24-L31)
 - **Описание:** `podCache` хранит единственную пару `key`/`pods`, а не карту по `namespace|nodeFilter`. При чередовании запросов с разными фильтрами (дашборд опрашивает `all/all`, `WorkloadsView` — конкретный namespace, несколько открытых вкладок) каждый новый `cacheKey` перезаписывает единственную запись, и следующий запрос с прежним фильтром снова промахивается мимо кэша. Заявленная в K8S-07 защита от polling storms на практике не работает при более чем одном одновременно используемом фильтре.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** `podCache` хранит независимые записи по `namespace|nodeFilter`, возвращает defensive copy, кэширует пустые результаты и удаляет истёкшие ключи. Тест подтверждает два API-вызова для двух ключей и cache hit после переключения обратно.
 
 ---
 
@@ -477,6 +470,8 @@
 ### [MEDIUM] BKP-15: Бэкапы пишутся не атомарно — конкурентные List/Download могут отдать битый архив
 - **Файл:** [`internal/backup/manager.go:242`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L242) (`CreateEtcdSnapshot`), [`internal/backup/manager.go:440`](file:///home/artem/laba-kuber/TalosDeck/internal/backup/manager.go#L440) (`CreateFullClusterBackup`)
 - **Описание:** Оба метода пишут поток данных напрямую в конечный файл (`os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)`) без промежуточного `.tmp`-файла и `os.Rename`. Это следствие фикса BKP-04, который снял `m.mu.Lock()` вокруг сетевого стриминга ради не блокирующих параллельных чтений, но атомарность самого файла на диске не была восстановлена другим способом. Пока идёт многоминутная выгрузка полного бэкапа, файл уже виден в каталоге под финальным именем: `ListBackups()` (fallback-ветка без `.json`) покажет его «готовым» с текущим неполным размером, а `GET /api/backups/:id/download` отдаст клиенту обрезанный/повреждённый архив — именно в disaster-recovery момент, когда целостность бэкапа критична.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Snapshot и full archive пишутся в скрытые уникальные temp-файлы с правами `0600`, синхронизируются через `fsync`, после чего sidecar-файлы и готовый архив публикуются атомарным `os.Rename`; основной файл появляется последним. Тест доказывает, что незавершённый файл отсутствует в `ListBackups`.
 
 ---
 
@@ -728,6 +723,8 @@
 ### [MEDIUM] API-20: `SetupServer` никогда не запускает автоматически созданный `AlertWatcher`
 - **Файл:** [`internal/api/server.go:322-327`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go#L322-L327)
 - **Описание:** Если `cfg.AlertWatcher == nil`, `SetupServer` сам создаёт `watcher := alerts.NewWatcher(...)`, но нигде не вызывает `.Start(ctx)` для него. `cmd/talosdeck/main.go` не задевает эту ветку, потому что заранее создаёт и стартует `alertWatcher` сам и передаёт его в `ServerConfig.AlertWatcher`. Но при любой другой композиции сервера (например, `internal/api/server_test.go:392`, кейс «Live cluster» — вызов `SetupServer` с одним `Manager` без явного `AlertWatcher`) мониторинг кластера и Telegram-алертинг молча никогда не запускаются: `/api/alerts/status` вечно отдаёт `running: false` без единой ошибки в логах.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Созданный внутри `SetupServer` watcher сразу запускается и регистрирует `OnShutdown` hook для остановки; переданный извне watcher остаётся под управлением вызывающего кода. Интеграционный тест проверяет `running: true`.
 
 ### [LOW] API-21: Отсутствует аудит-запись при скачивании бэкапа
 - **Файл:** [`internal/api/backups.go:142-162`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go#L142-L162)
@@ -816,10 +813,14 @@
 ### [MEDIUM] FE-21: Race condition в ServicesModal — устаревший ответ перезаписывает список служб другой ноды
 - **Файл:** [`web/src/components/ServicesModal.vue:29-52`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/ServicesModal.vue#L29-L52)
 - **Описание:** `loadServices()` стартует запрос по `props.node.ip` без проверки, что к моменту резолва промиса модалка всё ещё открыта для той же ноды. Открыть модалку для ноды A → закрыть → быстро открыть для ноды B, пока запрос A ещё в полёте: если ответ A придёт позже ответа B, `services.value` перезапишется списком служб ноды A, хотя заголовок модалки уже показывает ноду B. `LogsModal.vue` рядом решает эту же проблему через счётчик `connectionGeneration` — в `ServicesModal.vue` такой защиты нет.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Запрос фиксирует IP и generation; результат и `loading` применяются только для актуальной открытой модалки. Watch отслеживает одновременно open и IP, а закрытие инвалидирует запрос.
 
 ### [MEDIUM] FE-22: MachineConfigView — дублирующий запрос конфигурации и гонка при быстром переключении нод
 - **Файл:** [`web/src/components/views/MachineConfigView.vue:51-78`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/MachineConfigView.vue#L51-L78)
 - **Описание:** Присвоение `selectedNodeIP.value = props.nodes[0].ip` в `onMounted` само триггерит `watch(selectedNodeIP, ...)`, который тоже вызывает `loadConfig()` — при монтировании стартуют два параллельных запроса конфигурации для одной ноды. Кроме того, `loadConfig()` не проверяет, что `selectedNodeIP` не изменился за время ожидания ответа — при быстром клике по пилюлям нод `configData.value` может быть перезаписан YAML-конфигом уже не той ноды, которая подсвечена как выбранная.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Дублирующий вызов из `onMounted` удалён; immediate watcher выбирает ноду, а watcher IP выполняет единственную загрузку. Generation и проверка IP блокируют устаревшие ответы и неверный `loading`.
 
 ### [LOW] FE-23: VMID в AddWorkerModal не валидируется по объявленному диапазону 100–9999
 - **Файл:** [`web/src/components/AddWorkerModal.vue:521-528, 187-190`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/AddWorkerModal.vue#L521-L528)
@@ -836,18 +837,26 @@
 ### [MEDIUM] FE-25: Шина диска (bus) и признак healthy никогда не приходят с бэкенда
 - **Файл:** [`internal/talos/models.go:61-73`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/models.go#L61-L73) (`DiskInfo` — нет полей `Bus`/`Healthy`/`Temp`) ↔ [`web/src/types/index.ts:68-80`](file:///home/artem/laba-kuber/TalosDeck/web/src/types/index.ts#L68-L80) (`PhysicalDisk.bus: string` — обязательное поле)
 - **Описание:** `PhysicalDisk.bus` в TS обязателен и рендерится в UI, но Go `DiskInfo` вообще не имеет поля `Bus` (только `DeviceName/DevicePath/Size/PrettySize/Model/Serial/Type/SystemDisk/Readonly/Partitions`). `normalizePhysicalDisk` подставляет `raw.bus || 'Unknown'` — для любого реального диска карточка всегда покажет «Unknown» вместо реальной шины (SATA/NVMe/VirtIO). То же с `healthy` (всегда `true` по дефолту) и `temp` (всегда `undefined`).
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Backend определяет bus из Talos `type`, `busPath`, `subsystem`, `modalias` и имени устройства; покрыты NVMe, VirtIO, SCSI, SATA, USB и MMC. Поскольку Talos Disks API не отдаёт SMART health, frontend больше не выдумывает `healthy: true`, делает поле опциональным и честно показывает `Unknown`.
 
 ### [MEDIUM] FE-26: Полностью готовый REST API бэкапов не подключён к UI
 - **Файл:** [`internal/api/backups.go`](file:///home/artem/laba-kuber/TalosDeck/internal/api/backups.go) (роуты в `internal/api/server.go:305-315`) ↔ `web/src/api/index.ts` (нет ни одного вызова `/api/backups*`)
 - **Описание:** Бэкенд полностью реализует `GET /api/backups`, `POST /api/backups/create`, `GET /api/backups/:id/download`, `DELETE /api/backups/:id` с аудитом и RBAC, но фронтенд не вызывает ни один из них. `OperationsView.vue:911-912` содержит только статичные строки `backup.create`/`backup.delete` как варианты фильтра аудит-лога — это не создаёт и не скачивает бэкапы. Пользователь дашборда физически не может создать/скачать/удалить бэкап через UI, хотя backend-функциональность полностью готова и протестирована. Аналогично не используются `GET /api/alerts/history`, `GET /api/alerts/status` и `GET /api/nodes/:ip`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В API-клиент и OperationsView добавлены список бэкапов, создание full archive и etcd snapshot, защищённое скачивание Blob и подтверждаемое удаление; список обновляется без перезагрузки страницы, операции показывают ошибки и обновляют аудит.
 
 ### [MEDIUM] FE-27: Частичный сбой чтения реальных метрик подменяется правдоподобными фейковыми значениями
 - **Файл:** [`internal/talos/models.go:10,12,13`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/models.go#L10) (`Uptime`, `MemoryUsage`, `KubernetesVersion` — все `omitempty`) ↔ [`web/src/api/index.ts:142-162`](file:///home/artem/laba-kuber/TalosDeck/web/src/api/index.ts#L142-L162)
 - **Описание:** Если на реальной ноде не удалось прочитать `/proc/uptime`, память или `KubeletStatus`, Go просто не выставляет поле (`omitempty` убирает его из JSON). Фронтенд трактует отсутствие поля не как «неизвестно», а подставляет мок-значения: `uptime: item.uptime || '14 days'`, `memoryUsage: item.memoryUsage || '2.1 / 8.0 GB'`, `kubernetesVersion: item.kubernetesVersion || 'v1.32.2'`. При частичном сбое сбора метрик оператор видит правдоподобные, но полностью вымышленные цифры вместо индикации «нет данных» — например, «uptime 14 days» на только что перезагруженной ноде.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Реальный ответ `/api/nodes` больше не дополняется mock-версиями, uptime, RAM и состояниями служб. NodeCard и ServicesModal показывают `—`/`Unknown`; mock-данные остаются только в явно отдельном полном fallback при недоступном backend.
 
 ### [MEDIUM] FE-28: `EtcdClusterHealth` во фронтенде объявляет обязательными поля, которые бэкенд может не прислать
 - **Файл:** [`internal/talos/models.go:94-98`](file:///home/artem/laba-kuber/TalosDeck/internal/talos/models.go#L94-L98) (`LeaderID`, `LeaderName`, `RaftTerm`, `RaftIndex` — все `omitempty`) ↔ [`web/src/types/index.ts:134-143`](file:///home/artem/laba-kuber/TalosDeck/web/src/types/index.ts#L134-L143) (те же поля обязательные, без `?`)
 - **Описание:** Когда в кластере ещё не избран лидер (реалистичное состояние именно в момент проблем с etcd), Go из-за `omitempty` не включает `leaderId`/`leaderName`/`raftTerm`/`raftIndex` в JSON. `fetchEtcdHealth` не восполняет эти поля, поэтому в UI появится «undefined» именно в момент etcd-инцидента, когда достоверность информации особенно важна.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** `fetchEtcdHealth` нормализует отсутствующие leader/size/raft/alarm поля в согласованный DTO. UI показывает `Not elected`, `—` и нули, динамически отражает degraded/quorum и реальное число alarms; тип alarms согласован с объектами backend.
 
 ---
 
@@ -1022,10 +1031,14 @@
 ### [MEDIUM] OPS-26: `make k8s-deploy` глушит ошибку неудачного роллаута
 - **Файл:** [`TalosDeck/Makefile:93`](file:///home/artem/laba-kuber/TalosDeck/Makefile#L93)
 - **Описание:** `kubectl rollout status deployment/talosdeck -n $(NAMESPACE) --timeout=60s || true` — любая ошибка роллаута (CrashLoopBackOff, ImagePullBackOff, нехватка ресурсов) подавляется, `make` завершается с кодом 0 и печатает «Deployment initiated». Оператор, катящий релиз локально через `make k8s-deploy`, не получит сигнала о падении деплоя. Для сравнения — в `.gitlab-ci.yml:48` тот же `rollout status` идёт без `|| true`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** `|| true` удалён; ошибка или таймаут rollout теперь завершает `make k8s-deploy` ненулевым кодом.
 
 ### [MEDIUM] OPS-27: Рассинхрон версии Go между `go.mod` и `Dockerfile`
 - **Файл:** [`TalosDeck/go.mod:3`](file:///home/artem/laba-kuber/TalosDeck/go.mod#L3) (`go 1.27.0`) vs [`TalosDeck/Dockerfile:18`](file:///home/artem/laba-kuber/TalosDeck/Dockerfile#L18) (`FROM golang:1.24-alpine`)
 - **Описание:** `go.mod` требует toolchain `go1.27.0`, а сборочный образ содержит `go1.24`. При `go mod download`/`go build` стандартный тулинг с `GOTOOLCHAIN=auto` (дефолт, нигде не переопределён) автоматически попытается скачать `go1.27.0` прямо во время `docker build` — сборка становится зависимой от сетевого доступа к `proxy.golang.org`, ломает воспроизводимость и может полностью отказать в CI/офлайн-окружении без доступа к go-toolchain-серверу.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Builder переведён на `golang:1.27-alpine`, совпадающий с директивой `go 1.27.0`; скрытая загрузка другого toolchain во время сборки больше не требуется.
 
 ### [LOW] OPS-28: Хардкод путей конкретной машины разработчика в деплой-скриптах
 - **Файл:** `gitlab-deploy/scripts/export-talosconfig-secret.sh:8,59`, `gitlab-deploy/scripts/export-kubeconfig.sh:4-5`, `TalosDeck/deploy/secret-create.sh:14,32`

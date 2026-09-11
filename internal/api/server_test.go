@@ -349,6 +349,34 @@ func TestAPISecurityAndRouteDefects(t *testing.T) {
 	})
 }
 
+func TestSetupServerStartsOwnedAlertWatcher(t *testing.T) {
+	authMgr := auth.NewAuthManager("adminpass123", "testsecretjwtkey1234567890123456")
+	token, err := authMgr.GenerateToken("admin", "admin")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+	app := SetupServer(ServerConfig{Manager: &talos.TalosManager{}, Auth: authMgr})
+	defer app.Shutdown()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/alerts/status", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var payload struct {
+		Status alerts.WatcherStatus `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode watcher status: %v", err)
+	}
+	if !payload.Status.Running {
+		t.Fatal("expected SetupServer-owned alert watcher to be running")
+	}
+}
+
 func TestHealthAndReadinessProbes(t *testing.T) {
 	// 1. Uninitialized manager -> /healthz is 200, /readyz is 503
 	appUninit := SetupServer(ServerConfig{Port: ":0"})
@@ -435,4 +463,3 @@ func TestHealthAndReadinessProbes(t *testing.T) {
 		}
 	}
 }
-

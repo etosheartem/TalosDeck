@@ -91,7 +91,7 @@ k8s-deploy: k8s-secret
 	kubectl apply -n $(NAMESPACE) -f deploy/
 	kubectl set image deployment/$(APP_NAME) $(APP_NAME)=$(IMAGE_NAME):$(IMAGE_TAG) -n $(NAMESPACE)
 	@echo "==> Deployment initiated. Checking rollout status..."
-	kubectl rollout status deployment/talosdeck -n $(NAMESPACE) --timeout=60s || true
+	kubectl rollout status deployment/talosdeck -n $(NAMESPACE) --timeout=60s
 	@echo "==> Service info:"
 	kubectl get svc talosdeck -n $(NAMESPACE)
 

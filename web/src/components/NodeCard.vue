@@ -48,12 +48,9 @@ const getServiceStatus = (serviceName: 'etcd' | 'kubelet' | 'containerd' | 'apid
     return { color: 'bg-rose-500 animate-pulse shadow-[0_0_6px_rgba(244,63,94,0.6)]', label: 'Degraded' }
   }
   if (raw === 'N/A') {
-    return { color: 'bg-zinc-600', label: 'N/A' }
+	return { color: 'bg-zinc-600', label: 'N/A' }
   }
-  if (props.node.ready) {
-    return { color: 'bg-emerald-400', label: 'Healthy' }
-  }
-  return { color: 'bg-rose-500', label: 'Degraded' }
+  return { color: 'bg-zinc-600', label: 'Unknown' }
 }
 </script>
 
@@ -142,21 +139,21 @@ const getServiceStatus = (serviceName: 'etcd' | 'kubelet' | 'containerd' | 'apid
       <div class="grid grid-cols-2 gap-2 my-3.5 p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/60 text-xs">
         <div>
           <span class="text-zinc-500 block text-[11px]">{{ t('node_version') }}</span>
-          <span class="font-mono text-zinc-200 font-semibold">{{ node.version || 'v1.14.0' }}</span>
+		  <span class="font-mono text-zinc-200 font-semibold">{{ node.version || '—' }}</span>
         </div>
         <div>
           <span class="text-zinc-500 block text-[11px]">{{ t('node_k8s_version') }}</span>
-          <span class="font-mono text-emerald-400 font-semibold">{{ node.kubernetesVersion || 'v1.32.2' }}</span>
+		  <span class="font-mono text-emerald-400 font-semibold">{{ node.kubernetesVersion || '—' }}</span>
         </div>
         <div class="col-span-2 pt-1 border-t border-zinc-800/40 flex items-center justify-between text-[11px] text-zinc-400">
           <div class="flex items-center gap-1.5">
             <Clock class="w-3 h-3 text-zinc-500" />
             <span>{{ t('node_uptime') }}:</span>
-            <span class="text-zinc-300">{{ node.uptime || '14 days' }}</span>
+			<span class="text-zinc-300">{{ node.uptime || '—' }}</span>
           </div>
-          <div v-if="node.memoryUsage" class="flex items-center gap-1 font-mono text-[10px] text-zinc-400">
-            <Activity class="w-3 h-3 text-cyan-400" />
-            <span>RAM {{ node.memoryUsage }}</span>
+		  <div class="flex items-center gap-1 font-mono text-[10px] text-zinc-400">
+			<Activity class="w-3 h-3 text-cyan-400" />
+			<span>RAM {{ node.memoryUsage || '—' }}</span>
           </div>
         </div>
       </div>

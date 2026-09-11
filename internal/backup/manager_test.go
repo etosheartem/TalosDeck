@@ -387,3 +387,47 @@ func TestConcurrencyGuard(t *testing.T) {
 
 	bm.isBackingUp.Store(false)
 }
+
+func TestBackupPublicationIsAtomic(t *testing.T) {
+	tempDir := t.TempDir()
+	bm, err := NewBackupManager(tempDir, nil)
+	if err != nil {
+		t.Fatalf("failed to init backup manager: %v", err)
+	}
+
+	finalPath := filepath.Join(tempDir, "etcd-test.snapshot")
+	file, tempPath, err := createBackupTempFile(finalPath)
+	if err != nil {
+		t.Fatalf("failed to create temporary backup: %v", err)
+	}
+	if _, err := file.Write([]byte("complete snapshot")); err != nil {
+		t.Fatalf("failed to write temporary backup: %v", err)
+	}
+
+	list, err := bm.ListBackups()
+	if err != nil {
+		t.Fatalf("failed to list backups: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("temporary backup became visible before publication: %v", list)
+	}
+	if err := file.Sync(); err != nil {
+		t.Fatalf("failed to sync temporary backup: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close temporary backup: %v", err)
+	}
+
+	info := &BackupInfo{ID: "etcd-test.snapshot", Filename: "etcd-test.snapshot", Type: BackupTypeEtcd}
+	if err := publishBackup(tempPath, finalPath, "checksum", info); err != nil {
+		t.Fatalf("failed to publish backup: %v", err)
+	}
+	list, err = bm.ListBackups()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("expected one published backup, got %d, err=%v", len(list), err)
+	}
+	data, err := os.ReadFile(finalPath)
+	if err != nil || string(data) != "complete snapshot" {
+		t.Fatalf("published backup is incomplete: %q, err=%v", data, err)
+	}
+}

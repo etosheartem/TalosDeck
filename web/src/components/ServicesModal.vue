@@ -25,27 +25,36 @@ const services = ref<TalosService[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 const filterState = ref<'all' | 'running' | 'issues'>('all')
+let requestGeneration = 0
 
 const loadServices = async () => {
   if (!props.node) return
+  const nodeIP = props.node.ip
+  const isCP = props.node.role === 'controlplane'
+  const generation = ++requestGeneration
   loading.value = true
   try {
-    const isCP = props.node.role === 'controlplane'
-    services.value = await fetchNodeServices(props.node.ip, isCP)
+    const result = await fetchNodeServices(nodeIP, isCP)
+    if (generation === requestGeneration && props.open && props.node?.ip === nodeIP) {
+      services.value = result
+    }
   } catch (err) {
     console.error('Failed to load services', err)
   } finally {
-    loading.value = false
+    if (generation === requestGeneration) loading.value = false
   }
 }
 
 watch(
-  () => props.open,
-  (isOpen) => {
+  () => [props.open, props.node?.ip] as const,
+  ([isOpen]) => {
     if (isOpen) {
       searchQuery.value = ''
       filterState.value = 'all'
       loadServices()
+    } else {
+      requestGeneration++
+      loading.value = false
     }
   },
   { immediate: true }
@@ -229,7 +238,7 @@ const filteredServices = computed(() => {
           <div class="flex items-center gap-4 text-xs font-mono">
             <div class="text-right hidden sm:block">
               <span class="text-[10px] text-zinc-500 block uppercase font-sans">{{ t('services_col_uptime') }}</span>
-              <span class="text-zinc-300">{{ svc.uptime || '14d 6h' }}</span>
+              <span class="text-zinc-300">{{ svc.uptime || '—' }}</span>
             </div>
             <div class="text-right hidden sm:block">
               <span class="text-[10px] text-zinc-500 block uppercase font-sans">{{ t('services_col_restarts') }}</span>
