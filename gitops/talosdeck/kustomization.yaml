@@ -1,0 +1,63 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: talosdeck
+resources:
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: talosdeck
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: talosdeck
+      spec:
+        strategy:
+          type: Recreate
+        template:
+          spec:
+            automountServiceAccountToken: false
+            imagePullSecrets:
+              - name: talosdeck-registry
+            containers:
+              - name: talosdeck
+                envFrom:
+                  - secretRef:
+                      name: talosdeck-runtime
+                env:
+                  - name: KUBECONFIG
+                    value: /etc/kubernetes/kubeconfig
+                volumeMounts:
+                  - name: kubeconfig-vol
+                    mountPath: /etc/kubernetes
+                    readOnly: true
+            volumes:
+              - name: kubeconfig-vol
+                secret:
+                  secretName: talosdeck-kubeconfig
+  - target:
+      kind: Service
+      name: talosdeck
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: ClusterIP
+      - op: remove
+        path: /spec/ports/0/nodePort
+  - target:
+      kind: PersistentVolumeClaim
+      name: talosdeck-data
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: talosdeck-data
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false
+images:
+  - name: talosdeck
+    newName: ghcr.io/etosheartem/talosdeck
+    newTag: "git-30cf1408f985"
