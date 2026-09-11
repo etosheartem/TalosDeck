@@ -42,21 +42,27 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM alpine:latest
 
 # Install minimal certificates for TLS/mTLS gRPC connections to Talos API
+# and prepare data directories with proper permissions for unprivileged user
 RUN apk --no-cache add ca-certificates tzdata && \
     addgroup -S talosdeck -g 1000 && \
     adduser -S talosdeck -u 1000 -G talosdeck && \
-    mkdir -p /app/data && chown -R talosdeck:talosdeck /app/data
+    mkdir -p /app/data/backups && \
+    chown -R talosdeck:talosdeck /app && \
+    chmod -R 755 /app/data
 
 WORKDIR /app
 
 # Copy compiled binary from builder
 COPY --from=backend-builder --chown=talosdeck:talosdeck /app/talosdeck /app/talosdeck
 
-# Run as unprivileged user
-USER talosdeck:talosdeck
-
 # Expose HTTP port
 EXPOSE 8080
+
+# Persistent volume for application data (sqlite, audit logs, cluster backups)
+VOLUME ["/app/data"]
+
+# Run as unprivileged user
+USER talosdeck:talosdeck
 
 # Runtime configuration defaults
 ENV PORT=":8080" \

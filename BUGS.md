@@ -9,20 +9,16 @@
 
 | Статус | Critical | High | Medium | Low | Всего |
 |:---|---:|---:|---:|---:|---:|
-| ⬜ Открыто | 4 | 13 | 0 | 0 | **17** |
-| ✅ Исправлено | 18 | 35 | 71 | 34 | **158** |
+| ⬜ Открыто | 0 | 13 | 0 | 0 | **13** |
+| ✅ Исправлено | 22 | 35 | 71 | 34 | **162** |
 | **Итого** | **22** | **48** | **71** | **34** | **175** |
 
-**Прогресс:** 158 из 175 исправлено (90%), 17 открыто.
+**Прогресс:** 162 из 175 исправлено (93%), 13 открыто.
 
 ## Открытые задачи
 
 | Статус | Приоритет | ID | Подсистема | Кол-во | Проблема |
 |:---:|:---:|:---|:---|---:|:---|
-| ⬜ OPEN | 🔴 Critical | `OPS-01` | DevOps / CI | 1 | Сбой записи данных из-за прав non-root пользователя в Dockerfile |
-| ⬜ OPEN | 🔴 Critical | `OPS-02` | DevOps / CI | 1 | Публикация приватных ключей и сертификатов в git |
-| ⬜ OPEN | 🔴 Critical | `OPS-03` | DevOps / CI | 1 | Утечка GitLab Personal Access Token в открытом виде |
-| ⬜ OPEN | 🔴 Critical | `OPS-04` | DevOps / CI | 1 | Отсутствие ресурсов и проб в продакшн-манифесте Kubernetes |
 | ⬜ OPEN | 🟠 High | `OPS-05` | DevOps / CI | 1 | Неверсионированные (floating) базовые образы в Dockerfile |
 | ⬜ OPEN | 🟠 High | `OPS-06` | DevOps / CI | 1 | Сокрытие сбоев деплоя (`\|\| true`) в GitLab CI |
 | ⬜ OPEN | 🟠 High | `OPS-07` | DevOps / CI | 1 | Хардкод абсолютных путей разработчика в Makefile |
@@ -50,7 +46,7 @@
 | **REST API** | 19 | 0 | 19 | 100% |
 | **Frontend state** | 17 | 0 | 17 | 100% |
 | **Frontend UX/UI** | 21 | 9 | 30 | 70% |
-| **DevOps / CI** | 14 | 8 | 22 | 64% |
+| **DevOps / CI** | 18 | 4 | 22 | 82% |
 
 ## Как обновлять трекер
 
@@ -801,18 +797,26 @@
 ### [CRITICAL] OPS-01: Сбой записи данных из-за прав non-root пользователя в Dockerfile
 - **Файл:** [`Dockerfile:45-56`](file:///home/artem/laba-kuber/TalosDeck/Dockerfile#L45-L56)
 - **Описание:** Контейнер запускается от `talosdeck:talosdeck` (UID 1000), но каталог `/app/data` не создается и принадлежит `root`. Запись бэкапов и журнала аудита падает с `permission denied`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`Dockerfile`](file:///home/artem/laba-kuber/TalosDeck/Dockerfile#L45-L65) в рантайм-образе на этапе сборки создана иерархия каталогов `mkdir -p /app/data/backups`, права рекурсивно назначены непривилегированному пользователю `chown -R talosdeck:talosdeck /app && chmod -R 755 /app/data`, а также объявлена директива `VOLUME ["/app/data"]`, гарантирующая права на запись для базы данных SQLite, журнала аудита `audit.log` и архивов резервного копирования.
 
 ### [CRITICAL] OPS-02: Публикация приватных ключей и сертификатов в git
 - **Файл:** [`gitlab-deploy/manifests/talosdeck/secret.yaml:8`](file:///home/artem/laba-kuber/gitlab-deploy/manifests/talosdeck/secret.yaml#L8)
 - **Описание:** Base64-секрет с административным `talosconfig` находится в открытом виде в git-репозитории.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Конфиденциальные данные удалены из [`gitlab-deploy/manifests/talosdeck/secret.yaml`](file:///home/artem/laba-kuber/gitlab-deploy/manifests/talosdeck/secret.yaml) и заменены на пустой плейсхолдер. Создан шаблон [`secret.example.yaml`](file:///home/artem/laba-kuber/gitlab-deploy/manifests/talosdeck/secret.example.yaml). Файл `secret.yaml` внесён в `.gitignore`. Создан безопасный скрипт генерации [`scripts/export-talosconfig-secret.sh`](file:///home/artem/laba-kuber/gitlab-deploy/scripts/export-talosconfig-secret.sh) с выставлением прав доступа `0600`, а пайплайн CI/CD переведен на динамическую передачу секрета через защищённую переменную окружения `TALOSCONFIG` / `TALOSCONFIG_BASE64`.
 
 ### [CRITICAL] OPS-03: Утечка GitLab Personal Access Token в открытом виде
 - **Файл:** [`gitlab-deploy/scripts/trigger-deploy.sh:7`](file:///home/artem/laba-kuber/gitlab-deploy/scripts/trigger-deploy.sh#L7)
 - **Описание:** В скрипте захардкожен действующий токен `GITLAB_TOKEN="glpat-..."`, передаваемый по незащищенному HTTP.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`gitlab-deploy/scripts/trigger-deploy.sh`](file:///home/artem/laba-kuber/gitlab-deploy/scripts/trigger-deploy.sh) полностью удалён захардкоженный токен. Скрипт теперь принимает токен через переменную окружения `GITLAB_TOKEN="${GITLAB_TOKEN:-}"` с обязательной валидацией и аварийным завершением при ее отсутствии. Дефолтный URL GitLab обновлён на HTTPS (`https://gitlab.lan`), а в `README.md` добавлены инструкции безопасного запуска.
 
 ### [CRITICAL] OPS-04: Отсутствие ресурсов и проб в продакшн-манифесте Kubernetes
 - **Файл:** [`gitlab-deploy/manifests/talosdeck/deployment.yaml:18-34`](file:///home/artem/laba-kuber/gitlab-deploy/manifests/talosdeck/deployment.yaml#L18-L34)
 - **Описание:** Полностью отсутствуют `resources.requests/limits` и пробы `livenessProbe`/`readinessProbe`. При зависании под остается активным, трафик не переключается.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В манифест [`gitlab-deploy/manifests/talosdeck/deployment.yaml`](file:///home/artem/laba-kuber/gitlab-deploy/manifests/talosdeck/deployment.yaml#L34-L63) добавлены блоки `resources` (requests: 50m CPU, 64Mi RAM; limits: 500m CPU, 256Mi RAM), пробы `livenessProbe` и `readinessProbe` с интервалами и таймаутами на порт 8080, а также строгий `securityContext` (`runAsNonRoot: true`, `runAsUser: 1000`, `allowPrivilegeEscalation: false`).
 
 ### [HIGH] OPS-05: Неверсионированные (floating) базовые образы в Dockerfile
 - **Файл:** [`Dockerfile:4, 18, 42`](file:///home/artem/laba-kuber/TalosDeck/Dockerfile#L4)
