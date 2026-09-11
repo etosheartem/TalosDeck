@@ -49,8 +49,8 @@ const selectTab = (key: TabKey) => {
     >
       <div class="flex h-14 items-center justify-between border-b px-4" style="border-color: var(--border)">
         <div class="flex items-center gap-2.5">
-          <div class="flex h-7 w-7 items-center justify-center rounded-md border" style="border-color: var(--border-strong); background: var(--surface-raised)">
-            <Layers3 class="h-4 w-4" style="color: var(--accent)" />
+          <div class="brand-mark">
+            <Layers3 class="h-4 w-4" />
           </div>
           <div class="leading-none">
             <div class="text-sm font-semibold tracking-tight">TalosDeck</div>
@@ -76,7 +76,8 @@ const selectTab = (key: TabKey) => {
         </div>
       </div>
 
-      <nav class="flex-1 space-y-1 overflow-y-auto p-2" :aria-label="t('sidebar_nav')">
+      <nav class="flex-1 space-y-0.5 overflow-y-auto px-2 py-4" :aria-label="t('sidebar_nav')">
+        <div class="nav-heading">Cluster</div>
         <button
           v-for="item in navItems"
           :key="item.key"
@@ -108,22 +109,25 @@ const selectTab = (key: TabKey) => {
 .nav-item {
   display: flex;
   width: 100%;
-  min-height: 36px;
+  min-height: 38px;
   align-items: center;
   gap: 10px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 3px;
   padding: 0 10px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 550;
   transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
 .nav-item:hover { background: var(--surface); color: var(--text); }
-.nav-item.active { background: var(--accent-muted); border-color: #28446f; color: #b9d3ff; }
+.nav-item.active { position: relative; background: var(--surface-raised); border-color: var(--border); color: var(--text); }
+.nav-item.active::before { position:absolute;inset:6px auto 6px -1px;width:2px;border-radius:2px;background:var(--accent);content:''; }
 .nav-count { color: var(--text-faint); font-size: 10px; }
-.nav-item.active .nav-count { color: #8db6fa; }
+.nav-item.active .nav-count { color: var(--accent); }
+.nav-heading { padding:0 10px 8px;color:var(--text-faint);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase; }
+.brand-mark { display:flex;height:28px;width:28px;align-items:center;justify-content:center;border-radius:4px;background:var(--accent);color:#1b1209; }
 
 .locale-button {
   min-width: 30px;

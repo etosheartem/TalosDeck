@@ -146,6 +146,8 @@ export const messages: Record<Locale, Record<string, string>> = {
 
     // Workloads / Pods View
     workloads_title: 'Рабочие нагрузки Kubernetes (Поды)',
+    workloads_search_placeholder: 'Имя, namespace, нода или IP',
+    workloads_all_namespaces: 'Все namespace',
     workloads_subtitle: 'Список запущенных подов во всех пространствах имен кластера',
     workloads_search: 'Поиск пода по имени или ноде...',
     workloads_namespace_all: 'Все namespaces',
@@ -431,6 +433,8 @@ export const messages: Record<Locale, Record<string, string>> = {
 
     // Workloads / Pods View
     workloads_title: 'Kubernetes Workloads (Pods)',
+    workloads_search_placeholder: 'Name, namespace, node or IP',
+    workloads_all_namespaces: 'All namespaces',
     workloads_subtitle: 'Running pods and container lifecycle across all cluster namespaces',
     workloads_search: 'Search pod by name or node...',
     workloads_namespace_all: 'All Namespaces',

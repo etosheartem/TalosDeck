@@ -127,7 +127,7 @@ const fillDefaultPassword = () => {
             <button
               type="button"
               @click="fillDefaultPassword"
-              class="text-[11px] text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer"
+              class="text-[11px] text-orange-400 hover:text-orange-300 hover:underline cursor-pointer"
             >
               {{ t('auth_use_default') }} ("admin")
             </button>
@@ -138,7 +138,7 @@ const fillDefaultPassword = () => {
               :type="showPassword ? 'text' : 'password'"
               v-model="password"
               :placeholder="t('auth_password_placeholder')"
-              class="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-cyan-500/80 transition-colors pr-10"
+              class="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-orange-500/80 transition-colors pr-10"
               autocomplete="current-password"
               autofocus
             />

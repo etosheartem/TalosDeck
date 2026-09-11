@@ -39,9 +39,9 @@ const onAutoRefreshChange = (e: Event) => {
       <!-- Left: Brand & Cluster Health -->
       <div class="flex items-center gap-4 flex-wrap">
         <div class="flex items-center gap-3">
-          <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-cyan-600 via-teal-500 to-emerald-400 p-[1.5px] shadow-lg shadow-cyan-500/20">
+          <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-orange-600 via-teal-500 to-emerald-400 p-[1.5px] shadow-lg shadow-orange-500/20">
             <div class="h-full w-full bg-zinc-950 rounded-[10px] flex items-center justify-center">
-              <Layers class="w-5 h-5 text-cyan-400" />
+              <Layers class="w-5 h-5 text-orange-400" />
             </div>
           </div>
           <div>
@@ -49,7 +49,7 @@ const onAutoRefreshChange = (e: Event) => {
               <span class="text-xl font-bold tracking-tight bg-gradient-to-r from-zinc-100 via-zinc-200 to-zinc-400 bg-clip-text text-transparent">
                 {{ t('app_title') }}
               </span>
-              <span class="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/60">
+              <span class="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-950/80 text-orange-400 border border-orange-800/60">
                 MVP
               </span>
             </div>
@@ -91,7 +91,7 @@ const onAutoRefreshChange = (e: Event) => {
           <div class="hidden lg:flex items-center gap-2 text-xs">
             <div class="px-2.5 py-1 rounded-lg bg-zinc-900/90 border border-zinc-800 text-zinc-300 flex items-center gap-1.5">
               <span class="text-zinc-500">{{ t('talos_version') }}:</span>
-              <span class="font-mono text-cyan-400 font-medium">{{ cluster.talosVersion }}</span>
+              <span class="font-mono text-orange-400 font-medium">{{ cluster.talosVersion }}</span>
             </div>
             <div class="px-2.5 py-1 rounded-lg bg-zinc-900/90 border border-zinc-800 text-zinc-300 flex items-center gap-1.5">
               <span class="text-zinc-500">{{ t('k8s_version') }}:</span>
@@ -130,7 +130,7 @@ const onAutoRefreshChange = (e: Event) => {
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-medium text-zinc-200 transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-sm"
           :title="t('refresh')"
         >
-          <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', loading ? 'animate-spin' : '']" />
+          <RefreshCw :class="['w-3.5 h-3.5 text-orange-400', loading ? 'animate-spin' : '']" />
           <span class="hidden sm:inline">{{ loading ? t('refreshing') : t('refresh') }}</span>
         </button>
 
@@ -141,7 +141,7 @@ const onAutoRefreshChange = (e: Event) => {
             :class="[
               'px-2.5 py-1 rounded-md transition-all cursor-pointer font-semibold',
               currentLocale === 'ru'
-                ? 'bg-gradient-to-r from-cyan-600 to-teal-600 text-white shadow-md shadow-cyan-900/40'
+                ? 'bg-gradient-to-r from-orange-600 to-amber-600 text-white shadow-md shadow-orange-900/40'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50',
             ]"
           >
@@ -152,7 +152,7 @@ const onAutoRefreshChange = (e: Event) => {
             :class="[
               'px-2.5 py-1 rounded-md transition-all cursor-pointer font-semibold',
               currentLocale === 'en'
-                ? 'bg-gradient-to-r from-cyan-600 to-teal-600 text-white shadow-md shadow-cyan-900/40'
+                ? 'bg-gradient-to-r from-orange-600 to-amber-600 text-white shadow-md shadow-orange-900/40'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50',
             ]"
           >

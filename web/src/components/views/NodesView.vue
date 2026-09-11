@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Search, Plus, TriangleAlert, Server } from 'lucide-vue-next'
+import { Search, TriangleAlert, Server } from 'lucide-vue-next'
 import { t, currentLocale } from '../../i18n'
 import { fetchProxmoxStatus } from '../../api'
 import type { NodeOverview, ProxmoxStatusResponse, CreateWorkerResult } from '../../types'
@@ -72,7 +72,7 @@ const handleWorkerCreated = (result: CreateWorkerResult) => {
         <div><dt>{{ t('proxmox_free_ram') }}</dt><dd>{{ loadingProxmox ? '…' : formatBytes(pve?.memory?.available ?? pve?.memory?.free) }}</dd></div>
         <div><dt>{{ t('proxmox_free_disk') }}</dt><dd>{{ loadingProxmox ? '…' : formatBytes(pve?.storage?.free) }}</dd></div>
       </dl>
-      <button class="primary-button" @click="isAddModalOpen = true"><Plus class="h-3.5 w-3.5" />{{ t('proxmox_add_worker_btn') }}</button>
+      <button class="primary-button" @click="isAddModalOpen = true">{{ t('proxmox_add_worker_btn') }}</button>
     </section>
 
     <section>
@@ -97,9 +97,6 @@ const handleWorkerCreated = (result: CreateWorkerResult) => {
             <button :class="{ active: roleFilter === 'controlplane' }" @click="roleFilter = 'controlplane'">CP</button>
             <button :class="{ active: roleFilter === 'worker' }" @click="roleFilter = 'worker'">{{ t('stat_workers') }}</button>
           </div>
-          <button v-if="proxmox?.configured" class="control flex h-8 items-center gap-1.5 px-2.5 text-xs" @click="isAddModalOpen = true">
-            <Plus class="h-3.5 w-3.5" />{{ t('proxmox_add_worker_btn') }}
-          </button>
         </div>
       </div>
 

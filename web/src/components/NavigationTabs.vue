@@ -39,7 +39,7 @@ const tabs: { key: TabKey; labelKey: string; icon: any }[] = [
         :class="[
           'flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap select-none group',
           activeTab === tab.key
-            ? 'bg-zinc-900 text-cyan-300 border border-cyan-500/40 shadow-lg shadow-cyan-950/30'
+            ? 'bg-zinc-900 text-orange-300 border border-orange-500/40 shadow-lg shadow-orange-950/30'
             : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60 border border-transparent',
         ]"
       >
@@ -48,7 +48,7 @@ const tabs: { key: TabKey; labelKey: string; icon: any }[] = [
           :class="[
             'w-4 h-4 transition-colors',
             activeTab === tab.key
-              ? 'text-cyan-400'
+              ? 'text-orange-400'
               : 'text-zinc-500 group-hover:text-zinc-300',
           ]"
         />
@@ -60,7 +60,7 @@ const tabs: { key: TabKey; labelKey: string; icon: any }[] = [
           :class="[
             'px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold transition-colors',
             activeTab === 'nodes'
-              ? 'bg-cyan-950 text-cyan-300 border border-cyan-800/60'
+              ? 'bg-orange-950 text-orange-300 border border-orange-800/60'
               : 'bg-zinc-800 text-zinc-400 border border-zinc-700/60',
           ]"
         >
@@ -73,7 +73,7 @@ const tabs: { key: TabKey; labelKey: string; icon: any }[] = [
           :class="[
             'px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold transition-colors',
             activeTab === 'workloads'
-              ? 'bg-cyan-950 text-cyan-300 border border-cyan-800/60'
+              ? 'bg-orange-950 text-orange-300 border border-orange-800/60'
               : 'bg-zinc-800 text-zinc-400 border border-zinc-700/60',
           ]"
         >

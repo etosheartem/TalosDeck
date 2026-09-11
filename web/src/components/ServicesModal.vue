@@ -98,13 +98,13 @@ const filteredServices = computed(() => {
       <!-- Header -->
       <div class="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/60 flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-zinc-800 text-cyan-400 border border-zinc-700/60">
+          <div class="p-2 rounded-lg bg-zinc-800 text-orange-400 border border-zinc-700/60">
             <Server class="w-5 h-5" />
           </div>
           <div>
             <h2 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
               <span id="services-modal-title">{{ t('services_title') }}</span>
-              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 font-mono">
+              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-orange-300 font-mono">
                 {{ node.hostname }} ({{ node.ip }})
               </span>
             </h2>
@@ -132,7 +132,7 @@ const filteredServices = computed(() => {
             v-model="searchQuery"
             type="text"
             :placeholder="t('services_search')"
-            class="w-full pl-9 pr-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-500/70"
+            class="w-full pl-9 pr-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500/70"
           />
         </div>
 
@@ -180,7 +180,7 @@ const filteredServices = computed(() => {
             class="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
             :title="t('services_refresh')"
           >
-            <RefreshCw :class="['w-4 h-4 text-cyan-400', loading ? 'animate-spin' : '']" />
+            <RefreshCw :class="['w-4 h-4 text-orange-400', loading ? 'animate-spin' : '']" />
           </button>
         </div>
       </div>
@@ -188,7 +188,7 @@ const filteredServices = computed(() => {
       <!-- Services Table / List -->
       <div class="flex-1 overflow-y-auto px-6 py-4 divide-y divide-zinc-800/50">
         <div v-if="loading && services.length === 0" class="py-12 text-center text-zinc-500 text-sm">
-          <RefreshCw class="w-6 h-6 animate-spin mx-auto mb-2 text-cyan-400" />
+          <RefreshCw class="w-6 h-6 animate-spin mx-auto mb-2 text-orange-400" />
           <span>{{ t('services_loading') }}</span>
         </div>
 

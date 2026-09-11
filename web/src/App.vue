@@ -23,9 +23,19 @@ import LogsModal from './components/LogsModal.vue'
 import RebootModal from './components/RebootModal.vue'
 import Toast from './components/Toast.vue'
 
-// Active tab state
-const activeTab = ref<TabKey>('nodes')
+// Active tab state and shareable section URLs.
+const tabKeys: TabKey[] = ['nodes', 'workloads', 'storage', 'config', 'operations']
+const tabFromHash = (): TabKey => {
+  const value = window.location.hash.slice(1) as TabKey
+  return tabKeys.includes(value) ? value : 'nodes'
+}
+const activeTab = ref<TabKey>(tabFromHash())
 const mobileOpen = ref(false)
+const handleHashChange = () => { activeTab.value = tabFromHash() }
+
+watch(activeTab, (tab) => {
+  if (window.location.hash !== `#${tab}`) history.replaceState(null, '', `#${tab}`)
+})
 
 // Reactive state
 const loading = ref(false)
@@ -203,6 +213,7 @@ onMounted(async () => {
 
   // UI-02: Add global Escape keydown listener
   window.addEventListener('keydown', handleKeyDown)
+  window.addEventListener('hashchange', handleHashChange)
 })
 
 onUnmounted(() => {
@@ -221,6 +232,7 @@ onUnmounted(() => {
 
   // UI-02: Clean up Escape key listener
   window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('hashchange', handleHashChange)
 })
 
 // Modal Open Handlers

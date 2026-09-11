@@ -252,7 +252,7 @@ const filteredLogs = computed(() => {
           <div>
             <div class="flex items-center gap-2">
               <h2 id="logs-modal-title" class="text-sm font-bold text-zinc-100">{{ t('logs_title') }}</h2>
-              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 font-mono">
+              <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-orange-300 font-mono">
                 {{ node.hostname }} ({{ node.ip }})
               </span>
             </div>
@@ -276,7 +276,7 @@ const filteredLogs = computed(() => {
                     connectionStatus === 'connected'
                       ? 'text-emerald-400'
                       : connectionStatus === 'simulated'
-                      ? 'text-cyan-400'
+                      ? 'text-orange-400'
                       : connectionStatus === 'connecting'
                       ? 'text-amber-400'
                       : 'text-rose-400',
@@ -329,7 +329,7 @@ const filteredLogs = computed(() => {
             v-model="searchQuery"
             type="text"
             :placeholder="t('logs_search')"
-            class="w-full pl-8 pr-3 py-1 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-500"
+            class="w-full pl-8 pr-3 py-1 rounded bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500"
           />
         </div>
 
@@ -346,7 +346,7 @@ const filteredLogs = computed(() => {
             ]"
           >
             <Play v-if="isPaused" class="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-            <Pause v-else class="w-3.5 h-3.5 text-cyan-400" />
+            <Pause v-else class="w-3.5 h-3.5 text-orange-400" />
             <span>{{ isPaused ? t('logs_resume') : t('logs_pause') }}</span>
           </button>
 
@@ -356,7 +356,7 @@ const filteredLogs = computed(() => {
             :class="[
               'flex items-center gap-1.5 px-2.5 py-1 rounded border transition-all cursor-pointer font-medium',
               autoScroll
-                ? 'bg-cyan-950/70 text-cyan-300 border-cyan-800/80 hover:bg-cyan-900/80'
+                ? 'bg-orange-950/70 text-orange-300 border-orange-800/80 hover:bg-orange-900/80'
                 : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-700',
             ]"
           >
@@ -414,7 +414,7 @@ const filteredLogs = computed(() => {
                 : line.level === 'warn'
                 ? 'text-amber-300'
                 : line.level === 'kern'
-                ? 'text-cyan-300'
+                ? 'text-orange-300'
                 : 'text-zinc-300',
             ]"
           >
@@ -429,13 +429,13 @@ const filteredLogs = computed(() => {
           <span class="font-mono text-[11px] text-zinc-400">
             WS: /ws/nodes/{{ node.ip }}/dmesg
           </span>
-          <span v-if="searchQuery" class="text-cyan-400 text-[11px]">
+          <span v-if="searchQuery" class="text-orange-400 text-[11px]">
             Filtered: {{ filteredLogs.length }} of {{ logs.length }} lines
           </span>
         </div>
         <button
           @click="scrollToBottom"
-          class="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-cyan-400 cursor-pointer"
+          class="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-orange-400 cursor-pointer"
         >
           <ArrowDown class="w-3 h-3" />
           <span>Scroll to bottom</span>

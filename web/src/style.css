@@ -4,24 +4,24 @@
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
-  --canvas: #0a0c0f;
-  --sidebar: #0d1014;
-  --surface: #11151a;
-  --surface-raised: #151a20;
-  --surface-hover: #191f26;
-  --border: #252c34;
-  --border-strong: #343d47;
-  --text: #edf1f5;
-  --text-muted: #98a2ad;
-  --text-faint: #66717d;
-  --accent: #72a7ff;
-  --accent-muted: #172744;
-  --success: #47c98b;
-  --success-muted: #10281f;
-  --warning: #e6ad55;
-  --warning-muted: #2b2112;
-  --danger: #ef6a72;
-  --danger-muted: #30181b;
+  --canvas: #111217;
+  --sidebar: #0b0c0e;
+  --surface: #181b1f;
+  --surface-raised: #202226;
+  --surface-hover: #24272c;
+  --border: #2f3339;
+  --border-strong: #454b54;
+  --text: #f4f5f5;
+  --text-muted: #b1b4ba;
+  --text-faint: #7b8088;
+  --accent: #ff9830;
+  --accent-muted: #352312;
+  --success: #73bf69;
+  --success-muted: #182b1b;
+  --warning: #f2cc0c;
+  --warning-muted: #302b11;
+  --danger: #f2495c;
+  --danger-muted: #32171c;
 }
 
 * { box-sizing: border-box; }
@@ -47,7 +47,7 @@ button:disabled, select:disabled { cursor: not-allowed; }
   outline-offset: 2px;
 }
 
-::selection { background: #264d82; color: #fff; }
+::selection { background: #75451d; color: #fff; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--canvas); }
@@ -65,13 +65,14 @@ button:disabled, select:disabled { cursor: not-allowed; }
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 35%);
 }
 
 .control {
   min-height: 32px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 3px;
   background: var(--surface-raised);
   color: var(--text);
   transition: background-color 120ms ease, border-color 120ms ease;

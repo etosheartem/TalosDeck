@@ -131,7 +131,7 @@ const getActionBadgeClass = (action: string) => {
     return 'bg-violet-950/60 text-violet-300 border-violet-800/60'
   }
   if (action.startsWith('worker.')) {
-    return 'bg-cyan-950/60 text-cyan-300 border-cyan-800/60'
+    return 'bg-orange-950/60 text-orange-300 border-orange-800/60'
   }
   return 'bg-zinc-800 text-zinc-300 border-zinc-700'
 }
@@ -431,7 +431,7 @@ const startRollingReboot = async () => {
         class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
         :title="t('refresh')"
       >
-        <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', (activeSubTab === 'audit' ? loadingAudit : loadingEtcd) ? 'animate-spin' : '']" />
+        <RefreshCw :class="['w-3.5 h-3.5 text-orange-400', (activeSubTab === 'audit' ? loadingAudit : loadingEtcd) ? 'animate-spin' : '']" />
         <span class="hidden sm:inline">{{ (activeSubTab === 'audit' ? loadingAudit : loadingEtcd) ? t('refreshing') : t('refresh') }}</span>
       </button>
     </div>
@@ -498,7 +498,7 @@ const startRollingReboot = async () => {
             Raft Term: <span class="text-zinc-200 font-bold">{{ etcd?.raftTerm ?? 0 }}</span>
           </div>
           <div class="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-400 border border-zinc-800">
-            DB Size: <span class="text-cyan-300 font-bold">{{ etcd?.totalDbSize || '—' }}</span>
+            DB Size: <span class="text-orange-300 font-bold">{{ etcd?.totalDbSize || '—' }}</span>
           </div>
         </div>
       </div>
@@ -533,7 +533,7 @@ const startRollingReboot = async () => {
               <!-- Member name & id -->
               <td class="py-3 px-4">
                 <div class="font-bold text-zinc-100 flex items-center gap-2">
-                  <Server class="w-3.5 h-3.5 text-cyan-400" />
+                  <Server class="w-3.5 h-3.5 text-orange-400" />
                   <span>{{ member.name }}</span>
                 </div>
                 <span class="text-[10px] text-zinc-500 block mt-0.5">ID: {{ member.id }}</span>
@@ -560,7 +560,7 @@ const startRollingReboot = async () => {
               </td>
 
               <!-- DB size -->
-              <td class="py-3 px-3 text-cyan-300 font-bold">
+              <td class="py-3 px-3 text-orange-300 font-bold">
                 {{ member.dbSize }}
               </td>
 
@@ -797,7 +797,7 @@ const startRollingReboot = async () => {
                   />
                   <Info
                     v-else
-                    class="w-3.5 h-3.5 text-cyan-400 shrink-0"
+                    class="w-3.5 h-3.5 text-orange-400 shrink-0"
                   />
                   <span class="truncate">{{ alert.title }}</span>
                 </div>
@@ -812,7 +812,7 @@ const startRollingReboot = async () => {
                       ? 'bg-amber-950/80 text-amber-300 border-amber-800/60'
                       : alert.level === 'RECOVERED'
                       ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60'
-                      : 'bg-cyan-950/80 text-cyan-300 border-cyan-800/60',
+                      : 'bg-orange-950/80 text-orange-300 border-orange-800/60',
                   ]"
                 >
                   {{ alert.level }}
@@ -885,13 +885,13 @@ const startRollingReboot = async () => {
           </thead>
           <tbody class="divide-y divide-zinc-800/60">
             <tr v-for="backup in backups" :key="backup.id" class="hover:bg-zinc-800/30">
-              <td class="px-3 py-2.5 font-mono text-cyan-300">{{ backup.filename }}</td>
+              <td class="px-3 py-2.5 font-mono text-orange-300">{{ backup.filename }}</td>
               <td class="px-3 py-2.5 text-zinc-300 uppercase">{{ backup.type }}</td>
               <td class="px-3 py-2.5 text-zinc-400">{{ formatBackupTime(backup.timestamp) }}</td>
               <td class="px-3 py-2.5 font-mono text-zinc-300">{{ backup.humanSize }}</td>
               <td class="px-3 py-2.5">
                 <div class="flex justify-end gap-2">
-                  <button @click="handleDownloadBackup(backup)" class="p-1.5 rounded-lg bg-cyan-950/60 border border-cyan-800/50 text-cyan-300 hover:bg-cyan-900/60 cursor-pointer" title="Download backup">
+                  <button @click="handleDownloadBackup(backup)" class="p-1.5 rounded-lg bg-orange-950/60 border border-orange-800/50 text-orange-300 hover:bg-orange-900/60 cursor-pointer" title="Download backup">
                     <Download class="w-3.5 h-3.5" />
                   </button>
                   <button @click="handleDeleteBackup(backup)" :disabled="deletingBackupID === backup.id" class="p-1.5 rounded-lg bg-red-950/60 border border-red-800/50 text-red-300 hover:bg-red-900/60 disabled:opacity-50 cursor-pointer" title="Delete backup">
@@ -908,7 +908,7 @@ const startRollingReboot = async () => {
     <!-- Quick Operations Grid -->
     <div class="space-y-3">
       <h3 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-        <Sliders class="w-4 h-4 text-cyan-400" />
+        <Sliders class="w-4 h-4 text-orange-400" />
         <span>{{ t('ops_quick_actions') }}</span>
       </h3>
 
@@ -979,7 +979,7 @@ const startRollingReboot = async () => {
         <!-- Operation 3: Bootstrap Check Diagnostics -->
         <div class="bg-[#11151a] border border-[#252c34] rounded-lg p-5 flex flex-col justify-between space-y-4 hover:border-zinc-700/80 transition-all ">
           <div class="space-y-2">
-            <div class="p-2.5 rounded-md bg-cyan-950/60 text-cyan-400 border border-cyan-800/50 w-fit">
+            <div class="p-2.5 rounded-md bg-orange-950/60 text-orange-400 border border-orange-800/50 w-fit">
               <Stethoscope class="w-5 h-5" />
             </div>
             <h4 class="text-sm font-bold text-zinc-100">{{ t('ops_bootstrap_check') }}</h4>
@@ -991,9 +991,9 @@ const startRollingReboot = async () => {
           <button
             @click="startBootstrapCheck"
             :disabled="checkingBootstrap"
-            class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-cyan-950/70 hover:bg-cyan-900/80 border border-cyan-800/70 text-xs font-semibold text-cyan-200 transition-all cursor-pointer active:scale-95 disabled:opacity-50 "
+            class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-orange-950/70 hover:bg-orange-900/80 border border-orange-800/70 text-xs font-semibold text-orange-200 transition-all cursor-pointer active:scale-95 disabled:opacity-50 "
           >
-            <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', checkingBootstrap ? 'animate-spin' : '']" />
+            <RefreshCw :class="['w-3.5 h-3.5 text-orange-400', checkingBootstrap ? 'animate-spin' : '']" />
             <span>{{ checkingBootstrap ? t('ops_checking') : t('ops_run_check') }}</span>
           </button>
         </div>
@@ -1003,7 +1003,7 @@ const startRollingReboot = async () => {
     <!-- Bootstrap Diagnostics Results (if run) -->
     <div
       v-if="bootstrapResults.length > 0"
-      :class="['bg-zinc-900/90 border rounded-lg p-5 space-y-3.5  ', bootstrapHasErrors ? 'border-red-800/50 shadow-red-950/20' : 'border-cyan-800/50 shadow-cyan-950/20']"
+      :class="['bg-zinc-900/90 border rounded-lg p-5 space-y-3.5  ', bootstrapHasErrors ? 'border-red-800/50 shadow-red-950/20' : 'border-orange-800/50 shadow-orange-950/20']"
     >
       <div class="flex items-center justify-between pb-2 border-b border-zinc-800">
         <h4 class="text-sm font-bold text-zinc-100 flex items-center gap-2">
@@ -1028,7 +1028,7 @@ const startRollingReboot = async () => {
           <div>
             <span class="font-bold text-zinc-200 block">{{ item.title }}</span>
             <p class="text-[11px] text-zinc-400 mt-0.5">{{ item.description }}</p>
-            <p v-if="item.detail" class="text-[10px] font-mono text-cyan-400/90 mt-1">
+            <p v-if="item.detail" class="text-[10px] font-mono text-orange-400/90 mt-1">
               {{ item.detail }}
             </p>
           </div>
@@ -1048,7 +1048,7 @@ const startRollingReboot = async () => {
             type="text"
             v-model="auditSearch"
             :placeholder="t('audit_search')"
-            class="w-full bg-zinc-950 border border-zinc-800 rounded-md pl-9 pr-3.5 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-cyan-500/70 transition-colors"
+            class="w-full bg-zinc-950 border border-zinc-800 rounded-md pl-9 pr-3.5 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-orange-500/70 transition-colors"
           />
         </div>
 
@@ -1078,7 +1078,7 @@ const startRollingReboot = async () => {
             class="p-2 rounded-md bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
             :title="t('refresh')"
           >
-            <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', loadingAudit ? 'animate-spin' : '']" />
+            <RefreshCw :class="['w-3.5 h-3.5 text-orange-400', loadingAudit ? 'animate-spin' : '']" />
           </button>
         </div>
       </div>
@@ -1253,7 +1253,7 @@ const startRollingReboot = async () => {
 
         <!-- Progress Steps if running -->
         <div v-if="rollingInProgress" class="space-y-2 py-2">
-          <p class="text-xs text-cyan-300 font-semibold flex items-center gap-2">
+          <p class="text-xs text-orange-300 font-semibold flex items-center gap-2">
             <RefreshCw class="w-3.5 h-3.5 animate-spin" />
             <span>{{ t('ops_rolling_in_progress') }}</span>
           </p>

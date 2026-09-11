@@ -126,10 +126,10 @@ const jumpToSection = (section: string) => {
       <div>
         <div class="flex items-center gap-2.5">
           <h2 class="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-            <FileCode2 class="w-5 h-5 text-cyan-400" />
+            <FileCode2 class="w-5 h-5 text-orange-400" />
             <span>{{ t('config_title') }}</span>
           </h2>
-          <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-zinc-900 text-cyan-300 border border-zinc-800">
+          <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-zinc-900 text-orange-300 border border-zinc-800">
             {{ t('config_mode_tag') }}
           </span>
         </div>
@@ -157,7 +157,7 @@ const jumpToSection = (section: string) => {
           class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
           :title="t('config_download')"
         >
-          <Download class="w-3.5 h-3.5 text-cyan-400" />
+          <Download class="w-3.5 h-3.5 text-orange-400" />
           <span class="hidden sm:inline">{{ t('config_download') }}</span>
         </button>
 
@@ -167,7 +167,7 @@ const jumpToSection = (section: string) => {
           class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-xs font-semibold text-zinc-200 transition-all cursor-pointer disabled:opacity-50"
           :title="t('config_refresh')"
         >
-          <RefreshCw :class="['w-3.5 h-3.5 text-cyan-400', loading ? 'animate-spin' : '']" />
+          <RefreshCw :class="['w-3.5 h-3.5 text-orange-400', loading ? 'animate-spin' : '']" />
           <span class="hidden sm:inline">{{ loading ? t('refreshing') : t('config_refresh') }}</span>
         </button>
       </div>
@@ -202,7 +202,7 @@ const jumpToSection = (section: string) => {
             :class="[
               'flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-all cursor-pointer whitespace-nowrap border shrink-0',
               selectedNodeIP === node.ip
-                ? 'bg-zinc-800 text-cyan-300 border-cyan-500/50  shadow-cyan-950/30'
+                ? 'bg-zinc-800 text-orange-300 border-orange-500/50  shadow-orange-950/30'
                 : 'bg-zinc-950/60 text-zinc-400 hover:text-zinc-200 border-zinc-800/80 hover:border-zinc-700',
             ]"
           >
@@ -221,7 +221,7 @@ const jumpToSection = (section: string) => {
               v-model="searchQuery"
               type="text"
               :placeholder="t('config_search_placeholder')"
-              class="w-full pl-8 pr-8 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-500/70 font-mono"
+              class="w-full pl-8 pr-8 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500/70 font-mono"
             />
             <button
               v-if="searchQuery"
@@ -234,7 +234,7 @@ const jumpToSection = (section: string) => {
 
           <span
             v-if="searchQuery"
-            class="px-2 py-1 rounded-lg text-xs font-mono font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 whitespace-nowrap"
+            class="px-2 py-1 rounded-lg text-xs font-mono font-semibold bg-orange-950/80 text-orange-300 border border-orange-800/60 whitespace-nowrap"
           >
             {{ matchCount }} {{ t('config_matches') }}
           </span>
@@ -280,7 +280,7 @@ const jumpToSection = (section: string) => {
             :class="[
               'flex items-start gap-4 py-0.5 px-2 rounded transition-colors w-max min-w-full',
               searchQuery && line.toLowerCase().includes(searchQuery.toLowerCase())
-                ? 'bg-cyan-950/60 border-l-2 border-cyan-400 text-cyan-200'
+                ? 'bg-orange-950/60 border-l-2 border-cyan-400 text-orange-200'
                 : 'hover:bg-zinc-900/40 text-zinc-300',
             ]"
           >
@@ -295,7 +295,7 @@ const jumpToSection = (section: string) => {
                 <span class="text-zinc-500 italic">{{ line }}</span>
               </template>
               <template v-else-if="line.includes(':')">
-                <span class="text-cyan-300 font-semibold">{{ line.slice(0, line.indexOf(':') + 1) }}</span>
+                <span class="text-orange-300 font-semibold">{{ line.slice(0, line.indexOf(':') + 1) }}</span>
                 <span class="text-emerald-300">{{ line.slice(line.indexOf(':') + 1) }}</span>
               </template>
               <template v-else-if="line.trim().startsWith('-')">
@@ -312,7 +312,7 @@ const jumpToSection = (section: string) => {
         <!-- Security & API status footer -->
         <div class="flex items-center justify-between px-4 py-2.5 bg-zinc-900/70 border-t border-zinc-800 text-[11px] text-zinc-400">
           <div class="flex items-center gap-2">
-            <Info class="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <Info class="w-3.5 h-3.5 text-orange-400 shrink-0" />
             <span>{{ t('config_hint_security') }}</span>
           </div>
           <span class="font-mono text-zinc-500 hidden sm:inline">
