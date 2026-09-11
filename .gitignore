@@ -1,0 +1,19 @@
+# Binaries
+bin/
+talosdeck
+
+# Web dependencies and build
+web/node_modules/
+web/dist/
+
+# Backups & runtime data
+data/
+*.tar.gz
+*.snapshot
+
+# Environment and secrets
+.env
+*.local
+kubeconfig
+talosconfig
+*.yaml.bak

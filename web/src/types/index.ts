@@ -1,0 +1,147 @@
+export type NodeRole = 'controlplane' | 'worker'
+
+export interface NodeOverview {
+  ip: string
+  hostname: string
+  version?: string
+  ready: boolean
+  role?: NodeRole
+  uptime?: string
+  cpuUsage?: number // percentage e.g. 15
+  memoryUsage?: string // e.g. "1.8 / 4.0 GB"
+  kubernetesVersion?: string
+  servicesSummary?: {
+    etcd?: 'Healthy' | 'Degraded' | 'N/A'
+    kubelet?: 'Healthy' | 'Degraded'
+    containerd?: 'Healthy' | 'Degraded'
+    apid?: 'Healthy' | 'Degraded'
+  }
+}
+
+export interface ClusterInfo {
+  name: string
+  healthy: boolean
+  talosVersion: string
+  kubernetesVersion: string
+  endpoint: string
+  totalNodes: number
+  readyNodes: number
+  controlPlaneCount: number
+  workerCount: number
+}
+
+export type ServiceState = 'Running' | 'Waiting' | 'Preparing' | 'Degraded' | 'Stopped'
+
+export interface TalosService {
+  id: string
+  name: string
+  state: ServiceState
+  healthy: boolean
+  description: string
+  uptime?: string
+  restarts?: number
+}
+
+export interface DmesgLogLine {
+  id: string
+  timestamp: string
+  raw: string
+  prefix?: string
+  level?: 'info' | 'warn' | 'error' | 'kern' | 'debug'
+}
+
+export type TabKey = 'nodes' | 'storage' | 'config' | 'workloads' | 'operations'
+
+// Storage & Disks interfaces
+export interface DiskPartition {
+  device: string // e.g. "/dev/sda1"
+  size: string // e.g. "512 MB"
+  type?: string // e.g. "EFI System", "Talos State"
+  filesystem?: string // e.g. "vfat", "xfs", "ext4"
+  mountpoint?: string // e.g. "/boot/efi", "/var", "/system/state"
+  label?: string
+  used?: string // e.g. "64 MB"
+  usedPercent?: number // e.g. 12
+}
+
+export interface PhysicalDisk {
+  name: string // e.g. "/dev/sda"
+  model?: string // e.g. "VirtIO SCSI Disk"
+  serial?: string
+  size: string // e.g. "50.0 GB"
+  bus: string // e.g. "SCSI", "NVMe", "VirtIO", "SATA"
+  type: 'SSD' | 'HDD' | 'NVMe' | 'Virtual'
+  healthy: boolean
+  temp?: string
+  readOnly?: boolean
+  partitions: DiskPartition[]
+}
+
+export interface NodeDisksOverview {
+  nodeIP: string
+  hostname: string
+  disks: PhysicalDisk[]
+  totalStorage: string
+  usedStorage: string
+  usedPercent: number
+}
+
+// MachineConfig interfaces
+export interface MachineConfigData {
+  nodeIP: string
+  hostname: string
+  version: string
+  role: NodeRole
+  configYaml: string
+  fetchedAt: string
+}
+
+// Kubernetes Workloads / Pods interfaces
+export type PodStatus = 'Running' | 'Pending' | 'Succeeded' | 'Failed' | 'CrashLoopBackOff'
+
+export interface K8sPod {
+  id: string
+  name: string
+  namespace: string
+  nodeName: string
+  nodeIP: string
+  status: PodStatus
+  readyContainers: string // e.g. "1/1"
+  restarts: number
+  ip: string
+  age: string
+  cpu?: string
+  memory?: string
+}
+
+// Operations & etcd interfaces
+export interface EtcdMember {
+  id: string
+  name: string
+  peerURLs: string[]
+  clientURLs: string[]
+  leader: boolean
+  dbSize: string
+  healthy: boolean
+  errors?: string[]
+}
+
+export interface EtcdClusterHealth {
+  healthy: boolean
+  members: EtcdMember[]
+  leaderId: string
+  leaderName: string
+  alarms: string[]
+  totalDbSize: string
+  raftTerm: number
+  raftIndex: number
+}
+
+export interface BootstrapCheckItem {
+  id: string
+  title: string
+  description: string
+  status: 'pending' | 'success' | 'warning' | 'error'
+  detail?: string
+}
+

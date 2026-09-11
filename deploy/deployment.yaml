@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: talosdeck
+  labels:
+    app: talosdeck
+    app.kubernetes.io/name: talosdeck
+    app.kubernetes.io/part-of: talosdeck
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: talosdeck
+  template:
+    metadata:
+      labels:
+        app: talosdeck
+        app.kubernetes.io/name: talosdeck
+    spec:
+      containers:
+        - name: talosdeck
+          image: talosdeck:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: TALOSCONFIG
+              value: /etc/talos/talosconfig
+            - name: PORT
+              value: ":8080"
+          volumeMounts:
+            - name: talosconfig-vol
+              mountPath: /etc/talos
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: talosconfig-vol
+          secret:
+            secretName: talosdeck-config
+            items:
+              - key: talosconfig
+                path: talosconfig
