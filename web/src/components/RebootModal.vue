@@ -44,6 +44,9 @@ const handleConfirm = async () => {
     @click.self="emit('close')"
   >
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="reboot-modal-title"
       class="w-full max-w-md rounded-2xl bg-zinc-950 border border-rose-900/50 shadow-2xl shadow-rose-950/30 overflow-hidden"
     >
       <!-- Header with Danger Icon -->
@@ -52,7 +55,7 @@ const handleConfirm = async () => {
           <AlertTriangle class="w-6 h-6" />
         </div>
         <div class="flex-1">
-          <h2 class="text-base font-bold text-zinc-100">
+          <h2 id="reboot-modal-title" class="text-base font-bold text-zinc-100">
             {{ t('reboot_title') }}
           </h2>
           <p class="text-xs text-zinc-400 mt-1">

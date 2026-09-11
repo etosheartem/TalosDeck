@@ -253,7 +253,7 @@ const handleWorkerError = (err: string) => {
             ]"
           >
             <Cpu class="w-3 h-3" />
-            <span>Workers</span>
+            <span>{{ t('stat_workers') }}</span>
           </button>
         </div>
 
@@ -287,8 +287,8 @@ const handleWorkerError = (err: string) => {
       class="py-16 text-center rounded-2xl bg-zinc-900/40 border border-zinc-800/60"
     >
       <Server class="w-10 h-10 mx-auto text-zinc-600 mb-3" />
-      <p class="text-sm font-semibold text-zinc-300">No nodes found matching criteria</p>
-      <p class="text-xs text-zinc-500 mt-1">Try clearing filters or search queries</p>
+      <p class="text-sm font-semibold text-zinc-300">{{ t('nodes_empty_title') }}</p>
+      <p class="text-xs text-zinc-500 mt-1">{{ t('nodes_empty_hint') }}</p>
     </div>
 
     <!-- Add Worker Modal (Scale-Out Wizard) -->

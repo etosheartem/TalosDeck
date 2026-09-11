@@ -124,7 +124,7 @@ const selectTab = (key: TabKey) => {
       <!-- Navigation Links -->
       <div class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         <div class="px-3 py-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-          Навигация
+          {{ t('sidebar_nav') }}
         </div>
 
         <button

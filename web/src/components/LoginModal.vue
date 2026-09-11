@@ -72,6 +72,9 @@ const fillDefaultPassword = () => {
     @click.self="emit('close')"
   >
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="login-modal-title"
       class="w-full max-w-md bg-zinc-900 border border-zinc-800/90 rounded-2xl p-6 shadow-2xl space-y-5 relative"
     >
       <!-- Close Button -->
@@ -90,7 +93,7 @@ const fillDefaultPassword = () => {
           <ShieldCheck class="w-6 h-6" />
         </div>
         <div>
-          <h3 class="text-base font-bold text-zinc-100">{{ t('auth_modal_title') }}</h3>
+          <h3 id="login-modal-title" class="text-base font-bold text-zinc-100">{{ t('auth_modal_title') }}</h3>
           <p class="text-xs text-zinc-400 mt-0.5">{{ t('auth_modal_desc') }}</p>
         </div>
       </div>
@@ -116,7 +119,7 @@ const fillDefaultPassword = () => {
       <!-- Form -->
       <form @submit.prevent="handleLogin" class="space-y-4">
         <div class="space-y-1.5">
-          <label class="text-xs font-semibold text-zinc-300 flex items-center justify-between">
+          <label for="login-password" class="text-xs font-semibold text-zinc-300 flex items-center justify-between">
             <span class="flex items-center gap-1.5">
               <KeyRound class="w-3.5 h-3.5 text-zinc-400" />
               <span>{{ t('auth_password_label') }}</span>
@@ -131,6 +134,7 @@ const fillDefaultPassword = () => {
           </label>
           <div class="relative">
             <input
+              id="login-password"
               :type="showPassword ? 'text' : 'password'"
               v-model="password"
               :placeholder="t('auth_password_placeholder')"

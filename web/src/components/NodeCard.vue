@@ -207,28 +207,28 @@ const getServiceStatus = (serviceName: 'etcd' | 'kubelet' | 'containerd' | 'apid
       <!-- Services Button -->
       <button
         @click="emit('open-services', node)"
-        class="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/70 hover:bg-zinc-800 border border-zinc-700/60 hover:border-zinc-600 text-xs font-medium text-zinc-200 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
+        class="min-w-0 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/70 hover:bg-zinc-800 border border-zinc-700/60 hover:border-zinc-600 text-xs font-medium text-zinc-200 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
       >
-        <Server class="w-3.5 h-3.5 text-cyan-400" />
-        <span>{{ t('node_btn_services') }}</span>
+        <Server class="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+        <span class="truncate">{{ t('node_btn_services') }}</span>
       </button>
 
       <!-- Live Logs Button -->
       <button
         @click="emit('open-logs', node)"
-        class="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/70 hover:bg-zinc-800 border border-zinc-700/60 hover:border-zinc-600 text-xs font-medium text-zinc-200 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
+        class="min-w-0 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/70 hover:bg-zinc-800 border border-zinc-700/60 hover:border-zinc-600 text-xs font-medium text-zinc-200 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
       >
-        <Terminal class="w-3.5 h-3.5 text-emerald-400" />
-        <span>{{ t('node_btn_logs') }}</span>
+        <Terminal class="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+        <span class="truncate">{{ t('node_btn_logs') }}</span>
       </button>
 
       <!-- Reboot Button -->
       <button
         @click="emit('open-reboot', node)"
-        class="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/70 hover:bg-rose-950/60 border border-zinc-700/60 hover:border-rose-700/60 text-xs font-medium text-zinc-200 hover:text-rose-300 transition-all cursor-pointer shadow-sm active:scale-95 group/btn"
+        class="min-w-0 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/70 hover:bg-rose-950/60 border border-zinc-700/60 hover:border-rose-700/60 text-xs font-medium text-zinc-200 hover:text-rose-300 transition-all cursor-pointer shadow-sm active:scale-95 group/btn"
       >
-        <RotateCw class="w-3.5 h-3.5 text-zinc-400 group-hover/btn:text-rose-400 group-hover/btn:rotate-180 transition-transform duration-300" />
-        <span>{{ t('node_btn_reboot') }}</span>
+        <RotateCw class="w-3.5 h-3.5 text-zinc-400 group-hover/btn:text-rose-400 group-hover/btn:rotate-180 transition-transform duration-300 shrink-0" />
+        <span class="truncate">{{ t('node_btn_reboot') }}</span>
       </button>
     </div>
   </div>

@@ -235,6 +235,9 @@ const filteredLogs = computed(() => {
     @click.self="emit('close')"
   >
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="logs-modal-title"
       :class="[
         'w-full flex flex-col rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl shadow-black overflow-hidden font-mono transition-all duration-300',
         isFullscreen ? 'h-full max-w-full rounded-none' : 'max-w-5xl h-[85vh]',
@@ -248,7 +251,7 @@ const filteredLogs = computed(() => {
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h2 class="text-sm font-bold text-zinc-100">{{ t('logs_title') }}</h2>
+              <h2 id="logs-modal-title" class="text-sm font-bold text-zinc-100">{{ t('logs_title') }}</h2>
               <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 font-mono">
                 {{ node.hostname }} ({{ node.ip }})
               </span>

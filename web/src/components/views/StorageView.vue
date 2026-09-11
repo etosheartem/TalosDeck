@@ -107,7 +107,7 @@ const filteredNodeDisks = computed(() => {
             <span>{{ t('storage_title') }}</span>
           </h2>
           <span class="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-zinc-800 text-cyan-300 border border-zinc-700/60">
-            {{ totalDisksCount }} drives
+            {{ totalDisksCount }} {{ t('storage_drives_suffix') }}
           </span>
         </div>
         <p class="text-xs text-zinc-400 mt-1">

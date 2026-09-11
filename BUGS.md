@@ -9,11 +9,11 @@
 
 | Статус | Critical | High | Medium | Low | Всего |
 |:---|---:|---:|---:|---:|---:|
-| ⬜ Открыто | 4 | 13 | 15 | 0 | **32** |
-| ✅ Исправлено | 18 | 35 | 56 | 34 | **143** |
+| ⬜ Открыто | 4 | 13 | 1 | 0 | **18** |
+| ✅ Исправлено | 18 | 35 | 70 | 34 | **157** |
 | **Итого** | **22** | **48** | **71** | **34** | **175** |
 
-**Прогресс:** 143 из 175 исправлено (82%), 32 открыто.
+**Прогресс:** 157 из 175 исправлено (90%), 18 открыто.
 
 ## Открытые задачи
 
@@ -37,8 +37,6 @@
 | ⬜ OPEN | 🟠 High | `UI-08` | Frontend UX/UI | 1 | Тихий отказ Maintenance Mode при 0 нод |
 | ⬜ OPEN | 🟠 High | `UI-09` | Frontend UX/UI | 1 | Отсутствие валидации имени ноды (RFC 1123) в AddWorkerModal |
 | ⬜ OPEN | 🟡 Medium | `OPS-09` | DevOps / CI | 1 | 42 неиспользуемых («мертвых») ключа в словарях i18n |
-| ⬜ OPEN | 🟡 Medium | `OPS-10` | DevOps / CI | 1 | Хардкод строк в обход интернационализации `t(...)` |
-| ⬜ OPEN | 🟡 Medium | `UI-10-22` | Frontend UX/UI | 13 | Дополнительные дефекты верстки и доступности |
 
 ## Прогресс по подсистемам
 
@@ -52,8 +50,8 @@
 | **Alerts** | 15 | 0 | 15 | 100% |
 | **REST API** | 19 | 0 | 19 | 100% |
 | **Frontend state** | 17 | 0 | 17 | 100% |
-| **Frontend UX/UI** | 8 | 22 | 30 | 27% |
-| **DevOps / CI** | 12 | 10 | 22 | 55% |
+| **Frontend UX/UI** | 21 | 9 | 30 | 70% |
+| **DevOps / CI** | 13 | 9 | 22 | 59% |
 
 ## Как обновлять трекер
 
@@ -784,6 +782,11 @@
 - Низкий контраст номеров строк в YAML-редакторе (2.9:1 при норме WCAG 4.5:1).
 - Поля ввода не связаны со своими `<label>` (отсутствуют `for` и `id`).
 - Отсутствие Focus Trap и ARIA-атрибутов в модальных диалогах.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`web/src/components/NodeCard.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/NodeCard.vue) кнопки действий получили `min-w-0` и `truncate` на подписи (иконки — `shrink-0`), из-за чего на экранах <375px текст аккуратно обрезается вместо разрушения сетки `grid-cols-3`. В [`web/src/components/Toast.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/Toast.vue) добавлены `left-5` и `sm:left-auto` — на узких дисплеях тост растягивается между отступами и не вылезает за левый край, на `sm+` экранах поведение прежнее (прижат к правому краю). В [`web/src/components/views/MachineConfigView.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/MachineConfigView.vue) цвет номеров строк YAML-редактора изменен с `text-zinc-600` на `text-zinc-400`, контраст на фоне `bg-zinc-950` теперь соответствует WCAG AA (≥4.5:1).
+  Во всех формах (`AddWorkerModal`, `LoginModal`, `OperationsView`) добавлены парные атрибуты `id`/`for`, связывающие `<label>` с соответствующими `<input>`/`<select>` (имя и VMID воркера, слайдеры CPU/RAM/диска, пароль входа, Bot Token и Chat ID Telegram, минимальный уровень алертов, выбор целевой ноды для Maintenance Mode).
+  Во всех модальных диалогах (`AddWorkerModal`, `LoginModal`, `LogsModal`, `RebootModal`, `ServicesModal`, диалог Rolling Reboot в `OperationsView`) панель диалога снабжена `role="dialog"`, `aria-modal="true"` и `aria-labelledby`, указывающим на заголовок окна. Полноценный keyboard focus trap (циклический обход по Tab внутри диалога) не реализован — это более объемная задача, требующая отдельного composable/directive; отслеживается как техдолг для последующей доработки вместе с `UI-01`/`UI-02`.
 
 ### [LOW] UI-23-30: Косметические недочеты
 - Кнопки закрытия без `aria-label`.
@@ -835,6 +838,9 @@
 ### [MEDIUM] OPS-10: Хардкод строк в обход интернационализации `t(...)`
 - **Файлы:** `Sidebar.vue:125`, `NodesView.vue:245,290`, `StorageView.vue:111`, `ServicesModal.vue:100`
 - **Описание:** Смешивание русских и английских надписей в интерфейсе при смене языка.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:**
+  В [`web/src/i18n/index.ts`](file:///home/artem/laba-kuber/TalosDeck/web/src/i18n/index.ts) добавлены ключи `sidebar_nav`, `nodes_empty_title`, `nodes_empty_hint`, `services_subtitle`, `storage_drives_suffix` для обоих языков (`ru`/`en`). Хардкод заменен на `t(...)` в [`Sidebar.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/Sidebar.vue) («Навигация»), [`NodesView.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/NodesView.vue) (метка фильтра «Workers» переиспользует ключ `stat_workers`; сообщения Empty State), [`StorageView.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/StorageView.vue) (суффикс «drives» в счетчике дисков) и [`ServicesModal.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/ServicesModal.vue) (подзаголовок «Talos Linux System & Kubernetes Daemons»). Сборка `vue-tsc -b && vite build` проходит без ошибок типов.
 
 ### [LOW] OPS-11-22: Дополнительные недочеты инфраструктуры
 - Плавающий тег раннера `bitnami/kubectl:latest`.

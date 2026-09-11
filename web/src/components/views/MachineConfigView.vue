@@ -268,7 +268,7 @@ const jumpToSection = (section: string) => {
           ]"
         >
           <!-- Line Number Gutter -->
-          <span class="w-8 text-right text-zinc-600 select-none font-mono text-[11px] shrink-0">
+          <span class="w-8 text-right text-zinc-400 select-none font-mono text-[11px] shrink-0">
             {{ idx + 1 }}
           </span>
 

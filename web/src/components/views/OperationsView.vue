@@ -555,7 +555,7 @@ const startRollingReboot = async () => {
             <!-- Bot Token -->
             <div class="sm:col-span-2 space-y-1.5">
               <div class="flex items-center justify-between">
-                <label class="text-xs font-semibold text-zinc-300">
+                <label for="alerts-bot-token" class="text-xs font-semibold text-zinc-300">
                   {{ t('alerts_bot_token') }}
                 </label>
                 <span class="text-[11px] font-mono text-zinc-500">
@@ -564,6 +564,7 @@ const startRollingReboot = async () => {
               </div>
               <div class="relative">
                 <input
+                  id="alerts-bot-token"
                   :type="showBotToken ? 'text' : 'password'"
                   v-model="botToken"
                   :placeholder="alertsConfig?.bot_token_masked ? (showBotToken ? alertsConfig.bot_token_masked : '••••••••••••••••••••') : t('alerts_bot_token_placeholder')"
@@ -583,10 +584,11 @@ const startRollingReboot = async () => {
 
             <!-- Chat ID -->
             <div class="space-y-1.5">
-              <label class="text-xs font-semibold text-zinc-300">
+              <label for="alerts-chat-id" class="text-xs font-semibold text-zinc-300">
                 {{ t('alerts_chat_id') }}
               </label>
               <input
+                id="alerts-chat-id"
                 type="text"
                 v-model="chatID"
                 :placeholder="alertsConfig?.chat_id_masked || '-1001234567890'"
@@ -599,10 +601,11 @@ const startRollingReboot = async () => {
 
             <!-- Minimum Level -->
             <div class="space-y-1.5">
-              <label class="text-xs font-semibold text-zinc-300">
+              <label for="alerts-min-level" class="text-xs font-semibold text-zinc-300">
                 {{ t('alerts_min_level') }}
               </label>
               <select
+                id="alerts-min-level"
                 v-model="minLevel"
                 class="w-full bg-zinc-950 border border-zinc-800 focus:border-sky-500 rounded-xl px-3 py-2 text-xs text-zinc-100 focus:outline-none transition-colors cursor-pointer"
               >
@@ -784,10 +787,11 @@ const startRollingReboot = async () => {
 
             <!-- Node Selector -->
             <div class="pt-2">
-              <label class="text-[11px] text-zinc-400 block mb-1 font-medium">
+              <label for="ops-target-node" class="text-[11px] text-zinc-400 block mb-1 font-medium">
                 {{ t('ops_select_node_target') }}:
               </label>
               <select
+                id="ops-target-node"
                 v-model="targetNodeIP"
                 class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 font-mono focus:outline-none focus:border-amber-500/70 cursor-pointer"
               >
@@ -1043,7 +1047,12 @@ const startRollingReboot = async () => {
       v-if="isRollingOpen"
       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
     >
-      <div class="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-5 relative">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rolling-reboot-modal-title"
+        class="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-5 relative"
+      >
         <!-- Close Button -->
         <button
           v-if="!rollingInProgress"
@@ -1060,7 +1069,7 @@ const startRollingReboot = async () => {
             <RotateCw class="w-5 h-5" />
           </div>
           <div>
-            <h3 class="text-base font-bold text-zinc-100">{{ t('ops_rolling_confirm_title') }}</h3>
+            <h3 id="rolling-reboot-modal-title" class="text-base font-bold text-zinc-100">{{ t('ops_rolling_confirm_title') }}</h3>
             <p class="text-xs text-zinc-400 mt-0.5">Cluster Rolling Upgrade & Reboot</p>
           </div>
         </div>

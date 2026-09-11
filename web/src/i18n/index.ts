@@ -33,6 +33,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     auto_refresh_5s: '5 сек',
     auto_refresh_10s: '10 сек',
     auto_refresh_30s: '30 сек',
+    sidebar_nav: 'Навигация',
 
     // Stats
     stat_total_nodes: 'Всего нод',
@@ -57,9 +58,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     node_btn_services: 'Службы',
     node_btn_logs: 'Dmesg / Логи',
     node_btn_reboot: 'Перезагрузка',
+    nodes_empty_title: 'Ноды не найдены по заданным критериям',
+    nodes_empty_hint: 'Попробуйте сбросить фильтры или изменить поисковый запрос',
 
     // Services Modal
     services_title: 'Системные службы ноды',
+    services_subtitle: 'Системные и Kubernetes-службы Talos Linux',
     services_search: 'Поиск по службам...',
     services_col_name: 'Служба',
     services_col_state: 'Состояние',
@@ -143,6 +147,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     storage_part_mount: 'Точка монтирования',
     storage_part_used: 'Занято',
     storage_no_disks: 'Диски не найдены для выбранной ноды',
+    storage_drives_suffix: 'дисков',
 
     // MachineConfig View
     config_title: 'Конфигурация ноды (MachineConfig)',
@@ -347,6 +352,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     auto_refresh_5s: '5s',
     auto_refresh_10s: '10s',
     auto_refresh_30s: '30s',
+    sidebar_nav: 'Navigation',
 
     // Stats
     stat_total_nodes: 'Total Nodes',
@@ -371,9 +377,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     node_btn_services: 'Services',
     node_btn_logs: 'Live Logs',
     node_btn_reboot: 'Reboot',
+    nodes_empty_title: 'No nodes found matching criteria',
+    nodes_empty_hint: 'Try clearing filters or search queries',
 
     // Services Modal
     services_title: 'Node System Services',
+    services_subtitle: 'Talos Linux System & Kubernetes Daemons',
     services_search: 'Search services...',
     services_col_name: 'Service',
     services_col_state: 'State',
@@ -457,6 +466,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     storage_part_mount: 'Mountpoint',
     storage_part_used: 'Used',
     storage_no_disks: 'No disks found for the selected node',
+    storage_drives_suffix: 'drives',
 
     // MachineConfig View
     config_title: 'Node MachineConfig',

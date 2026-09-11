@@ -81,6 +81,9 @@ const filteredServices = computed(() => {
     @click.self="emit('close')"
   >
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="services-modal-title"
       class="w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl shadow-black/80 overflow-hidden"
     >
       <!-- Header -->
@@ -91,13 +94,13 @@ const filteredServices = computed(() => {
           </div>
           <div>
             <h2 class="text-base font-bold text-zinc-100 flex items-center gap-2">
-              <span>{{ t('services_title') }}</span>
+              <span id="services-modal-title">{{ t('services_title') }}</span>
               <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 font-mono">
                 {{ node.hostname }} ({{ node.ip }})
               </span>
             </h2>
             <p class="text-xs text-zinc-400">
-              Talos Linux System & Kubernetes Daemons
+              {{ t('services_subtitle') }}
             </p>
           </div>
         </div>

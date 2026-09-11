@@ -223,6 +223,9 @@ const handleSubmit = async () => {
     @click.self="!isCreating && emit('close')"
   >
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-worker-modal-title"
       class="w-full max-w-2xl rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl shadow-cyan-950/20 overflow-hidden flex flex-col max-h-[92vh] my-auto"
     >
       <!-- Modal Header -->
@@ -233,7 +236,7 @@ const handleSubmit = async () => {
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h2 class="text-base font-bold text-zinc-100 tracking-tight">
+              <h2 id="add-worker-modal-title" class="text-base font-bold text-zinc-100 tracking-tight">
                 {{ t('add_worker_title') }}
               </h2>
               <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-950 border border-cyan-700/60 text-cyan-300">
@@ -469,12 +472,13 @@ const handleSubmit = async () => {
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <!-- Node Name -->
             <div class="space-y-1.5">
-              <label class="block text-xs font-semibold text-zinc-300">
+              <label for="worker-name" class="block text-xs font-semibold text-zinc-300">
                 {{ t('add_worker_name') }}
               </label>
               <div class="relative">
                 <Server class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
                 <input
+                  id="worker-name"
                   v-model="name"
                   type="text"
                   :placeholder="t('add_worker_name_placeholder')"
@@ -486,7 +490,7 @@ const handleSubmit = async () => {
             <!-- VMID -->
             <div class="space-y-1.5">
               <div class="flex items-center justify-between">
-                <label class="block text-xs font-semibold text-zinc-300">
+                <label for="worker-vmid" class="block text-xs font-semibold text-zinc-300">
                   {{ t('add_worker_vmid') }}
                 </label>
                 <span class="text-[10px] text-zinc-500 font-mono">
@@ -495,6 +499,7 @@ const handleSubmit = async () => {
               </div>
               <div class="flex items-center gap-2">
                 <input
+                  id="worker-vmid"
                   v-model.number="vmid"
                   type="number"
                   min="100"
@@ -542,7 +547,7 @@ const handleSubmit = async () => {
           <!-- Row 3: CPU Cores (1 - 4) -->
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <label class="block text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+              <label for="worker-cores" class="block text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                 <Cpu class="w-3.5 h-3.5 text-cyan-400" />
                 {{ t('add_worker_cores') }}
               </label>
@@ -570,6 +575,7 @@ const handleSubmit = async () => {
             </div>
 
             <input
+              id="worker-cores"
               v-model.number="cores"
               type="range"
               min="1"
@@ -582,7 +588,7 @@ const handleSubmit = async () => {
           <!-- Row 4: RAM (2 - 8 GB) -->
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <label class="block text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+              <label for="worker-ram" class="block text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                 <Layers class="w-3.5 h-3.5 text-indigo-400" />
                 {{ t('add_worker_ram') }}
               </label>
@@ -611,6 +617,7 @@ const handleSubmit = async () => {
             </div>
 
             <input
+              id="worker-ram"
               v-model.number="memoryGB"
               type="range"
               min="2"
@@ -623,7 +630,7 @@ const handleSubmit = async () => {
           <!-- Row 5: Disk Size (20 - 100 GB) -->
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <label class="block text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+              <label for="worker-disk" class="block text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                 <HardDrive class="w-3.5 h-3.5 text-fuchsia-400" />
                 {{ t('add_worker_disk') }}
               </label>
@@ -652,6 +659,7 @@ const handleSubmit = async () => {
             </div>
 
             <input
+              id="worker-disk"
               v-model.number="diskGB"
               type="range"
               min="20"
