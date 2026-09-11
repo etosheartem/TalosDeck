@@ -60,7 +60,7 @@ const diskPresets = [20, 30, 50, 80, 100]
 // Proxmox resource calculations
 const hostMemoryFreeGB = computed(() => {
   if (!proxmoxStatus.value?.status?.memory) return 16.0
-  const freeBytes = proxmoxStatus.value.status.memory.free || proxmoxStatus.value.status.memory.available || 0
+  const freeBytes = proxmoxStatus.value.status.memory.free ?? proxmoxStatus.value.status.memory.available ?? 0
   return Number((freeBytes / (1024 * 1024 * 1024)).toFixed(1))
 })
 
@@ -70,7 +70,7 @@ const hostMemoryTotalGB = computed(() => {
 })
 
 const hostMemoryUsedPercent = computed(() => {
-  return Math.round(proxmoxStatus.value?.status?.memory?.usagePercent || 50)
+  return Math.round(proxmoxStatus.value?.status?.memory?.usagePercent ?? 50)
 })
 
 const hostDiskFreeGB = computed(() => {
@@ -84,15 +84,15 @@ const hostDiskTotalGB = computed(() => {
 })
 
 const hostDiskUsedPercent = computed(() => {
-  return Math.round(proxmoxStatus.value?.status?.storage?.usagePercent || 30)
+  return Math.round(proxmoxStatus.value?.status?.storage?.usagePercent ?? 30)
 })
 
 const hostCpuUsage = computed(() => {
-  return Number((proxmoxStatus.value?.status?.cpuUsagePercent || 12.4).toFixed(1))
+  return Number((proxmoxStatus.value?.status?.cpuUsagePercent ?? 12.4).toFixed(1))
 })
 
 const hostCpuCores = computed(() => {
-  return proxmoxStatus.value?.status?.cpuCores || 8
+  return proxmoxStatus.value?.status?.cpuCores ?? 8
 })
 
 const isHostConfigured = computed(() => {

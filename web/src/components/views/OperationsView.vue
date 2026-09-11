@@ -399,7 +399,7 @@ const startRollingReboot = async () => {
 
         <div class="flex items-center gap-2 text-xs font-mono">
           <div class="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-400 border border-zinc-800">
-            Raft Term: <span class="text-zinc-200 font-bold">{{ etcd?.raftTerm || 4 }}</span>
+            Raft Term: <span class="text-zinc-200 font-bold">{{ etcd?.raftTerm ?? 0 }}</span>
           </div>
           <div class="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-400 border border-zinc-800">
             DB Size: <span class="text-cyan-300 font-bold">{{ etcd?.totalDbSize || '24.8 MB' }}</span>
@@ -524,12 +524,12 @@ const startRollingReboot = async () => {
           <div
             :class="[
               'px-2.5 py-1 rounded-lg border font-bold',
-              (alertsConfig?.active_alerts_count || alertsConfig?.activeAlertsCount || 0) > 0
+              (alertsConfig?.active_alerts_count ?? alertsConfig?.activeAlertsCount ?? 0) > 0
                 ? 'bg-rose-950/60 text-rose-300 border-rose-800/60'
                 : 'bg-zinc-950 text-emerald-400 border-zinc-800',
             ]"
           >
-            {{ alertsConfig?.active_alerts_count || alertsConfig?.activeAlertsCount || 0 }} {{ t('alerts_active_issues') }}
+            {{ alertsConfig?.active_alerts_count ?? alertsConfig?.activeAlertsCount ?? 0 }} {{ t('alerts_active_issues') }}
           </div>
           <button
             @click="loadAlertsConfig"
@@ -622,7 +622,7 @@ const startRollingReboot = async () => {
               </label>
             </div>
             <span class="text-[11px] font-mono text-zinc-500">
-              {{ t('alerts_check_interval') }}: {{ alertsConfig?.check_interval_seconds || 30 }}s
+              {{ t('alerts_check_interval') }}: {{ alertsConfig?.check_interval_seconds ?? 30 }}s
             </span>
           </div>
 

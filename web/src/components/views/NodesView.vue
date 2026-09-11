@@ -57,12 +57,12 @@ const isProxmoxConfigured = computed(() => {
 const pveHostFreeRAM = computed(() => {
   const mem = proxmox.value?.status?.memory
   if (!mem) return '16.0 GB'
-  const freeBytes = mem.available || mem.free || 0
+  const freeBytes = mem.available ?? mem.free ?? 0
   return `${(freeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 })
 
 const pveHostRAMPercent = computed(() => {
-  return Math.round(proxmox.value?.status?.memory?.usagePercent || 50)
+  return Math.round(proxmox.value?.status?.memory?.usagePercent ?? 50)
 })
 
 const pveHostFreeDisk = computed(() => {
@@ -72,7 +72,7 @@ const pveHostFreeDisk = computed(() => {
 })
 
 const pveHostDiskPercent = computed(() => {
-  return Math.round(proxmox.value?.status?.storage?.usagePercent || 30)
+  return Math.round(proxmox.value?.status?.storage?.usagePercent ?? 30)
 })
 
 const pveHostCPU = computed(() => {

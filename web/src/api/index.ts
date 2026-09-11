@@ -23,6 +23,21 @@ import type {
 
 export type { AuthResponse, MeResponse, UserInfo, AuditLogEvent }
 
+const fetchWithTimeout = async (
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = 15000,
+): Promise<Response> => {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 const responseError = async (res: Response, fallback: string): Promise<Error> => {
   if (res.status === 401) {
     localStorage.removeItem('talosdeck_token')
@@ -90,9 +105,15 @@ const MOCK_NODES: NodeOverview[] = [
 ]
 
 export const fetchClusterInfo = async (nodes: NodeOverview[]): Promise<ClusterInfo> => {
-  const readyCount = nodes.filter((n) => n.ready).length
-  const cpCount = nodes.filter((n) => n.role === 'controlplane').length
-  const workerCount = nodes.filter((n) => n.role === 'worker').length
+  try {
+    const res = await fetchWithTimeout('/api/cluster')
+    if (res.ok) return await res.json()
+  } catch (err) {
+    console.warn('Endpoint /api/cluster not reachable, deriving cluster info from nodes:', err)
+  }
+
+  const readyCount = nodes.filter((node) => node.ready).length
+  const controlPlaneCount = nodes.filter((node) => node.role === 'controlplane').length
 
   return {
     name: 'lab-k8s',
@@ -102,18 +123,14 @@ export const fetchClusterInfo = async (nodes: NodeOverview[]): Promise<ClusterIn
     endpoint: 'https://10.42.0.110:6443',
     totalNodes: nodes.length,
     readyNodes: readyCount,
-    controlPlaneCount: cpCount,
-    workerCount: workerCount,
+    controlPlaneCount,
+    workerCount: nodes.filter((node) => node.role === 'worker').length,
   }
 }
 
 export const fetchNodes = async (): Promise<{ nodes: NodeOverview[]; isMock: boolean }> => {
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
-
-    const res = await fetch('/api/nodes', { signal: controller.signal })
-    clearTimeout(timeoutId)
+    const res = await fetchWithTimeout('/api/nodes')
 
     if (!res.ok) {
       throw new Error(`HTTP error ${res.status}`)
@@ -153,11 +170,7 @@ export const fetchNodes = async (): Promise<{ nodes: NodeOverview[]; isMock: boo
 
 export const fetchNodeServices = async (ip: string, isControlPlane: boolean): Promise<TalosService[]> => {
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
-
-    const res = await fetch(`/api/nodes/${ip}/services`, { signal: controller.signal })
-    clearTimeout(timeoutId)
+    const res = await fetchWithTimeout(`/api/nodes/${ip}/services`)
 
     if (res.ok) {
       const data = await res.json()
@@ -252,10 +265,10 @@ export const fetchNodeServices = async (ip: string, isControlPlane: boolean): Pr
 
 export const rebootNode = async (ip: string): Promise<{ success: boolean; message?: string }> => {
   try {
-    const res = await fetch(`/api/nodes/${ip}/reboot`, {
+    const res = await fetchWithTimeout(`/api/nodes/${ip}/reboot`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    })
+    }, 15000)
     if (!res.ok) {
 	  throw await responseError(res, `Failed to reboot node ${ip}`)
     }
@@ -485,10 +498,7 @@ export const MOCK_DISKS_MAP: Record<string, PhysicalDisk[]> = {
 
 export const fetchNodeDisks = async (nodeIP: string): Promise<PhysicalDisk[]> => {
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
-    const res = await fetch(`/api/nodes/${nodeIP}/disks`, { signal: controller.signal })
-    clearTimeout(timeoutId)
+    const res = await fetchWithTimeout(`/api/nodes/${nodeIP}/disks`)
     if (res.ok) {
       const data = await res.json()
       if (Array.isArray(data) && data.length > 0) {
@@ -622,13 +632,9 @@ export const fetchNodeConfig = async (
   isCP = false,
 ): Promise<MachineConfigData> => {
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
-    const res = await fetch(`/api/nodes/${nodeIP}/config`, {
-      signal: controller.signal,
+    const res = await fetchWithTimeout(`/api/nodes/${nodeIP}/config`, {
       headers: { ...getAuthHeaders() },
     })
-    clearTimeout(timeoutId)
     if (res.ok) {
       const data = await res.json()
       if (data && typeof data.configYaml === 'string') {
@@ -684,10 +690,7 @@ export const MOCK_ETCD_HEALTH: EtcdClusterHealth = {
 
 export const fetchEtcdHealth = async (): Promise<EtcdClusterHealth> => {
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
-    const res = await fetch('/api/cluster/etcd', { signal: controller.signal })
-    clearTimeout(timeoutId)
+    const res = await fetchWithTimeout('/api/cluster/etcd')
     if (res.ok) {
       const data = await res.json()
       if (data && data.members) {
@@ -961,10 +964,8 @@ export const MOCK_PODS: K8sPod[] = [
 ]
 
 export const fetchK8sPods = async (): Promise<K8sPod[]> => {
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 10000)
   try {
-    const res = await fetch('/api/k8s/pods', { signal: controller.signal })
+    const res = await fetchWithTimeout('/api/k8s/pods')
     if (res.ok) {
       const data = await res.json()
       if (Array.isArray(data)) {
@@ -978,8 +979,6 @@ export const fetchK8sPods = async (): Promise<K8sPod[]> => {
     }
   } catch (err) {
     console.warn('Endpoint /api/k8s/pods not reachable, using fallback:', err)
-  } finally {
-    clearTimeout(timeoutId)
   }
 
   return MOCK_PODS
@@ -1042,11 +1041,11 @@ export const toggleMaintenanceMode = async (
   enable: boolean,
 ): Promise<{ success: boolean; message: string }> => {
   try {
-    const res = await fetch(`/api/nodes/${nodeIP}/maintenance`, {
+    const res = await fetchWithTimeout(`/api/nodes/${nodeIP}/maintenance`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ enable }),
-    })
+    }, 15000)
     if (res.ok) {
       const data = await res.json()
       return { success: true, message: data.message || 'Mode updated' }
@@ -1091,10 +1090,7 @@ export const MOCK_PROXMOX_STATUS: ProxmoxStatusResponse = {
 
 export const fetchProxmoxStatus = async (): Promise<ProxmoxStatusResponse> => {
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 4000)
-    const res = await fetch('/api/proxmox/status', { signal: controller.signal })
-    clearTimeout(timeoutId)
+    const res = await fetchWithTimeout('/api/proxmox/status')
     if (res.ok) {
       const data = await res.json()
       return data
@@ -1108,10 +1104,7 @@ export const fetchProxmoxStatus = async (): Promise<ProxmoxStatusResponse> => {
 
 export const fetchNextVMID = async (): Promise<number> => {
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
-    const res = await fetch('/api/proxmox/next-vmid', { signal: controller.signal })
-    clearTimeout(timeoutId)
+    const res = await fetchWithTimeout('/api/proxmox/next-vmid')
     if (res.ok) {
       const data = await res.json()
       if (typeof data.vmid === 'number') {
@@ -1128,15 +1121,12 @@ export const fetchNextVMID = async (): Promise<number> => {
 export const createProxmoxWorker = async (
   params: CreateWorkerParams
 ): Promise<CreateWorkerResult> => {
-	const controller = new AbortController()
-	const timeoutId = setTimeout(() => controller.abort(), 120000) // creation can take up to 2m
   try {
-    const res = await fetch('/api/proxmox/worker', {
+    const res = await fetchWithTimeout('/api/proxmox/worker', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(params),
-      signal: controller.signal,
-    })
+    }, 120000)
     if (res.ok) {
       const data = await res.json()
       return data
@@ -1147,17 +1137,15 @@ export const createProxmoxWorker = async (
       throw new Error('Timeout waiting for worker VM creation')
     }
 	throw err
-	} finally {
-	  clearTimeout(timeoutId)
   }
 }
 
 export const deleteProxmoxWorker = async (vmid: number): Promise<DeleteWorkerResult> => {
   try {
-    const res = await fetch(`/api/proxmox/worker/${vmid}`, {
+    const res = await fetchWithTimeout(`/api/proxmox/worker/${vmid}`, {
       method: 'DELETE',
 	  headers: { ...getAuthHeaders() },
-    })
+    }, 90000)
     if (res.ok) {
       const data = await res.json()
       return data
@@ -1210,13 +1198,9 @@ export const MOCK_ALERTS_CONFIG: AlertsConfig = {
 
 export const fetchAlertsConfig = async (): Promise<AlertsConfig> => {
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
-    const res = await fetch('/api/alerts/config', {
-      signal: controller.signal,
+    const res = await fetchWithTimeout('/api/alerts/config', {
       headers: { ...getAuthHeaders() },
     })
-    clearTimeout(timeoutId)
     if (res.ok) {
       const data = await res.json()
       return data
@@ -1234,7 +1218,7 @@ export const updateAlertsConfig = async (
   config: UpdateAlertsPayload
 ): Promise<{ success: boolean; message?: string; config?: AlertsConfig }> => {
   try {
-    const res = await fetch('/api/alerts/config', {
+    const res = await fetchWithTimeout('/api/alerts/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(config),
@@ -1254,11 +1238,11 @@ export const sendTestAlert = async (
   payload?: { bot_token?: string; chat_id?: string; message?: string }
 ): Promise<{ success: boolean; message: string }> => {
   try {
-    const res = await fetch('/api/alerts/test', {
+    const res = await fetchWithTimeout('/api/alerts/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(payload || {}),
-    })
+    }, 15000)
     const data = await res.json().catch(() => ({}))
     if (res.ok && data.success) {
       return { success: true, message: data.message || 'Test alert delivered successfully' }
@@ -1294,7 +1278,7 @@ export const login = async (
   password: string
 ): Promise<{ success: boolean; user?: UserInfo; error?: string }> => {
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetchWithTimeout('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
@@ -1318,7 +1302,7 @@ export const login = async (
 
 export const logout = async (): Promise<void> => {
   try {
-    await fetch('/api/auth/logout', {
+    await fetchWithTimeout('/api/auth/logout', {
       method: 'POST',
       headers: { ...getAuthHeaders() },
     })
@@ -1340,7 +1324,7 @@ export const getMe = async (): Promise<MeResponse> => {
   }
 
   try {
-    const res = await fetch('/api/auth/me', {
+    const res = await fetchWithTimeout('/api/auth/me', {
       headers: { ...getAuthHeaders() },
     })
     if (res.ok) {
@@ -1423,13 +1407,9 @@ export const fetchAuditLogs = async (
     if (action) params.set('action', action)
     if (search) params.set('search', search)
 
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
-    const res = await fetch(`/api/audit?${params.toString()}`, {
-      signal: controller.signal,
+    const res = await fetchWithTimeout(`/api/audit?${params.toString()}`, {
       headers: { ...getAuthHeaders() },
     })
-    clearTimeout(timeoutId)
     if (res.ok) {
       const data = await res.json()
       if (Array.isArray(data)) {
