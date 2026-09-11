@@ -1,125 +1,138 @@
-# TalosDeck: образ в GitHub Container Registry (GHCR) и запуск через Argo CD
+# 🚀 TalosDeck: Полное пошаговое руководство по установке через Argo CD с нуля
 
-Инструкция для текущего проекта, 12 сентября 2026. Команды выполняются вручную; Argo CD следит за манифестами в Git. Сборку образов Argo CD не выполняет.
+Данное руководство проверено на реальном кластере и описывает чистую установку **TalosDeck** с нуля в среде:
+- **Kubernetes**: v1.37.0 на Talos Linux v1.14.0 (ноды `10.42.0.110`, `10.42.0.111`, `10.42.0.112`)
+- **GitOps-контроллер**: Argo CD (веб-интерфейс `http://10.42.0.110:30080`)
+- **Git-репозиторий манифестов**: Локальный GitLab (`http://10.42.0.238:8080/root/talosdeck.git`)
+- **Реестр Docker-образов**: GitHub Container Registry (`ghcr.io/etosheartem/talosdeck:latest`)
 
-Путь поставки: **исходники → docker build → registry → новый тег в Git → Argo CD sync → Pod**.
+---
 
-## 1. Что нужно заранее
+## 🏗 Архитектура поставки
 
-- Работающий Kubernetes/Talos и уже установленный Argo CD в namespace `argocd`.
-- На рабочей машине: Docker с Buildx, kubectl, Git, OpenSSL, Argo CD CLI. Команды ниже рассчитаны на Bash: при необходимости сначала запусти `bash`.
-- `kubectl` подключён к кластеру, где будет запущена панель. Argo CD зарегистрировал этот же кластер.
-- Рабочие `talosconfig` и kubeconfig **управляемого** кластера. В этой инструкции панель разворачивается в нём же.
-- StorageClass с provisioner для PVC 20 GiB. Проверить: `kubectl get storageclass`. Если default-класса нет, ниже понадобится явно указать `storageClassName`.
-- Из Pod доступны адреса Talos API (`50000`) и Kubernetes API из kubeconfig (обычно `6443`). `127.0.0.1` и адрес локального port-forward в kubeconfig не подходят.
-- **Container Registry**: Используется **GitHub Container Registry (GHCR)**: `ghcr.io/etosheartem/talosdeck`. Для публикации нужен GitHub Personal Access Token (PAT) с правами `write:packages`. Если образ сделан публичным в настройках GitHub Package, Kubernetes скачивает его без секретов.
+```text
+[Исходный код TalosDeck]
+        │
+        ├── 1. docker build & push ───────────► [GitHub Container Registry (GHCR)]
+        │                                         (публичный образ talosdeck:latest)
+        │                                                         │
+        └── 2. git push (папка gitops/)                           │ 4. docker pull
+                    │                                             ▼
+                    ▼                                   ┌───────────────────┐
+         [Локальный GitLab]                             │  Кластер Talos    │
+     (10.42.0.238:8080/root/talosdeck)                  │  Namespace:       │
+                    ▲                                   │  talosdeck        │
+                    │ 3. опрос манифестов               │                   │
+                    │                                   │  [Pod: talosdeck] │
+         [Argo CD Controller] ─────────────────────────►│  [PVC: 20 GiB]   │
+        (http://10.42.0.110:30080)        Sync          └───────────────────┘
+```
 
+---
+
+## Предварительные требования
+
+Перед началом убедитесь, что в кластере работают базовые компоненты:
+
+1. **StorageClass `local-path`**:
+   Talos Linux имеет неизменяемую rootfs, поэтому стандартный каталог `/opt` недоступен. Хранилище должно быть установлено с путями в `/var/local-path-provisioner`:
+   ```bash
+   kubectl --kubeconfig=/home/artem/laba-kuber/kubeconfig apply -f /home/artem/laba-kuber/platform-services/storage/local-path-storage.yaml
+   ```
+   Проверка: `kubectl get sc` (должен быть `local-path (default)`).
+
+2. **Argo CD**:
+   Запущен в пространстве имён `argocd`. Доступен по адресу `http://10.42.0.110:30080`.
+
+---
+
+## Шаг 1. Создание namespace и секретов
+
+Для работы панели управления требуются административные сертификаты Talos API, kubeconfig и переменные рантайма (JWT и пароль администратора).
+
+Выполните команды в терминале:
+
+```bash
+KUBECONFIG_PATH="/home/artem/laba-kuber/kubeconfig"
+TALOSCONFIG_PATH="/home/artem/laba-kuber/cluster-config/talosconfig"
+
+# 1. Создаем namespace
+kubectl --kubeconfig=$KUBECONFIG_PATH create namespace talosdeck --dry-run=client -o yaml | kubectl apply -f -
+
+# 2. Секрет с конфигурацией Talos (mTLS сертификаты нод)
+kubectl --kubeconfig=$KUBECONFIG_PATH -n talosdeck create secret generic talosdeck-config \
+  --from-file=talosconfig="$TALOSCONFIG_PATH" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# 3. Секрет с kubeconfig (доступ панели к Kubernetes API)
+kubectl --kubeconfig=$KUBECONFIG_PATH -n talosdeck create secret generic talosdeck-kubeconfig \
+  --from-file=kubeconfig="$KUBECONFIG_PATH" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# 4. Секрет с паролем администратора и ключом сессий JWT
+# (Укажите желаемый пароль вместо "admin")
+kubectl --kubeconfig=$KUBECONFIG_PATH -n talosdeck create secret generic talosdeck-runtime \
+  --from-literal=TALOSDECK_ADMIN_PASSWORD="admin" \
+  --from-literal=TALOSDECK_JWT_SECRET="$(openssl rand -hex 32)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Проверьте созданные секреты:
+```bash
+kubectl --kubeconfig=$KUBECONFIG_PATH -n talosdeck get secrets
+# Ожидаемый вывод:
+# talosdeck-config       Opaque   1
+# talosdeck-kubeconfig   Opaque   1
+# talosdeck-runtime      Opaque   2
+```
+
+---
+
+## Шаг 2. Сборка и публикация образа в GHCR
+
+Образ собирается через Docker Buildx под архитектуру нод кластера (`linux/amd64`) со встроенным фронтендом.
+
+### 1. Авторизация в GitHub Container Registry:
+```bash
+docker login ghcr.io -u etosheartem
+```
+*(При появлении запроса `Password:` вставьте ваш GitHub Personal Access Token `ghp_...` с правом `write:packages`)*.
+
+### 2. Сборка и push:
 ```bash
 cd /home/artem/laba-kuber/TalosDeck
 
-git branch --show-current
-git status --short
-kubectl config current-context
-kubectl get nodes -o wide
-kubectl get storageclass
-kubectl -n argocd get deployments
-
-export TD_REGISTRY='ghcr.io'
-export TD_IMAGE='ghcr.io/etosheartem/talosdeck'
-export TD_TAG="git-$(git rev-parse --short=12 HEAD)"
-export TD_TALOSCONFIG='/home/artem/laba-kuber/cluster-config/talosconfig'
-export TD_KUBECONFIG='/home/artem/laba-kuber/kubeconfig'
-```
-
-## 2. Собрать и залить образ в GHCR
-
-Для публикации в GHCR авторизуйтесь через `docker login` с вашим GitHub логином и Personal Access Token (classic) с правами `write:packages`:
-
-```bash
-read -r -p 'GitHub username: ' TD_PUSH_USER
-read -r -s -p 'GitHub Personal Access Token (write:packages): ' TD_PUSH_TOKEN
-printf '\n'
-printf '%s' "$TD_PUSH_TOKEN" | docker login ghcr.io \
-  --username "$TD_PUSH_USER" --password-stdin
-unset TD_PUSH_TOKEN
-
-# Сборка под архитектуру x86_64 нод кластера:
 docker buildx build --platform linux/amd64 \
-  --tag "${TD_IMAGE}:${TD_TAG}" \
-  --tag "${TD_IMAGE}:latest" \
+  --tag ghcr.io/etosheartem/talosdeck:v0.1.0 \
+  --tag ghcr.io/etosheartem/talosdeck:latest \
   --push .
-
-docker buildx imagetools inspect "${TD_IMAGE}:${TD_TAG}"
 ```
 
-Dockerfile сам собирает frontend и встраивает его в Go-бинарник; отдельно запускать Vite на сервере не требуется. Архитектуру нод можно посмотреть так:
+### 3. Важно: сделать пакет публичным (Public)
+1. Откройте в браузеру страницу пакета:  
+   👉 **[https://github.com/users/etosheartem/packages/container/package/talosdeck](https://github.com/users/etosheartem/packages/container/package/talosdeck)**
+2. Внизу справа нажмите **Package settings**.
+3. В самом низу в блоке **Danger Zone** нажмите **Change package visibility** → выберите **Public**.
+*(Это позволит кластеру скачивать образ без создания секретов авторизации)*.
+
+---
+
+## Шаг 3. Подготовка GitOps-манифестов
+
+В репозитории проекта создаётся изолированная папка `gitops/talosdeck`, за которой будет следить Argo CD.
 
 ```bash
-kubectl get nodes -L kubernetes.io/arch
-```
-
-Для смешанного кластера нужен образ обеих архитектур: `--platform linux/amd64,linux/arm64` и Buildx builder с поддержкой обеих платформ. Не переиспользуй тег для другого содержимого.
-
-Если сборка падает на скачивании базового образа или Go toolchain, проверь доступность версий из Dockerfile и go.mod. Не понижай Go произвольно. В этой работе Docker-сборка и push не выполнялись.
-
-В build context не должно быть локальных секретов: текущий `.dockerignore` не исключает все их возможные имена. Файлы ниже создаются в `/tmp`, а конфиги берутся вне checkout.
-
-## 3. Создать namespace и секреты
-
-Секреты создаём отдельно от Git. Манифесты Application и Deployment содержат только их имена.
-
-```bash
-kubectl create namespace talosdeck --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl -n talosdeck create secret generic talosdeck-config \
-  --from-file=talosconfig="$TD_TALOSCONFIG" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# Встроить сертификаты и оставить только выбранный context.
-# Подходит kubeconfig с сертификатами/ключом или доступным в Pod токеном;
-# exec-плагины рабочей станции в контейнере не установлены.
-umask 077
-TD_SECRET_DIR=$(mktemp -d)
-kubectl --kubeconfig="$TD_KUBECONFIG" config view --raw --minify --flatten \
-  > "$TD_SECRET_DIR/kubeconfig"
-kubectl -n talosdeck create secret generic talosdeck-kubeconfig \
-  --from-file=kubeconfig="$TD_SECRET_DIR/kubeconfig" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# Задайте пароль администратора (замените на свой пароль):
-export TD_ADMIN_PASSWORD="ВашНадежныйПароль123!"
-
-printf 'TALOSDECK_ADMIN_PASSWORD=%s\n' "$TD_ADMIN_PASSWORD" > "$TD_SECRET_DIR/runtime.env"
-printf 'TALOSDECK_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" >> "$TD_SECRET_DIR/runtime.env"
-unset TD_ADMIN_PASSWORD
-
-kubectl -n talosdeck create secret generic talosdeck-runtime \
-  --from-env-file="$TD_SECRET_DIR/runtime.env" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# Секрет для скачивания из GHCR (если пакет в GitHub сделан Public, этот шаг можно пропустить):
-kubectl -n talosdeck create secret docker-registry talosdeck-registry \
-  --docker-server=ghcr.io \
-  --docker-username=etosheartem \
-  --docker-password="$TD_PUSH_TOKEN" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-rm -rf -- "$TD_SECRET_DIR"
-unset TD_SECRET_DIR
-kubectl -n talosdeck get secrets
-```
-
-Явный `KUBECONFIG` ниже нужен потому, что без него backend выберет in-cluster ServiceAccount, а базовый Deployment не имеет необходимых RBAC-разрешений. Используй учётные данные предназначенного для управления кластера: они определяют права всех Kubernetes-операций панели. Административный kubeconfig даёт широкие права; для ограниченной установки нужна отдельная учётная запись и проверенный набор RBAC под используемые функции.
-
-## 4. Подготовить каталог GitOps
-
-Создаём самостоятельный каталог с явным списком ресурсов. Argo CD будет читать только его. Namespace и секреты уже созданы; они не включены в приложение.
-
-```bash
+cd /home/artem/laba-kuber/TalosDeck
 mkdir -p gitops/talosdeck
-cp deploy/deployment.yaml deploy/service.yaml deploy/pvc.yaml gitops/talosdeck/
 
-cat > gitops/talosdeck/kustomization.yaml <<'YAML'
+# Копируем базовые шаблоны
+cp deploy/deployment.yaml deploy/service.yaml deploy/pvc.yaml gitops/talosdeck/
+```
+
+Создайте файл `gitops/talosdeck/kustomization.yaml`:
+
+```bash
+cat <<'EOF' > gitops/talosdeck/kustomization.yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: talosdeck
@@ -142,8 +155,6 @@ patches:
         template:
           spec:
             automountServiceAccountToken: false
-            imagePullSecrets:
-              - name: talosdeck-registry
             containers:
               - name: talosdeck
                 envFrom:
@@ -179,81 +190,31 @@ patches:
         name: talosdeck-data
         annotations:
           argocd.argoproj.io/sync-options: Prune=false,Delete=false
-YAML
-
-cat >> gitops/talosdeck/kustomization.yaml <<YAML
 images:
   - name: talosdeck
-    newName: ${TD_IMAGE}
-    newTag: "${TD_TAG}"
-YAML
-
-kubectl kustomize gitops/talosdeck > /tmp/talosdeck-rendered.yaml
-```
-
-Если нет default StorageClass, в `gitops/talosdeck/pvc.yaml` добавь под `spec` строку `storageClassName: ИМЯ_ТВОЕГО_КЛАССА`. Для существующего PVC смена класса требует отдельного переноса данных.
-
-`Recreate` предотвращает одновременную работу старого и нового Pod с одним каталогом данных; обновление будет с коротким простоем. PVC хранит аудит и резервные копии в `/app/data`. Аннотации сохраняют PVC при prune/удалении через Argo CD; прямое удаление namespace или PVC этим не предотвращается.
-
-Service здесь `ClusterIP`: первый доступ через port-forward. Для постоянного адреса подключи существующий Ingress/Gateway с TLS, backend `talosdeck:8080` и поддержкой WebSocket. Если нужен исходный NodePort `32000` в LAN, удали из kustomization только патч Service; это откроет HTTP на адресах нод.
-
-```bash
-git add gitops/talosdeck
-git commit -m "deploy: add TalosDeck Argo CD manifests"
-git push origin main
-```
-
-Каталог — копия базовых манифестов: дальнейшие изменения поставки вноси в `gitops/talosdeck`, иначе Argo CD их не увидит. [Как Argo CD обрабатывает Kustomize](https://argo-cd.readthedocs.io/en/stable/user-guide/kustomize/).
-
-## 5. Подключить GitHub к Argo CD
-
-Доступ к Git и скачивание образов — это разные вещи. Если ваш репозиторий на GitHub **публичный**, Argo CD клонирует его **без каких-либо настроек и секретов**!
-
-Если репозиторий GitHub **приватный**, добавьте его в Argo CD:
-
-### Через веб-интерфейс Argo CD:
-1. В UI Argo CD перейдите в **Settings → Repositories → Connect Repo**.
-2. Укажите:
-   - **Choose your connection method**: `VIA HTTPS`
-   - **Type**: `git`
-   - **Repository URL**: `https://github.com/etosheartem/TalosDeck.git`
-   - **Username**: `etosheartem`
-   - **Password**: ваш GitHub Personal Access Token (с правом `repo`)
-3. Нажмите **CONNECT** (статус должен стать `Successful`).
-
-### Либо через секрет Kubernetes:
-```bash
-kubectl apply -n argocd -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: repo-talosdeck-github
-  labels:
-    argocd.argoproj.io/secret-type: repository
-stringData:
-  type: git
-  url: https://github.com/etosheartem/TalosDeck.git
-  username: etosheartem
-  password: "ВАШ_GITHUB_PAT"
+    newName: ghcr.io/etosheartem/talosdeck
+    newTag: "latest"
 EOF
 ```
 
-## 6. Создать Application в Argo CD и синхронизировать
-
-### Что такое Application простыми словами:
-`Application` в Argo CD — это задача для GitOps. Вы просто говорите Argo CD:  
-> *«Следи за репозиторием `https://github.com/etosheartem/TalosDeck.git` (ветка `main`, папка `gitops/talosdeck`), и всё, что там написано, разверни в наш кластер в неймспейс `talosdeck`»*.
-
-Создать его можно **любым из двух способов**:
+Зафиксируйте манифесты в локальном GitLab:
+```bash
+git add gitops/talosdeck
+git commit -m "deploy: configure Argo CD Kustomize manifests"
+git push gitlab main
+```
 
 ---
 
-### Способ 1. Одной командой в терминале (Рекомендуется)
+## Шаг 4. Подключение к Argo CD и развертывание (`Application`)
 
-Выполните одну команду, которая создаст Application напрямую в Argo CD:
+### Почему используется адрес `10.42.0.238:8080`:
+Контейнер GitLab в Proxmox имеет внутренний IP **`10.42.0.238`**, находящийся в той же виртуальной сети моста `vmbr0`, что и ноды кластера. Обращение по внутреннему IP работает напрямую без проблем с NAT и не требует авторизации.
+
+Создайте приложение Argo CD одной командой:
 
 ```bash
-kubectl apply -n argocd -f - <<'EOF'
+kubectl --kubeconfig=/home/artem/laba-kuber/kubeconfig apply -n argocd -f - <<'EOF'
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -262,7 +223,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/etosheartem/TalosDeck.git
+    repoURL: http://10.42.0.238:8080/root/talosdeck.git
     targetRevision: main
     path: gitops/talosdeck
   destination:
@@ -274,115 +235,82 @@ spec:
 EOF
 ```
 
-*(Примечание: если манифесты запушены в локальный GitLab, а не GitHub, просто замените `repoURL` на `http://gitlab.lan:8080/root/talosdeck.git`)*.
-
 ---
 
-### Способ 2. Либо через веб-интерфейс Argo CD (кнопками):
-1. Откройте веб-интерфейс Argo CD: `http://10.42.0.110:30080`
-2. Нажмите синюю кнопку **+ NEW APP** (вверху слева).
-3. Заполните поля:
-   - **Application Name**: `talosdeck`
-   - **Project Name**: `default`
-   - **Sync Policy**: `Manual` (или `Automatic`)
-   - **Repository URL**: `https://github.com/etosheartem/TalosDeck.git`
-   - **Revision**: `main`
-   - **Path**: `gitops/talosdeck`
-   - **Cluster URL**: `https://kubernetes.default.svc`
-   - **Namespace**: `talosdeck`
-4. Нажмите **CREATE** вверху.
+## Шаг 5. Синхронизация (Sync)
 
----
+### Вариант 1. Через веб-интерфейс Argo CD:
+1. Откройте в браузере: 👉 **[http://10.42.0.110:30080](http://10.42.0.110:30080)**  
+   *(Логин: `admin`, пароль: получить командой `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo`)*.
+2. Нажмите на плитку приложения **`talosdeck`**.
+3. Вверху нажмите **SYNC** → подтвердите **SYNCHRONIZE**.
 
-### Первый запуск (Sync):
-1. На главной странице Argo CD появится карточка приложения **`talosdeck`** со статусом `OutOfSync` (желтый круг).
-2. Нажмите на карточку приложения, затем нажмите кнопку **SYNC** вверху и подтвердите: **SYNCHRONIZE**.
-3. Argo CD скачает манифесты из Git и создаст Deployment, Pod, Service и PVC.
-4. Через 10–20 секунд кружок станет зелёным: **`Synced`** и **`Healthy`**.
-
----
-
-## 7. Открыть панель TalosDeck в браузере
-
-После того как Argo CD засинхронизировал приложение, пробросьте порт на рабочую машину:
-
+### Вариант 2. Через терминал (CLI):
 ```bash
-kubectl -n talosdeck port-forward svc/talosdeck 8080:8080
+kubectl --kubeconfig=/home/artem/laba-kuber/kubeconfig patch application talosdeck -n argocd \
+  --type merge -p '{"operation": {"sync": {"prune": false}}}'
 ```
 
-1. Откройте в браузере: 👉 **`http://localhost:8080`**
-2. Введите:
+Через 10–15 секунд статус приложения станет:  
+✅ **`Synced`** / **`Healthy`**
+
+---
+
+## Шаг 6. Запуск и проверка работы панели
+
+### 1. Проверьте состояние ресурсов:
+```bash
+kubectl --kubeconfig=/home/artem/laba-kuber/kubeconfig -n talosdeck get pods,pvc,svc
+```
+Ожидаемый вывод:
+```text
+NAME                            READY   STATUS    RESTARTS   AGE
+pod/talosdeck-xxxxxxxxxx-xxxxx  1/1     Running   0          30s
+
+NAME                                   STATUS   VOLUME      CAPACITY   ACCESS MODES   STORAGECLASS
+persistentvolumeclaim/talosdeck-data   Bound    pvc-xxxxx   20Gi       RWO            local-path
+
+NAME                TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)
+service/talosdeck   ClusterIP   10.109.207.8     <none>        8080/TCP
+```
+
+### 2. Проброс порта и вход в систему:
+```bash
+kubectl --kubeconfig=/home/artem/laba-kuber/kubeconfig -n talosdeck port-forward svc/talosdeck 8080:8080
+```
+
+1. Откройте браузер: 👉 **[http://localhost:8080](http://localhost:8080)**
+2. Введите учетные данные:
    - **Логин**: `admin`
-   - **Пароль**: `admin` *(пароль, который мы записали в секрет `talosdeck-runtime`)*
-3. Вы попадёте в новый интерфейс оператора TalosDeck с 10 разделами!
+   - **Пароль**: `admin` *(или пароль, указанный вами на шаге 1 в `talosdeck-runtime`)*
 
-## 8. Обновления и откат
+Панель **TalosDeck Console UI** загрузится со всеми 10 разделами управления кластером!
 
-1. Закоммить новые исходники.
-2. Задай новый `TD_TAG` по Git SHA, собери и опубликуй образ командами шага 2.
-3. В `gitops/talosdeck/kustomization.yaml` замени `newTag` на опубликованный тег.
-4. Закоммить и запушь изменение манифеста в ветку `targetRevision`.
-5. Выполни Sync, дождись Healthy, проверь imageID и интерфейс.
+---
 
-**Один docker push не обновляет приложение.** Argo CD в этой схеме отслеживает Git-манифесты, а не новые теги registry.
+## 🔄 Как обновлять приложение в будущем
 
-Для отката верни предыдущий `newTag` коммитом и выполни Sync. Это откат приложения, не содержимого PVC; перед несовместимыми изменениями формата данных нужна отдельная копия данных.
+Благодаря связке Docker Build + GitOps обновление делается по простой схеме:
 
-После успешного первого запуска можно включить auto-sync, добавив в Application под `spec.syncPolicy`:
+1. Вы вносите изменения в код TalosDeck.
+2. Пересобираете и заливаете образ:
+   ```bash
+   docker buildx build --platform linux/amd64 --tag ghcr.io/etosheartem/talosdeck:latest --push .
+   ```
+3. Перезапускаете под в кластере:
+   ```bash
+   kubectl -n talosdeck rollout restart deployment/talosdeck
+   ```
+   *(либо коммитите новый тег в `gitops/talosdeck/kustomization.yaml`, и Argo CD обновляет под автоматически)*.
 
-```yaml
-automated:
-  prune: false
-  selfHeal: true
-```
+---
 
-После изменения Application снова выполни `kubectl apply -f gitops/talosdeck-application.yaml`: этот родительский манифест не управляется самим приложением. После слияния UI-ветки поменяй `targetRevision` на выбранную постоянную ветку и также примени Application.
+## 🛠 Устранение типичных неполадок
 
-При изменении Secret с переменными окружения нужен перезапуск Pod:
-
-```bash
-kubectl -n talosdeck rollout restart deployment/talosdeck
-```
-
-## 9. Необязательные интеграции
-
-Без Proxmox и Telegram основную панель можно запустить. Для настройки добавь ключи в `talosdeck-runtime` через защищённый env-файл и команду создания Secret из шага 3, сохраняя существующие пароль и JWT secret:
-
-| Ключ | Значение |
-|---|---|
-| `PROXMOX_URL` | Реальный HTTPS URL API Proxmox |
-| `PROXMOX_NODE` | Имя хоста Proxmox |
-| `PROXMOX_API_TOKEN` | API token в формате `user@realm!tokenid=secret` |
-| `PROXMOX_STORAGE` | Существующий storage для дисков ВМ |
-| `PROXMOX_ISO` | Реальный volume ID загруженного Talos ISO |
-| `PROXMOX_BRIDGE` | Существующий bridge, например `vmbr0` |
-| `PROXMOX_CA_CERT` | PEM доверенного CA; для многострочного значения используй отдельный Secret/файл и `PROXMOX_CA_FILE` с его mount |
-| `TELEGRAM_BOT_TOKEN` | Токен бота |
-| `TELEGRAM_CHAT_ID` | ID чата |
-
-После изменения Secret перезапусти Deployment. Значения по умолчанию Proxmox в коде относятся к конкретному стенду; не рассчитывай, что storage/ISO автоматически подходят твоему серверу.
-
-## 10. Если не запускается
-
-| Симптом | Что проверить |
-|---|---|
-| Argo CD не читает Git | Repository status в Argo CD, доступность GitHub, права токена (repo), точное совпадение repoURL и targetRevision: main |
-| `ImagePullBackOff` | Образ/тег реально опубликован, pull token имеет `read_registry`, Secret в namespace `talosdeck`, registry доступен нодам, CA доверен container runtime |
-| `no matching manifest` / `exec format error` | Архитектура образа соответствует ноде |
-| `CreateContainerConfigError` | Созданы все четыре Secret из шага 3, имена совпадают с патчем |
-| PVC `Pending` | StorageClass/provisioner, свободное место, topology и события PVC |
-| `CrashLoopBackOff` | `kubectl -n talosdeck logs deployment/talosdeck --previous`, talosconfig, сертификаты и доступ к Talos API |
-| Workloads возвращают `403` | Используется явно подключённый kubeconfig, его пользователь имеет нужные права; kubeconfig не содержит недоступного exec-плагина |
-| Ошибки подключения Kubernetes | Адрес server в kubeconfig доступен из Pod, CA/сертификаты действительны |
-| Старый интерфейс | Ветка сборки, newTag в Git, Sync, imageID; браузер открыт на нужном порту, а не на старом `make run` |
-| Логи WS обрываются через ingress | TLS/WSS, WebSocket proxy и timeout контроллера; сравни с port-forward |
-
-Для событий без вывода содержимого секретов:
-
-```bash
-kubectl -n talosdeck get events --sort-by=.lastTimestamp
-kubectl -n talosdeck describe deployment talosdeck
-kubectl -n talosdeck describe pvc talosdeck-data
-```
-
-Инструкция проверена по коду и локальному рендерингу Kustomize. Реальные push, подключение репозитория и sync в кластер в рамках её подготовки не выполнялись. Открытые дефекты приложения перечислены в [BUGS.md](BUGS.md); задачи релиза — в [TASKS.md](TASKS.md).
+| Проблема / Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **`401 Unauthorized` при pull** | Пакет в GHCR закрыт приватным доступом | Переключить видимость пакета в GitHub: **Package Settings → Danger Zone → Change visibility → Public** |
+| **`NotFound / tag not found`** | В `kustomization.yaml` указан тег, которого нет в GHCR | Указать существующий тег (например, `latest` или `v0.1.0`) в `newTag` |
+| **`Connection refused` к GitLab** | Запрос идёт через внешний IP с неработающим hairpin NAT | Использовать прямой внутренний адрес `http://10.42.0.238:8080/root/talosdeck.git` |
+| **PVC `Pending`** | Не установлен StorageClass по умолчанию | Установить `local-path-storage.yaml` и пометить namespace меткой `pod-security.kubernetes.io/enforce=privileged` |
+| **`CrashLoopBackOff`** | Неверный kubeconfig или talosconfig | Проверить логи: `kubectl -n talosdeck logs deployment/talosdeck --previous` |
