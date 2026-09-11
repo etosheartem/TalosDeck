@@ -1,0 +1,59 @@
+stages:
+  - build
+  - gitops
+
+variables:
+  DOCKER_IMAGE_NAME: "ghcr.io/${GHCR_USERNAME}/talosdeck"
+
+build-image:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /\[skip ci\]/'
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"ghcr.io\":{\"auth\":\"$(printf "%s:%s" "${GHCR_USERNAME}" "${GHCR_TOKEN}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+  script:
+    - echo "Building and pushing Docker image with Kaniko..."
+    - >-
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${DOCKER_IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
+      --destination "${DOCKER_IMAGE_NAME}:latest"
+      --cache=true
+
+update-gitops:
+  stage: gitops
+  image:
+    name: alpine:3.21
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /\[skip ci\]/'
+  needs:
+    - job: build-image
+  before_script:
+    - apk add --no-cache git
+    - git config --global --add safe.directory "${CI_PROJECT_DIR}"
+    - git config --global user.name "GitLab CI"
+    - git config --global user.email "ci@gitlab.lan"
+  script:
+    - echo "Updating GitOps manifest with new image tag ${CI_COMMIT_SHORT_SHA}..."
+    - REPO_URL="http://oauth2:${GITLAB_TOKEN}@gitlab.lan:8080/${CI_PROJECT_PATH}.git"
+    - git remote set-url origin "${REPO_URL}"
+    - git fetch origin main
+    - git checkout -B main origin/main
+    - sed -i -E "s/newTag: .*/newTag: \"${CI_COMMIT_SHORT_SHA}\"/" gitops/talosdeck/kustomization.yaml
+    - git diff gitops/talosdeck/kustomization.yaml
+    - |
+      if git diff --quiet gitops/talosdeck/kustomization.yaml; then
+        echo "GitOps manifest already up-to-date."
+      else
+        git add gitops/talosdeck/kustomization.yaml
+        git commit -m "ci(gitops): update talosdeck image tag to ${CI_COMMIT_SHORT_SHA} [skip ci]"
+        git pull origin main --rebase
+        git push origin main
+        echo "Successfully pushed updated GitOps tag to GitLab."
+      fi
