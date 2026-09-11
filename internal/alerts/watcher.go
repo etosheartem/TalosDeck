@@ -262,6 +262,26 @@ func (w *Watcher) GetNodeSnapshots() map[string]NodeStateSnapshot {
 	return result
 }
 
+// GetActiveAlertsCount returns the number of active alerts in the cluster (unhealthy nodes, high CPU, degraded etcd).
+func (w *Watcher) GetActiveAlertsCount() int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	count := 0
+	for _, n := range w.nodeStates {
+		if !n.Ready {
+			count++
+		}
+		if n.HighCPU {
+			count++
+		}
+	}
+	if w.lastEtcdHealthy != nil && !*w.lastEtcdHealthy {
+		count++
+	}
+	return count
+}
+
 func formatEtcdAlertDetails(status *talos.EtcdClusterStatus) string {
 	if status == nil {
 		return "No etcd status information available"

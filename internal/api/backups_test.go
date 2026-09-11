@@ -14,6 +14,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"talosdeck/internal/auth"
 	"talosdeck/internal/backup"
 	"talosdeck/internal/talos"
 )
@@ -168,10 +169,16 @@ func TestBackupAPILiveCreation(t *testing.T) {
 		t.Fatal("failed to setup server")
 	}
 
+	token, err := auth.NewAuthManagerFromEnv().GenerateToken("admin", "admin")
+	if err != nil {
+		t.Fatalf("failed to generate test auth token: %v", err)
+	}
+
 	// Trigger full cluster backup creation via POST /api/backups/create
 	reqBody := bytes.NewBufferString(`{"type": "etcd", "node": "10.42.0.110"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/backups/create", reqBody)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := app.Test(req, 60000) // 60s timeout
 	if err != nil {
@@ -196,6 +203,7 @@ func TestBackupAPILiveCreation(t *testing.T) {
 
 	// Clean up backup after test
 	delReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/backups/%s", result.Backup.ID), nil)
+	delReq.Header.Set("Authorization", "Bearer "+token)
 	delResp, delErr := app.Test(delReq)
 	if delErr == nil && delResp.StatusCode == http.StatusOK {
 		t.Logf("Cleaned up backup %s", result.Backup.ID)

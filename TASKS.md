@@ -14,8 +14,8 @@
 | **Phase 1** | Базовый MVP: mTLS, Ноды, Службы, dmesg, Docker, K8s Deploy | ✅ Завершено | `[█████████████████████████] 100%` |
 | **Phase 2** | Мультивкладочный UI, Storage/Disks, MachineConfig, Workloads | ✅ Завершено | `[█████████████████████████] 100%` |
 | **Phase 3** | Cluster Operations: etcd Backup, Full DR Archive, Maintenance | ✅ Завершено | `[█████████████████████████] 100%` |
-| **Phase 4** | Интеграция с Proxmox VE: Автосоздание ВМ и масштабирование | 🔄 В работе | `[████████████████████░░░░░] 80%` |
-| **Phase 5** | Production: Telegram-алерты, Health Watcher, SSO, Multi-Cluster | 🔄 В работе | `[████████████░░░░░░░░░░░░░] 50%` |
+| **Phase 4** | Интеграция с Proxmox VE: Автосоздание ВМ и масштабирование | ✅ Завершено | `[█████████████████████████] 100%` |
+| **Phase 5** | Production: Telegram-алерты, Health Watcher, JWT/RBAC, Аудит | ✅ Завершено | `[█████████████████████████] 100%` |
 
 ---
 
@@ -79,7 +79,7 @@
 
 ---
 
-## ☁️ Phase 4: Интеграция с Proxmox VE (Cloud Provider Lite) (В работе)
+## ☁️ Phase 4: Интеграция с Proxmox VE (Cloud Provider Lite) (Завершено)
 
 - [x] **Подключение к Proxmox VE API**:
   - [x] Настройка подключения к `192.168.88.169:8006` по API-токену и тикетам (Username/Password).
@@ -89,22 +89,28 @@
   - [x] Создание ВМ воркера (`CreateTalosWorker`: 2 vCPU, 3GB RAM, 30GB `local-lvm`, `vmbr0`, `data:iso/talos-v1.14.0-qemu-guest-agent.iso`, QEMU agent).
   - [x] Остановка и удаление ВМ (`DeleteWorker`: graceful stop + purge storage disks).
   - [x] Эндпоинты Fiber API: `GET /api/proxmox/status`, `POST /api/proxmox/worker`, `DELETE /api/proxmox/worker/:vmid`, `GET /api/proxmox/next-vmid`.
-- [ ] **Мастер добавления воркера в Web UI (Scale-Out Wizard)**:
-  - [ ] Карточка статуса ресурсов Proxmox в интерфейсе TalosDeck.
-  - [ ] Диалоговое окно быстрого масштабирования нод кластера.
+- [x] **Мастер добавления воркера в Web UI (Scale-Out Wizard)**:
+  - [x] Карточка статуса ресурсов Proxmox VE в `NodesView.vue` (хост, CPU, доступная RAM, емкость дисков).
+  - [x] Диалоговое окно быстрого масштабирования нод кластера (`AddWorkerModal.vue`).
+  - [x] Автоподстановка свободного VMID, валидация полей, 4-шаговый интерактивный таймлайн создания ВМ.
 
 ---
 
-## 🛡️ Phase 5: Безопасность и Enterprise-готовность (Backlog)
+## 🛡️ Phase 5: Безопасность, аудит и алертинг (Завершено)
 
-- [ ] **Аутентификация и RBAC**:
-  - [ ] Вход по паролю администратора / локальным пользователям.
-  - [ ] Поддержка OIDC / OAuth2 (GitHub, GitLab, Google, Keycloak).
-  - [ ] Режим «Только чтение» (Viewer) и «Администратор» (Admin).
-- [ ] **Аудит и логирование действий**:
-  - [ ] Журнал операций (кто и когда перезагружал ноду, обновлял конфиг или скачивал бэкап).
-- [ ] **Уведомления и алертинг**:
-  - [x] **Telegram Alerting Core**: уведомления о статусе нод (Ready/NotReady), кворуме etcd, высокой нагрузке CPU (дедупликация и debounce).
-  - [ ] Webhook-интеграция для Slack / Discord.
-- [ ] **Multi-Cluster Support**:
-  - [ ] Управление несколькими кластерами Talos из одного окна (переключение через выпадающий список).
+- [x] **Аутентификация и RBAC**:
+  - [x] Вход по паролю администратора (по умолчанию `admin` или `TALOSDECK_ADMIN_PASSWORD`).
+  - [x] JWT-сессии (HMAC-SHA256, 24 часа), эндпоинты `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
+  - [x] Защита чувствительных методов (`RequireAuth`: reboot, backup create/delete, worker create/delete).
+  - [x] Модальный диалог входа [`LoginModal.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/LoginModal.vue) и переключение ролей `Admin` / `Viewer` в шапке `TopBar.vue`.
+- [x] **Аудит и логирование действий (Audit Trail)**:
+  - [x] Пакет `internal/audit`: кольцевой буфер на 1000 событий в памяти + сохранение в `data/audit.log` (JSON Lines).
+  - [x] Фиксация всех ключевых действий: `auth.login`, `auth.logout`, `node.reboot`, `backup.create`, `backup.delete`, `worker.create`, `worker.delete`.
+  - [x] Эндпоинт `GET /api/audit` с фильтрами по действию и полнотекстовым поиском.
+  - [x] Интерактивная таблица логов аудита в `OperationsView.vue` с поиском, фильтрами и бейджами статусов.
+- [x] **Telegram Алертинг и мониторинг здоровья кластера**:
+  - [x] Пакет `internal/alerts`: фоновый наблюдатель `Watcher` с дебаунсингом и кольцевой буфер последних событий.
+  - [x] Фильтрация по минимальному уровню (`INFO`, `WARNING`, `CRITICAL`).
+  - [x] Эндпоинты `GET /api/alerts/config`, `POST /api/alerts/config`, `POST /api/alerts/test`, `GET /api/alerts/history`.
+  - [x] Панель настройки Telegram в `OperationsView.vue`: ввод токена, чата, порога, кнопка моментального теста и журнал недавних оповещений.
+

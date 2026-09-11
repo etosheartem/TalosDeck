@@ -145,3 +145,133 @@ export interface BootstrapCheckItem {
   detail?: string
 }
 
+// Proxmox VE Integration interfaces
+export interface ProxmoxMemoryStatus {
+  total: number
+  used: number
+  free: number
+  available: number
+  usagePercent: number
+}
+
+export interface ProxmoxStorageStatus {
+  name: string
+  total: number
+  used: number
+  free: number
+  usagePercent: number
+  type: string
+}
+
+export interface ProxmoxNodeStatus {
+  node: string
+  uptime: number
+  cpu: number
+  cpuUsagePercent: number
+  cpuCores: number
+  cpuModel: string
+  memory: ProxmoxMemoryStatus
+  storage: ProxmoxStorageStatus
+}
+
+export interface ProxmoxStatusResponse {
+  configured: boolean
+  message?: string
+  error?: string
+  node?: string
+  status?: ProxmoxNodeStatus
+}
+
+export interface CreateWorkerParams {
+  vmid?: number
+  name?: string
+  cores?: number
+  memoryMB?: number
+  diskGB?: number
+  storage?: string
+  iso?: string
+  bridge?: string
+  macAddr?: string
+  start?: boolean
+}
+
+export interface CreateWorkerResult {
+  vmid: number
+  name: string
+  taskId?: string
+  status: string
+  message: string
+}
+
+export interface DeleteWorkerResult {
+  success: boolean
+  vmid: number
+  message: string
+}
+
+// Telegram Alerting interfaces
+export interface AlertRecord {
+  id: string
+  level: 'CRITICAL' | 'WARNING' | 'RECOVERED' | 'INFO'
+  title: string
+  message: string
+  timestamp: string
+  success: boolean
+  error?: string
+}
+
+export interface AlertsConfig {
+  enabled: boolean
+  bot_configured: boolean
+  bot_token?: string
+  bot_token_masked?: string
+  botToken?: string
+  chat_id?: string
+  chat_id_masked?: string
+  chatID?: string
+  min_level?: string
+  minLevel?: string
+  check_interval_seconds?: number
+  watcher_running?: boolean
+  monitored_nodes?: number
+  active_alerts_count?: number
+  activeAlertsCount?: number
+  last_check_time?: string | null
+  lastCheckTime?: string | null
+  recent_alerts?: AlertRecord[]
+  recentAlerts?: AlertRecord[]
+}
+
+export interface UpdateAlertsPayload {
+  bot_token?: string
+  chat_id?: string
+  enabled?: boolean
+  min_level?: string
+}
+
+// Authentication & Audit interfaces
+export interface UserInfo {
+  username: string
+  role: 'admin' | 'viewer'
+}
+
+export interface AuthResponse {
+  token: string
+  user: UserInfo
+  expiresIn?: number
+}
+
+export interface MeResponse {
+  authenticated: boolean
+  user: UserInfo
+}
+
+export interface AuditLogEvent {
+  id: string
+  timestamp: string
+  action: string
+  user: string
+  ip: string
+  status: 'success' | 'failed'
+  details?: Record<string, any>
+}

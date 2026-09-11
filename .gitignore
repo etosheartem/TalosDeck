@@ -1,6 +1,6 @@
 # Binaries
 bin/
-talosdeck
+/talosdeck
 
 # Web dependencies and build
 web/node_modules/

@@ -37,17 +37,31 @@ type TelegramConfig struct {
 	BotToken string `json:"botToken"`
 	ChatID   string `json:"chatId"`
 	Enabled  bool   `json:"enabled"`
+	MinLevel string `json:"minLevel,omitempty"`
+}
+
+// AlertRecord represents a single alert notification dispatched to Telegram.
+type AlertRecord struct {
+	ID        string     `json:"id"`
+	Level     AlertLevel `json:"level"`
+	Title     string     `json:"title"`
+	Message   string     `json:"message"`
+	Timestamp time.Time  `json:"timestamp"`
+	Success   bool       `json:"success"`
+	Error     string     `json:"error,omitempty"`
 }
 
 // TelegramService handles sending notification alerts to a Telegram chat.
 type TelegramService struct {
-	client     *http.Client
-	mu         sync.RWMutex
-	botToken   string
-	chatID     string
-	enabled    bool
-	configPath string
-	apiBaseURL string // For testing mock servers
+	client       *http.Client
+	mu           sync.RWMutex
+	botToken     string
+	chatID       string
+	enabled      bool
+	minLevel     string
+	configPath   string
+	apiBaseURL   string // For testing mock servers
+	recentAlerts []AlertRecord
 }
 
 // NewTelegramService creates a new Telegram alerting service instance.
@@ -56,10 +70,12 @@ func NewTelegramService(botToken, chatID string, enabled bool) *TelegramService 
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		botToken:   strings.TrimSpace(botToken),
-		chatID:     strings.TrimSpace(chatID),
-		enabled:    enabled,
-		apiBaseURL: "https://api.telegram.org",
+		botToken:     strings.TrimSpace(botToken),
+		chatID:       strings.TrimSpace(chatID),
+		enabled:      enabled,
+		minLevel:     "INFO",
+		apiBaseURL:   "https://api.telegram.org",
+		recentAlerts: make([]AlertRecord, 0, 50),
 	}
 }
 
@@ -110,7 +126,16 @@ func NewTelegramServiceFromEnv() *TelegramService {
 		enabled = false
 	}
 
+	minLevel := os.Getenv("TELEGRAM_ALERTS_MIN_LEVEL")
+	if minLevel == "" {
+		minLevel = fileCfg.MinLevel
+	}
+	if minLevel == "" {
+		minLevel = "INFO"
+	}
+
 	svc := NewTelegramService(botToken, chatID, enabled)
+	svc.minLevel = strings.ToUpper(strings.TrimSpace(minLevel))
 	svc.configPath = cfgPath
 	return svc
 }
@@ -133,10 +158,15 @@ func (s *TelegramService) IsEnabled() bool {
 func (s *TelegramService) GetConfig() TelegramConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	minLvl := s.minLevel
+	if minLvl == "" {
+		minLvl = "INFO"
+	}
 	return TelegramConfig{
 		BotToken: MaskToken(s.botToken),
 		ChatID:   s.chatID,
 		Enabled:  s.enabled,
+		MinLevel: minLvl,
 	}
 }
 
@@ -157,6 +187,9 @@ func (s *TelegramService) UpdateConfig(cfg TelegramConfig) error {
 		s.chatID = strings.TrimSpace(cfg.ChatID)
 	}
 	s.enabled = cfg.Enabled
+	if cfg.MinLevel != "" {
+		s.minLevel = strings.ToUpper(strings.TrimSpace(cfg.MinLevel))
+	}
 	path := s.configPath
 	s.mu.Unlock()
 
@@ -182,10 +215,15 @@ func (s *TelegramService) SetAPIBaseURL(url string) {
 
 func (s *TelegramService) saveToFile(path string) error {
 	s.mu.RLock()
+	minLvl := s.minLevel
+	if minLvl == "" {
+		minLvl = "INFO"
+	}
 	cfg := TelegramConfig{
 		BotToken: s.botToken,
 		ChatID:   s.chatID,
 		Enabled:  s.enabled,
+		MinLevel: minLvl,
 	}
 	s.mu.RUnlock()
 
@@ -202,12 +240,58 @@ func (s *TelegramService) saveToFile(path string) error {
 	return os.WriteFile(path, data, 0600)
 }
 
+// SeverityScore returns numerical severity for filtering.
+func SeverityScore(level string) int {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "CRITICAL", "CRIT", "ERROR":
+		return 3
+	case "WARNING", "WARN":
+		return 2
+	case "INFO":
+		return 1
+	default:
+		return 1
+	}
+}
+
+// ShouldSendAlert checks if an alert level satisfies the minimum configured level.
+func ShouldSendAlert(alertLevel AlertLevel, minLevel string) bool {
+	if minLevel == "" {
+		return true
+	}
+	alertUpper := strings.ToUpper(string(alertLevel))
+	// RECOVERED alerts should be sent whenever minLevel is INFO or WARNING
+	if alertUpper == "RECOVERED" || alertUpper == "OK" || alertUpper == "RESOLVED" {
+		return SeverityScore(minLevel) <= 2
+	}
+	return SeverityScore(alertUpper) >= SeverityScore(minLevel)
+}
+
+func (s *TelegramService) addRecentAlert(record AlertRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recentAlerts = append([]AlertRecord{record}, s.recentAlerts...)
+	if len(s.recentAlerts) > 50 {
+		s.recentAlerts = s.recentAlerts[:50]
+	}
+}
+
+// GetRecentAlerts returns recent alert records dispatched by the service.
+func (s *TelegramService) GetRecentAlerts() []AlertRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	copied := make([]AlertRecord, len(s.recentAlerts))
+	copy(copied, s.recentAlerts)
+	return copied
+}
+
 // SendAlert sends a formatted HTML alert message to Telegram with icons.
 func (s *TelegramService) SendAlert(level AlertLevel, title, message string) error {
 	s.mu.RLock()
 	token := s.botToken
 	chatID := s.chatID
 	enabled := s.enabled
+	minLevel := s.minLevel
 	baseURL := s.apiBaseURL
 	s.mu.RUnlock()
 
@@ -216,6 +300,9 @@ func (s *TelegramService) SendAlert(level AlertLevel, title, message string) err
 	}
 	if !enabled {
 		return ErrAlertsDisabled
+	}
+	if !ShouldSendAlert(level, minLevel) {
+		return nil
 	}
 
 	icon := GetIconForLevel(level)
@@ -232,7 +319,22 @@ func (s *TelegramService) SendAlert(level AlertLevel, title, message string) err
 		timestamp,
 	)
 
-	return s.sendRawTelegram(baseURL, token, chatID, text)
+	err := s.sendRawTelegram(baseURL, token, chatID, text)
+
+	record := AlertRecord{
+		ID:        fmt.Sprintf("alert-%d", time.Now().UnixNano()),
+		Level:     level,
+		Title:     title,
+		Message:   message,
+		Timestamp: time.Now().UTC(),
+		Success:   err == nil,
+	}
+	if err != nil {
+		record.Error = err.Error()
+	}
+	s.addRecentAlert(record)
+
+	return err
 }
 
 // SendNodeStatusAlert formats and dispatches an alert when a node status changes.
@@ -301,14 +403,62 @@ func (s *TelegramService) SendResourceAlert(nodeIP, hostname, resourceType strin
 	return s.SendAlert(level, title, msg)
 }
 
-// SendTestMessage dispatches a test alert to verify Telegram configuration.
-func (s *TelegramService) SendTestMessage(customText string) error {
+// SendTestNotification sends a test message with optional override of token and chatID.
+func (s *TelegramService) SendTestNotification(botToken, chatID, customText string) error {
+	s.mu.RLock()
+	if botToken == "" {
+		botToken = s.botToken
+	}
+	if chatID == "" {
+		chatID = s.chatID
+	}
+	baseURL := s.apiBaseURL
+	s.mu.RUnlock()
+
+	botToken = strings.TrimSpace(botToken)
+	chatID = strings.TrimSpace(chatID)
+	if botToken == "" || chatID == "" {
+		return ErrNotConfigured
+	}
+
 	title := "Test Notification"
 	msg := "This is a test notification from <b>TalosDeck Control Plane</b>.\nIntegration with Telegram bot is working correctly!"
 	if customText != "" {
 		msg += fmt.Sprintf("\nMessage: %s", customText)
 	}
-	return s.SendAlert(LevelInfo, title, msg)
+
+	icon := GetIconForLevel(LevelInfo)
+	formattedBody := formatMessageLines(msg)
+	timestamp := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+
+	text := fmt.Sprintf("%s <b>[TEST] %s</b>\n\n%s\n\n<i>⏱ %s • TalosDeck</i>",
+		icon,
+		html.EscapeString(title),
+		formattedBody,
+		timestamp,
+	)
+
+	err := s.sendRawTelegram(baseURL, botToken, chatID, text)
+
+	record := AlertRecord{
+		ID:        fmt.Sprintf("alert-%d", time.Now().UnixNano()),
+		Level:     LevelInfo,
+		Title:     title,
+		Message:   msg,
+		Timestamp: time.Now().UTC(),
+		Success:   err == nil,
+	}
+	if err != nil {
+		record.Error = err.Error()
+	}
+	s.addRecentAlert(record)
+
+	return err
+}
+
+// SendTestMessage dispatches a test alert to verify Telegram configuration.
+func (s *TelegramService) SendTestMessage(customText string) error {
+	return s.SendTestNotification("", "", customText)
 }
 
 // GetIconForLevel returns the appropriate emoji icon for the given alert level.

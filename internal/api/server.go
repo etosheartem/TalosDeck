@@ -17,6 +17,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"talosdeck/internal/alerts"
+	"talosdeck/internal/audit"
+	"talosdeck/internal/auth"
 	"talosdeck/internal/backup"
 	"talosdeck/internal/k8s"
 	"talosdeck/internal/proxmox"
@@ -32,6 +34,8 @@ type ServerConfig struct {
 	AlertService *alerts.TelegramService
 	AlertWatcher *alerts.Watcher
 	Proxmox      *proxmox.Client
+	Audit        *audit.AuditManager
+	Auth         *auth.AuthManager
 	Port         string
 }
 
@@ -63,8 +67,147 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 
 	manager := cfg.Manager
 
+	// Audit Manager
+	auditMgr := cfg.Audit
+	if auditMgr == nil {
+		var err error
+		auditMgr, err = audit.NewAuditManager("./data/audit.log", 1000)
+		if err != nil {
+			log.Printf("[Audit] Warning: Failed to initialize audit manager: %v", err)
+		}
+	}
+
+	// Auth Manager
+	authMgr := cfg.Auth
+	if authMgr == nil {
+		authMgr = auth.NewAuthManagerFromEnv()
+	}
+
 	// REST API Routes Group
 	api := app.Group("/api")
+
+	// Auth Endpoints
+	// POST /api/auth/login -> accepts {"password": "..."}, returns {"token": "...", "user": {"role": "admin"}}
+	api.Post("/auth/login", func(c *fiber.Ctx) error {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.Password == "" {
+			if auditMgr != nil {
+				auditMgr.Log(audit.AuditEvent{
+					Action:  "auth.login",
+					User:    "admin",
+					IP:      auth.GetClientIP(c),
+					Status:  "failed",
+					Details: map[string]any{"reason": "missing password"},
+				})
+			}
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Password is required",
+			})
+		}
+
+		if !authMgr.VerifyPassword(req.Password) {
+			if auditMgr != nil {
+				auditMgr.Log(audit.AuditEvent{
+					Action:  "auth.login",
+					User:    "admin",
+					IP:      auth.GetClientIP(c),
+					Status:  "failed",
+					Details: map[string]any{"reason": "invalid password"},
+				})
+			}
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid password",
+			})
+		}
+
+		token, err := authMgr.GenerateToken("admin", "admin")
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to generate authentication token",
+			})
+		}
+
+		if auditMgr != nil {
+			auditMgr.Log(audit.AuditEvent{
+				Action:  "auth.login",
+				User:    "admin",
+				IP:      auth.GetClientIP(c),
+				Status:  "success",
+				Details: map[string]any{"role": "admin"},
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"token": token,
+			"user": fiber.Map{
+				"username": "admin",
+				"role":     "admin",
+			},
+			"expiresIn": 86400,
+		})
+	})
+
+	// POST /api/auth/logout
+	api.Post("/auth/logout", func(c *fiber.Ctx) error {
+		user := auth.GetContextUser(c, authMgr)
+		if auditMgr != nil {
+			auditMgr.Log(audit.AuditEvent{
+				Action: "auth.logout",
+				User:   user,
+				IP:     auth.GetClientIP(c),
+				Status: "success",
+			})
+		}
+		return c.JSON(fiber.Map{
+			"success": true,
+			"message": "Logged out successfully",
+		})
+	})
+
+	// GET /api/auth/me -> checks token from Authorization header
+	api.Get("/auth/me", func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		if authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+				if claims, err := authMgr.ValidateToken(parts[1]); err == nil && claims != nil {
+					return c.JSON(fiber.Map{
+						"authenticated": true,
+						"user": fiber.Map{
+							"username": claims.Username,
+							"role":     claims.Role,
+						},
+					})
+				}
+			}
+		}
+
+		return c.JSON(fiber.Map{
+			"authenticated": false,
+			"user": fiber.Map{
+				"username": "guest",
+				"role":     "viewer",
+			},
+		})
+	})
+
+	// GET /api/audit -> list of audit events
+	api.Get("/audit", func(c *fiber.Ctx) error {
+		limit := c.QueryInt("limit", 50)
+		action := c.Query("action", "")
+		search := c.Query("search", "")
+
+		var events []audit.AuditEvent
+		if auditMgr != nil {
+			events = auditMgr.GetEvents(limit, action, search)
+		}
+		if events == nil {
+			events = []audit.AuditEvent{}
+		}
+		return c.JSON(events)
+	})
 
 	bm := cfg.Backup
 	if bm == nil {
@@ -75,7 +218,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		}
 	}
 	if bm != nil {
-		RegisterBackupRoutes(api, bm)
+		RegisterBackupRoutes(api, bm, authMgr, auditMgr)
 	}
 
 	alertSvc := cfg.AlertService
@@ -94,7 +237,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	if proxmoxClient == nil {
 		proxmoxClient = proxmox.NewClientFromEnv()
 	}
-	RegisterProxmoxRoutes(api, proxmoxClient)
+	RegisterProxmoxRoutes(api, proxmoxClient, authMgr, auditMgr)
 
 	// GET /api/cluster -> cluster overview
 	api.Get("/cluster", func(c *fiber.Ctx) error {
@@ -189,41 +332,55 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		return c.JSON(containers)
 	})
 
-	// POST /api/nodes/:ip/reboot -> reboot node
-	api.Post("/api/nodes/:ip/reboot", func(c *fiber.Ctx) error {
+	// POST /api/nodes/:ip/reboot -> reboot node (protected with auth)
+	rebootHandler := func(c *fiber.Ctx) error {
 		ip := c.Params("ip")
+		user := auth.GetContextUser(c, authMgr)
+		clientIP := auth.GetClientIP(c)
+
 		ctx, cancel := context.WithTimeout(c.UserContext(), 10*time.Second)
 		defer cancel()
 
 		if err := manager.RebootNode(ctx, ip); err != nil {
+			if auditMgr != nil {
+				auditMgr.Log(audit.AuditEvent{
+					Action:  "node.reboot",
+					User:    user,
+					IP:      clientIP,
+					Status:  "failed",
+					Details: map[string]any{"node": ip, "error": err.Error()},
+				})
+			}
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": fmt.Sprintf("failed to reboot node %s: %v", ip, err),
 			})
 		}
+
+		if auditMgr != nil {
+			auditMgr.Log(audit.AuditEvent{
+				Action:  "node.reboot",
+				User:    user,
+				IP:      clientIP,
+				Status:  "success",
+				Details: map[string]any{"node": ip},
+			})
+		}
+
 		return c.JSON(fiber.Map{
 			"status":  "rebooting",
 			"node":    ip,
 			"message": "Reboot command successfully dispatched",
 		})
-	})
+	}
 
-	// Also support without double /api prefix just in case:
-	api.Post("/nodes/:ip/reboot", func(c *fiber.Ctx) error {
-		ip := c.Params("ip")
-		ctx, cancel := context.WithTimeout(c.UserContext(), 10*time.Second)
-		defer cancel()
+	rebootMiddlewares := []fiber.Handler{}
+	if authMgr != nil {
+		rebootMiddlewares = append(rebootMiddlewares, auth.RequireAuth(authMgr))
+	}
+	rebootHandlers := append(rebootMiddlewares, rebootHandler)
 
-		if err := manager.RebootNode(ctx, ip); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": fmt.Sprintf("failed to reboot node %s: %v", ip, err),
-			})
-		}
-		return c.JSON(fiber.Map{
-			"status":  "rebooting",
-			"node":    ip,
-			"message": "Reboot command successfully dispatched",
-		})
-	})
+	api.Post("/api/nodes/:ip/reboot", rebootHandlers...)
+	api.Post("/nodes/:ip/reboot", rebootHandlers...)
 
 	// GET /api/nodes/:ip/disks -> physical disks and partitions via Talos SDK
 	api.Get("/nodes/:ip/disks", func(c *fiber.Ctx) error {
@@ -342,6 +499,15 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		msg := fmt.Sprintf("Node %s cordoned (maintenance active)", ip)
 		if !body.Enable {
 			msg = fmt.Sprintf("Node %s uncordoned (active)", ip)
+		}
+		if auditMgr != nil {
+			auditMgr.Log(audit.AuditEvent{
+				Action:  "node.maintenance",
+				User:    auth.GetContextUser(c, authMgr),
+				IP:      auth.GetClientIP(c),
+				Status:  "success",
+				Details: map[string]any{"node": ip, "enable": body.Enable},
+			})
 		}
 		return c.JSON(fiber.Map{
 			"success": true,

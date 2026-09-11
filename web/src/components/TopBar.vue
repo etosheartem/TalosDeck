@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, onMounted } from 'vue'
 import {
   Menu,
   RefreshCw,
@@ -7,9 +8,14 @@ import {
   FileCode2,
   Boxes,
   Zap,
+  Lock,
+  ShieldCheck,
+  LogOut,
 } from 'lucide-vue-next'
 import { t } from '../i18n'
-import type { TabKey, ClusterInfo } from '../types'
+import type { TabKey, ClusterInfo, UserInfo } from '../types'
+import { isAuthenticated, logout, getMe } from '../api'
+import LoginModal from './LoginModal.vue'
 
 defineProps<{
   activeTab: TabKey
@@ -22,7 +28,14 @@ const emit = defineEmits<{
   (e: 'toggleMobile'): void
   (e: 'refresh'): void
   (e: 'update:autoRefreshInterval', val: number): void
+  (e: 'show-toast', payload: { message: string; type: 'success' | 'error' | 'info' }): void
 }>()
+
+const isLoginModalOpen = ref(false)
+
+onMounted(() => {
+  getMe()
+})
 
 const autoRefreshOptions = [
   { value: 0, labelKey: 'auto_refresh_off' },
@@ -42,6 +55,15 @@ const tabTitles: Record<TabKey, { labelKey: string; icon: any }> = {
 const onAutoRefreshChange = (e: Event) => {
   const target = e.target as HTMLSelectElement
   emit('update:autoRefreshInterval', Number(target.value))
+}
+
+const handleLogout = async () => {
+  await logout()
+  emit('show-toast', { message: t('auth_logged_out'), type: 'info' })
+}
+
+const onLoginSuccess = (user: UserInfo) => {
+  emit('show-toast', { message: `${t('auth_success')} (${user.username})`, type: 'success' })
 }
 </script>
 
@@ -88,6 +110,35 @@ const onAutoRefreshChange = (e: Event) => {
         </select>
       </div>
 
+      <!-- Auth Profile Indicator / Action Button -->
+      <div class="flex items-center">
+        <!-- If Authenticated as Admin -->
+        <div v-if="isAuthenticated" class="flex items-center gap-1.5">
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-950/70 text-emerald-300 border border-emerald-800/80 shadow-sm shadow-emerald-950/40">
+            <ShieldCheck class="w-3.5 h-3.5 text-emerald-400" />
+            <span>Admin</span>
+          </span>
+          <button
+            @click="handleLogout"
+            class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-red-300 hover:bg-red-950/30 border border-zinc-800 hover:border-red-900/50 transition-all cursor-pointer"
+            :title="t('auth_logout')"
+          >
+            <LogOut class="w-3.5 h-3.5" />
+            <span class="hidden sm:inline">{{ t('auth_logout') }}</span>
+          </button>
+        </div>
+
+        <!-- If Unauthenticated (Viewer) -->
+        <button
+          v-else
+          @click="isLoginModalOpen = true"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 transition-all cursor-pointer shadow-sm"
+        >
+          <Lock class="w-3.5 h-3.5 text-cyan-400" />
+          <span>{{ t('auth_status_viewer') }}</span>
+        </button>
+      </div>
+
       <!-- Manual Refresh Button -->
       <button
         @click="emit('refresh')"
@@ -103,5 +154,12 @@ const onAutoRefreshChange = (e: Event) => {
         <span class="hidden sm:inline">{{ t('refresh') }}</span>
       </button>
     </div>
+
+    <!-- Login Modal -->
+    <LoginModal
+      :open="isLoginModalOpen"
+      @close="isLoginModalOpen = false"
+      @success="onLoginSuccess"
+    />
   </header>
 </template>

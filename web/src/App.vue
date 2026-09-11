@@ -182,6 +182,7 @@ const onRebootError = (errMsg: string) => {
         @toggleMobile="mobileOpen = !mobileOpen"
         @refresh="loadData"
         @update:autoRefreshInterval="autoRefreshInterval = $event"
+        @show-toast="showToast($event.message, $event.type)"
       />
 
       <!-- Main Content Container -->
@@ -211,6 +212,8 @@ const onRebootError = (errMsg: string) => {
             @open-services="onOpenServices"
             @open-logs="onOpenLogs"
             @open-reboot="onOpenReboot"
+            @refresh="loadData"
+            @show-toast="showToast($event.message, $event.type)"
           />
         </div>
 
