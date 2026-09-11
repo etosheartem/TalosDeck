@@ -1,14 +1,5 @@
 <script setup lang="ts">
-import {
-  Server,
-  HardDrive,
-  FileCode2,
-  Boxes,
-  Zap,
-  Layers,
-  ChevronRight,
-  X,
-} from 'lucide-vue-next'
+import { Server, HardDrive, FileCode2, Boxes, Wrench, Layers3, X } from 'lucide-vue-next'
 import { t, currentLocale, setLocale } from '../i18n'
 import type { TabKey, ClusterInfo } from '../types'
 
@@ -26,12 +17,12 @@ const emit = defineEmits<{
   (e: 'closeMobile'): void
 }>()
 
-const navItems: { key: TabKey; labelKey: string; icon: any; badgeType?: 'nodes' | 'pods' | 'etcd' }[] = [
-  { key: 'nodes', labelKey: 'tab_nodes', icon: Server, badgeType: 'nodes' },
+const navItems: { key: TabKey; labelKey: string; icon: any; badge?: 'nodes' | 'pods' | 'etcd' }[] = [
+  { key: 'nodes', labelKey: 'tab_nodes', icon: Server, badge: 'nodes' },
+  { key: 'workloads', labelKey: 'tab_workloads', icon: Boxes, badge: 'pods' },
   { key: 'storage', labelKey: 'tab_storage', icon: HardDrive },
   { key: 'config', labelKey: 'tab_config', icon: FileCode2 },
-  { key: 'workloads', labelKey: 'tab_workloads', icon: Boxes, badgeType: 'pods' },
-  { key: 'operations', labelKey: 'tab_operations', icon: Zap, badgeType: 'etcd' },
+  { key: 'operations', labelKey: 'tab_operations', icon: Wrench, badge: 'etcd' },
 ]
 
 const selectTab = (key: TabKey) => {
@@ -42,194 +33,106 @@ const selectTab = (key: TabKey) => {
 
 <template>
   <div>
-    <!-- Mobile Backdrop -->
-    <div
+    <button
       v-if="mobileOpen"
+      class="fixed inset-0 z-40 bg-black/70 lg:hidden"
+      aria-label="Close navigation"
       @click="emit('closeMobile')"
-      class="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 lg:hidden transition-opacity"
-    ></div>
+    />
 
-    <!-- Sidebar Container -->
     <aside
       :class="[
-        'fixed top-0 bottom-0 left-0 w-64 bg-zinc-950 border-r border-zinc-800/80 flex flex-col z-50 transition-transform duration-300 ease-in-out lg:translate-x-0',
-        mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full',
+        'fixed inset-y-0 left-0 z-50 flex w-56 flex-col border-r transition-transform duration-200 lg:translate-x-0',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full',
       ]"
+      style="background: var(--sidebar); border-color: var(--border)"
     >
-      <!-- Brand / Header -->
-      <div class="p-5 border-b border-zinc-800/80 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="h-9 w-9 rounded-xl bg-gradient-to-tr from-cyan-600 via-teal-500 to-emerald-400 p-[1.5px] shadow-lg shadow-cyan-500/20">
-            <div class="h-full w-full bg-zinc-950 rounded-[10px] flex items-center justify-center">
-              <Layers class="w-4 h-4 text-cyan-400" />
-            </div>
+      <div class="flex h-14 items-center justify-between border-b px-4" style="border-color: var(--border)">
+        <div class="flex items-center gap-2.5">
+          <div class="flex h-7 w-7 items-center justify-center rounded-md border" style="border-color: var(--border-strong); background: var(--surface-raised)">
+            <Layers3 class="h-4 w-4" style="color: var(--accent)" />
           </div>
-          <div>
-            <div class="flex items-center gap-1.5">
-              <span class="text-base font-bold tracking-tight bg-gradient-to-r from-zinc-100 via-zinc-200 to-zinc-400 bg-clip-text text-transparent">
-                TalosDeck
-              </span>
-              <span class="text-[9px] font-mono uppercase tracking-wider px-1 py-0.2 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 font-semibold">
-                v0.2
-              </span>
-            </div>
-            <p class="text-[11px] text-zinc-400 font-medium">
-              Control Plane
-            </p>
+          <div class="leading-none">
+            <div class="text-sm font-semibold tracking-tight">TalosDeck</div>
+            <div class="mt-1 text-[10px] uppercase tracking-[0.12em]" style="color: var(--text-faint)">Cluster console</div>
           </div>
         </div>
-
-        <!-- Mobile close button -->
-        <button
-          @click="emit('closeMobile')"
-          class="lg:hidden p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 cursor-pointer"
-          :title="t('close')"
-          :aria-label="t('close')"
-        >
-          <X class="w-5 h-5" />
+        <button class="control flex h-8 w-8 items-center justify-center lg:hidden" @click="emit('closeMobile')">
+          <X class="h-4 w-4" />
         </button>
       </div>
 
-      <!-- Cluster Quick Status Widget -->
-      <div class="p-3 mx-3 mt-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80">
-        <div class="flex items-center justify-between text-xs mb-1.5">
-          <span class="text-zinc-400 font-medium">{{ t('cluster_status') }}</span>
-          <span
-            :class="[
-              'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide border',
-              cluster.healthy
-                ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60'
-                : 'bg-amber-950/60 text-amber-400 border-amber-800/60',
-            ]"
-          >
-            <span
-              :class="[
-                'w-1.5 h-1.5 rounded-full',
-                cluster.healthy ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400',
-              ]"
-            ></span>
+      <div class="border-b px-4 py-3" style="border-color: var(--border)">
+        <div class="flex items-center justify-between gap-3">
+          <span class="mono truncate text-xs font-semibold">{{ cluster.name }}</span>
+          <span :class="['status-chip', cluster.healthy ? 'is-ok' : 'is-danger']">
+            <span :class="['status-dot', cluster.healthy ? 'is-ok' : 'is-danger']" />
             {{ cluster.healthy ? t('cluster_healthy') : t('cluster_degraded') }}
           </span>
         </div>
-        <div class="text-xs font-mono font-semibold text-zinc-200 truncate">
-          {{ cluster.name }}
-        </div>
-        <div class="flex items-center gap-2 mt-2 pt-2 border-t border-zinc-800/60 text-[10px] font-mono text-zinc-400">
-          <div>Talos <span class="text-cyan-400">{{ cluster.talosVersion }}</span></div>
-          <span>•</span>
-          <div>K8s <span class="text-emerald-400">{{ cluster.kubernetesVersion }}</span></div>
+        <div class="mono mt-2 flex gap-3 text-[10px]" style="color: var(--text-muted)">
+          <span>Talos {{ cluster.talosVersion }}</span>
+          <span>K8s {{ cluster.kubernetesVersion }}</span>
         </div>
       </div>
 
-      <!-- Navigation Links -->
-      <div class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        <div class="px-3 py-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-          {{ t('sidebar_nav') }}
-        </div>
-
+      <nav class="flex-1 space-y-1 overflow-y-auto p-2" :aria-label="t('sidebar_nav')">
         <button
           v-for="item in navItems"
           :key="item.key"
+          :class="['nav-item', { active: activeTab === item.key }]"
           @click="selectTab(item.key)"
-          :class="[
-            'w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-150 cursor-pointer group text-left',
-            activeTab === item.key
-              ? 'bg-gradient-to-r from-cyan-950/70 to-zinc-900 text-cyan-300 border border-cyan-500/40 shadow-md shadow-cyan-950/20'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60 border border-transparent',
-          ]"
         >
-          <div class="flex items-center gap-2.5">
-            <component
-              :is="item.icon"
-              :class="[
-                'w-4 h-4 transition-colors',
-                activeTab === item.key ? 'text-cyan-400' : 'text-zinc-500 group-hover:text-zinc-300',
-              ]"
-            />
-            <span>{{ t(item.labelKey) }}</span>
-          </div>
-
-          <!-- Badges -->
-          <div class="flex items-center gap-1.5">
-            <span
-              v-if="item.badgeType === 'nodes' && nodeCount > 0"
-              :class="[
-                'px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold',
-                activeTab === 'nodes'
-                  ? 'bg-cyan-900/80 text-cyan-200 border border-cyan-700/60'
-                  : 'bg-zinc-800 text-zinc-400 border border-zinc-700/60',
-              ]"
-            >
-              {{ nodeCount }}
-            </span>
-
-            <span
-              v-if="item.badgeType === 'pods' && podCount > 0"
-              :class="[
-                'px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold',
-                activeTab === 'workloads'
-                  ? 'bg-cyan-900/80 text-cyan-200 border border-cyan-700/60'
-                  : 'bg-zinc-800 text-zinc-400 border border-zinc-700/60',
-              ]"
-            >
-              {{ podCount }}
-            </span>
-
-            <span
-              v-if="item.badgeType === 'etcd'"
-              class="relative flex h-2 w-2"
-            >
-              <span
-                v-if="etcdHealthy"
-                class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
-              ></span>
-              <span
-                :class="[
-                  'relative inline-flex rounded-full h-2 w-2',
-                  etcdHealthy ? 'bg-emerald-400' : 'bg-amber-400',
-                ]"
-              ></span>
-            </span>
-
-            <ChevronRight
-              v-if="activeTab === item.key"
-              class="w-3.5 h-3.5 text-cyan-400"
-            />
-          </div>
+          <component :is="item.icon" class="h-4 w-4" />
+          <span class="flex-1 text-left">{{ t(item.labelKey) }}</span>
+          <span v-if="item.badge === 'nodes' && nodeCount" class="mono nav-count">{{ nodeCount }}</span>
+          <span v-if="item.badge === 'pods' && podCount" class="mono nav-count">{{ podCount }}</span>
+          <span v-if="item.badge === 'etcd'" :class="['status-dot', etcdHealthy ? 'is-ok' : 'is-warning']" />
         </button>
-      </div>
+      </nav>
 
-      <!-- Bottom: Language Switcher & GitHub Link -->
-      <div class="p-3 border-t border-zinc-800/80 space-y-2 bg-zinc-950/60">
-        <!-- Language Switcher -->
-        <div class="flex items-center justify-between px-2 py-1.5 rounded-lg bg-zinc-900/80 border border-zinc-800/80">
-          <span class="text-[11px] text-zinc-400 font-medium">Язык / Language</span>
-          <div class="flex items-center p-0.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs font-semibold">
-            <button
-              @click="setLocale('ru')"
-              :class="[
-                'px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer',
-                currentLocale === 'ru'
-                  ? 'bg-cyan-500 text-zinc-950 font-bold shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200',
-              ]"
-            >
-              RU
-            </button>
-            <button
-              @click="setLocale('en')"
-              :class="[
-                'px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer',
-                currentLocale === 'en'
-                  ? 'bg-cyan-500 text-zinc-950 font-bold shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200',
-              ]"
-            >
-              EN
-            </button>
+      <div class="border-t p-3" style="border-color: var(--border)">
+        <div class="flex items-center justify-between text-[11px]" style="color: var(--text-muted)">
+          <span>Language</span>
+          <div class="flex rounded-md border p-0.5" style="border-color: var(--border); background: var(--canvas)">
+            <button :class="['locale-button', { active: currentLocale === 'ru' }]" @click="setLocale('ru')">RU</button>
+            <button :class="['locale-button', { active: currentLocale === 'en' }]" @click="setLocale('en')">EN</button>
           </div>
         </div>
       </div>
     </aside>
   </div>
 </template>
+
+<style scoped>
+.nav-item {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.nav-item:hover { background: var(--surface); color: var(--text); }
+.nav-item.active { background: var(--accent-muted); border-color: #28446f; color: #b9d3ff; }
+.nav-count { color: var(--text-faint); font-size: 10px; }
+.nav-item.active .nav-count { color: #8db6fa; }
+
+.locale-button {
+  min-width: 30px;
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.locale-button.active { background: var(--surface-raised); color: var(--text); }
+</style>

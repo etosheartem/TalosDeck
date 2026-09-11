@@ -1,25 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import {
-  Server,
-  Search,
-  Shield,
-  Cpu,
-  Plus,
-  HardDrive,
-  Layers,
-  AlertTriangle,
-} from 'lucide-vue-next'
+import { Search, Plus, TriangleAlert, Server } from 'lucide-vue-next'
 import { t, currentLocale } from '../../i18n'
 import { fetchProxmoxStatus } from '../../api'
 import type { NodeOverview, ProxmoxStatusResponse, CreateWorkerResult } from '../../types'
 import NodeCard from '../NodeCard.vue'
 import AddWorkerModal from '../AddWorkerModal.vue'
 
-const props = defineProps<{
-  nodes: NodeOverview[]
-}>()
-
+const props = defineProps<{ nodes: NodeOverview[] }>()
 const emit = defineEmits<{
   (e: 'open-services', node: NodeOverview): void
   (e: 'open-logs', node: NodeOverview): void
@@ -31,8 +19,6 @@ const emit = defineEmits<{
 const searchQuery = ref('')
 const roleFilter = ref<'all' | 'controlplane' | 'worker'>('all')
 const isAddModalOpen = ref(false)
-
-// Proxmox VE Host Status
 const proxmox = ref<ProxmoxStatusResponse | null>(null)
 const loadingProxmox = ref(false)
 
@@ -40,278 +26,152 @@ const loadProxmox = async () => {
   loadingProxmox.value = true
   try {
     proxmox.value = await fetchProxmoxStatus()
-  } catch (err) {
-    console.warn('Failed to load Proxmox status in NodesView:', err)
+  } catch (error) {
+    console.warn('Failed to load Proxmox status in NodesView:', error)
   } finally {
     loadingProxmox.value = false
   }
 }
 
-onMounted(() => {
-  loadProxmox()
-})
+onMounted(loadProxmox)
 
-const isProxmoxConfigured = computed(() => {
-  return proxmox.value?.configured ?? false
-})
+const filteredNodes = computed(() => props.nodes.filter((node) => {
+  const query = searchQuery.value.trim().toLowerCase()
+  const matchesQuery = !query || node.hostname.toLowerCase().includes(query) || node.ip.includes(query)
+  const matchesRole = roleFilter.value === 'all' || node.role === roleFilter.value
+  return matchesQuery && matchesRole
+}))
 
-const pveHostFreeRAM = computed(() => {
-  const mem = proxmox.value?.status?.memory
-  if (!mem) return '16.0 GB'
-  const freeBytes = mem.available ?? mem.free ?? 0
-  return `${(freeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-})
-
-const pveHostRAMPercent = computed(() => {
-  return Math.round(proxmox.value?.status?.memory?.usagePercent ?? 50)
-})
-
-const pveHostFreeDisk = computed(() => {
-  const stg = proxmox.value?.status?.storage
-  if (!stg) return '358.4 GB'
-  return `${(stg.free / (1024 * 1024 * 1024)).toFixed(1)} GB`
-})
-
-const pveHostDiskPercent = computed(() => {
-  return Math.round(proxmox.value?.status?.storage?.usagePercent ?? 30)
-})
-
-const pveHostCPU = computed(() => {
-  return (proxmox.value?.status?.cpuUsagePercent ?? 12.4).toFixed(1)
-})
-
-const filteredNodes = computed(() => {
-  return props.nodes.filter((node) => {
-    const q = searchQuery.value.trim().toLowerCase()
-    const matchesQuery = !q || node.hostname.toLowerCase().includes(q) || node.ip.includes(q)
-    if (!matchesQuery) return false
-
-    if (roleFilter.value !== 'all' && node.role !== roleFilter.value) {
-      return false
-    }
-
-    return true
-  })
-})
+const formatBytes = (bytes?: number) => bytes == null ? '—' : `${(bytes / 1024 ** 3).toFixed(1)} GB`
+const formatPercent = (value?: number) => value == null ? '—' : `${Math.round(value)}%`
+const pve = computed(() => proxmox.value?.status)
 
 const handleWorkerCreated = (result: CreateWorkerResult) => {
   isAddModalOpen.value = false
-  emit('show-toast', {
-    message: `${t('add_worker_success')}: ${result.name} (VMID ${result.vmid})`,
-    type: 'success',
-  })
+  emit('show-toast', { message: `${t('add_worker_success')}: ${result.name} (VMID ${result.vmid})`, type: 'success' })
   emit('refresh')
   loadProxmox()
-}
-
-const handleWorkerError = (err: string) => {
-  emit('show-toast', {
-    message: err || t('add_worker_error'),
-    type: 'error',
-  })
 }
 </script>
 
 <template>
-  <div class="space-y-5">
-    <!-- Proxmox VE Host Status Card / Scale-Out Banner -->
-    <div
-      v-if="isProxmoxConfigured"
-      class="rounded-2xl bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-cyan-950/20 border border-zinc-800/90 p-4 sm:p-5 shadow-lg relative overflow-hidden"
-    >
-      <!-- Background Ambient Glow -->
-      <div class="absolute -right-16 -top-16 w-48 h-48 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
+  <div class="space-y-4">
+    <section v-if="proxmox?.configured" class="panel host-strip">
+      <div class="host-identity">
+        <span class="status-dot is-ok" />
+        <div>
+          <div class="flex items-center gap-2 text-xs font-semibold">
+            <span>{{ t('proxmox_title') }}</span>
+            <span class="mono" style="color: var(--accent)">{{ proxmox.node || 'pve' }}</span>
+          </div>
+          <p class="mt-1 text-[10px]" style="color: var(--text-faint)">{{ t('proxmox_scale_desc') }}</p>
+        </div>
+      </div>
+      <dl class="host-metrics mono">
+        <div><dt>{{ t('proxmox_cpu_load') }}</dt><dd>{{ loadingProxmox ? '…' : formatPercent(pve?.cpuUsagePercent) }}</dd></div>
+        <div><dt>{{ t('proxmox_free_ram') }}</dt><dd>{{ loadingProxmox ? '…' : formatBytes(pve?.memory?.available ?? pve?.memory?.free) }}</dd></div>
+        <div><dt>{{ t('proxmox_free_disk') }}</dt><dd>{{ loadingProxmox ? '…' : formatBytes(pve?.storage?.free) }}</dd></div>
+      </dl>
+      <button class="primary-button" @click="isAddModalOpen = true"><Plus class="h-3.5 w-3.5" />{{ t('proxmox_add_worker_btn') }}</button>
+    </section>
 
-      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
-        <!-- Host Info Left Column -->
-        <div class="flex items-center gap-3.5">
-          <div class="w-11 h-11 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0 shadow-inner">
-            <Server class="w-6 h-6" />
+    <section>
+      <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div class="flex items-baseline gap-2">
+            <h2 class="text-sm font-semibold">{{ t('tab_nodes') }}</h2>
+            <span class="mono text-[10px]" style="color: var(--text-faint)">{{ filteredNodes.length }} / {{ nodes.length }}</span>
           </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-bold text-zinc-100 tracking-tight">
-                {{ t('proxmox_title') }}
-              </span>
-              <span class="font-mono text-xs text-cyan-300 font-semibold px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-800/50">
-                {{ proxmox?.node || 'pve' }}
-              </span>
-              <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-950/70 border border-emerald-800/60 text-emerald-400">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                {{ t('proxmox_status_connected') }}
-              </span>
-            </div>
-            <p class="text-xs text-zinc-400 mt-1">
-              {{ t('proxmox_scale_desc') }}
-            </p>
-          </div>
+          <p class="mt-1 text-[11px]" style="color: var(--text-muted)">
+            {{ currentLocale === 'ru' ? 'Состояние машин и системных сервисов' : 'Machine and system service state' }}
+          </p>
         </div>
 
-        <!-- Host Live Metrics Grid -->
-        <div class="flex flex-wrap items-center gap-3 sm:gap-4 text-xs">
-          <!-- CPU Badge -->
-          <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-950/70 border border-zinc-800/70">
-            <Cpu class="w-3.5 h-3.5 text-emerald-400" />
-            <div class="space-y-0.5">
-              <div class="text-[10px] text-zinc-400 font-medium leading-none">{{ t('proxmox_cpu_load') }}</div>
-              <div class="font-mono font-bold text-emerald-300 leading-none">{{ pveHostCPU }}%</div>
-            </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="control relative flex items-center">
+            <Search class="pointer-events-none absolute left-2.5 h-3.5 w-3.5" style="color: var(--text-faint)" />
+            <input v-model="searchQuery" class="h-8 w-52 bg-transparent pl-8 pr-2 text-xs outline-none" :placeholder="currentLocale === 'ru' ? 'Имя или IP' : 'Hostname or IP'" />
+          </label>
+          <div class="filter-group">
+            <button :class="{ active: roleFilter === 'all' }" @click="roleFilter = 'all'">{{ t('services_filter_all') }}</button>
+            <button :class="{ active: roleFilter === 'controlplane' }" @click="roleFilter = 'controlplane'">CP</button>
+            <button :class="{ active: roleFilter === 'worker' }" @click="roleFilter = 'worker'">{{ t('stat_workers') }}</button>
           </div>
-
-          <!-- Free RAM Badge -->
-          <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-950/70 border border-zinc-800/70">
-            <Layers class="w-3.5 h-3.5 text-indigo-400" />
-            <div class="space-y-0.5">
-              <div class="text-[10px] text-zinc-400 font-medium leading-none">{{ t('proxmox_free_ram') }}</div>
-              <div class="flex items-center gap-1.5 leading-none">
-                <span class="font-mono font-bold text-indigo-300">{{ pveHostFreeRAM }}</span>
-                <span class="text-[10px] text-zinc-500">({{ pveHostRAMPercent }}%)</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Free Disk Badge -->
-          <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-950/70 border border-zinc-800/70">
-            <HardDrive class="w-3.5 h-3.5 text-fuchsia-400" />
-            <div class="space-y-0.5">
-              <div class="text-[10px] text-zinc-400 font-medium leading-none">{{ t('proxmox_free_disk') }}</div>
-              <div class="flex items-center gap-1.5 leading-none">
-                <span class="font-mono font-bold text-fuchsia-300">{{ pveHostFreeDisk }}</span>
-                <span class="text-[10px] text-zinc-500">({{ pveHostDiskPercent }}%)</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Scale Out Action Button in Banner -->
-          <button
-            @click="isAddModalOpen = true"
-            class="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white text-xs font-semibold shadow-md shadow-cyan-950/40 transition-all cursor-pointer active:scale-95 ml-auto lg:ml-0"
-          >
-            <Plus class="w-3.5 h-3.5" />
-            <span>{{ t('proxmox_add_worker_btn') }}</span>
+          <button v-if="proxmox?.configured" class="control flex h-8 items-center gap-1.5 px-2.5 text-xs" @click="isAddModalOpen = true">
+            <Plus class="h-3.5 w-3.5" />{{ t('proxmox_add_worker_btn') }}
           </button>
         </div>
       </div>
-    </div>
 
-    <!-- Controls / Filter Bar -->
-    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-      <!-- Section Heading -->
-      <div class="flex items-center gap-2.5">
-        <h2 class="text-lg font-bold text-zinc-100 tracking-tight">
-          {{ t('tab_nodes') }}
-        </h2>
-        <span class="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700/60">
-          {{ filteredNodes.length }}
-        </span>
+      <div v-if="filteredNodes.length" class="panel overflow-x-auto">
+        <table class="nodes-table">
+          <thead>
+            <tr>
+              <th>{{ currentLocale === 'ru' ? 'Узел' : 'Node' }}</th>
+              <th>{{ currentLocale === 'ru' ? 'Роль' : 'Role' }}</th>
+              <th>{{ currentLocale === 'ru' ? 'Состояние' : 'State' }}</th>
+              <th>{{ currentLocale === 'ru' ? 'Версии' : 'Versions' }}</th>
+              <th>{{ currentLocale === 'ru' ? 'Нагрузка' : 'Usage' }}</th>
+              <th>{{ t('node_uptime') }}</th>
+              <th>{{ currentLocale === 'ru' ? 'Сервисы' : 'Services' }}</th>
+              <th class="text-right">{{ currentLocale === 'ru' ? 'Действия' : 'Actions' }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <NodeCard
+              v-for="node in filteredNodes"
+              :key="node.ip"
+              :node="node"
+              @open-services="emit('open-services', $event)"
+              @open-logs="emit('open-logs', $event)"
+              @open-reboot="emit('open-reboot', $event)"
+            />
+          </tbody>
+        </table>
       </div>
 
-      <!-- Filters: Search + Role Pills + Add Worker Button -->
-      <div class="flex flex-wrap items-center gap-2.5">
-        <!-- Search -->
-        <div class="relative min-w-[200px] flex-1 sm:flex-none">
-          <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-          <input
-            v-model="searchQuery"
-            type="text"
-            placeholder="Filter by hostname or IP..."
-            class="w-full sm:w-52 pl-8 pr-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-cyan-500/70"
-          />
+      <div v-else-if="nodes.length === 0" class="panel empty-state danger-state">
+        <TriangleAlert class="h-5 w-5" />
+        <div>
+          <p class="text-xs font-semibold">{{ currentLocale === 'ru' ? 'Ноды недоступны' : 'Nodes unavailable' }}</p>
+          <p>{{ currentLocale === 'ru' ? 'Проверьте Talos API и состояние виртуальных машин.' : 'Check the Talos API and virtual machine state.' }}</p>
         </div>
-
-        <!-- Role tabs -->
-        <div class="flex items-center rounded-lg bg-zinc-900 border border-zinc-800 p-0.5 text-xs font-medium">
-          <button
-            @click="roleFilter = 'all'"
-            :class="[
-              'px-2.5 py-1 rounded-md transition-all cursor-pointer',
-              roleFilter === 'all'
-                ? 'bg-zinc-800 text-white shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200',
-            ]"
-          >
-            {{ t('services_filter_all') }}
-          </button>
-          <button
-            @click="roleFilter = 'controlplane'"
-            :class="[
-              'px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1',
-              roleFilter === 'controlplane'
-                ? 'bg-zinc-800 text-violet-300 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200',
-            ]"
-          >
-            <Shield class="w-3 h-3" />
-            <span>CP</span>
-          </button>
-          <button
-            @click="roleFilter = 'worker'"
-            :class="[
-              'px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1',
-              roleFilter === 'worker'
-                ? 'bg-zinc-800 text-sky-300 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200',
-            ]"
-          >
-            <Cpu class="w-3 h-3" />
-            <span>{{ t('stat_workers') }}</span>
-          </button>
-        </div>
-
-        <!-- Add Worker Button in Header Bar -->
-        <button
-          @click="isAddModalOpen = true"
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-cyan-500/40 text-cyan-300 hover:text-cyan-200 text-xs font-semibold transition-all cursor-pointer active:scale-95 shadow-sm"
-          :title="t('add_worker_title')"
-        >
-          <Plus class="w-3.5 h-3.5 text-cyan-400" />
-          <span>{{ t('proxmox_add_worker_btn') }}</span>
-        </button>
       </div>
-    </div>
+      <div v-else class="panel empty-state">
+        <Server class="h-5 w-5" />
+        <div><p class="text-xs font-semibold">{{ t('nodes_empty_title') }}</p><p>{{ t('nodes_empty_hint') }}</p></div>
+      </div>
+    </section>
 
-    <!-- Node Cards Grid -->
-    <div v-if="filteredNodes.length > 0" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
-      <NodeCard
-        v-for="node in filteredNodes"
-        :key="node.ip"
-        :node="node"
-        @open-services="emit('open-services', $event)"
-        @open-logs="emit('open-logs', $event)"
-        @open-reboot="emit('open-reboot', $event)"
-      />
-    </div>
-
-    <!-- Empty state when cluster is disconnected / no nodes discovered -->
-    <div
-      v-else-if="nodes.length === 0"
-      class="py-16 px-6 text-center rounded-2xl bg-rose-950/20 border border-rose-900/40"
-    >
-      <AlertTriangle class="w-10 h-10 mx-auto text-rose-400 mb-3 animate-pulse" />
-      <p class="text-sm font-semibold text-rose-300">
-        {{ currentLocale === 'ru' ? 'Связь с кластером потеряна: ноды недоступны' : 'Cluster connection lost: nodes unreachable' }}
-      </p>
-      <p class="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
-        {{ currentLocale === 'ru' ? 'Не удалось обнаружить ни одной ноды в кластере. Проверьте сетевое подключение к Talos API или состояние виртуальных машин.' : 'Could not discover any nodes in the cluster. Check network connectivity to Talos API or VM state.' }}
-      </p>
-    </div>
-
-    <!-- Empty state when search matches nothing -->
-    <div
-      v-else
-      class="py-16 text-center rounded-2xl bg-zinc-900/40 border border-zinc-800/60"
-    >
-      <Server class="w-10 h-10 mx-auto text-zinc-600 mb-3" />
-      <p class="text-sm font-semibold text-zinc-300">{{ t('nodes_empty_title') }}</p>
-      <p class="text-xs text-zinc-500 mt-1">{{ t('nodes_empty_hint') }}</p>
-    </div>
-
-    <!-- Add Worker Modal (Scale-Out Wizard) -->
     <AddWorkerModal
       :open="isAddModalOpen"
       @close="isAddModalOpen = false"
       @success="handleWorkerCreated"
-      @error="handleWorkerError"
+      @error="emit('show-toast', { message: $event || t('add_worker_error'), type: 'error' })"
     />
   </div>
 </template>
+
+<style scoped>
+.host-strip { display: flex; min-height: 64px; align-items: center; gap: 20px; padding: 10px 12px; }
+.host-identity { display: flex; min-width: 230px; flex: 1; align-items: center; gap: 10px; }
+.host-metrics { display: flex; align-items: center; gap: 24px; }
+.host-metrics div { min-width: 76px; }
+.host-metrics dt { color: var(--text-faint); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+.host-metrics dd { margin-top: 3px; color: var(--text); font-size: 11px; }
+.primary-button { display: flex; min-height: 32px; align-items: center; gap: 6px; border-radius: 6px; padding: 0 12px; background: var(--accent); color: #08111f; font-size: 11px; font-weight: 700; }
+.primary-button:hover { background: #91baff; }
+.filter-group { display: flex; height: 32px; align-items: center; gap: 2px; border: 1px solid var(--border); border-radius: 6px; padding: 2px; background: var(--surface-raised); }
+.filter-group button { height: 26px; border-radius: 4px; padding: 0 9px; color: var(--text-muted); font-size: 10px; }
+.filter-group button:hover { color: var(--text); }
+.filter-group button.active { background: var(--border); color: var(--text); }
+.nodes-table { width: 100%; min-width: 1040px; border-collapse: collapse; table-layout: auto; }
+th { height: 34px; padding: 0 12px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-size: 9px; font-weight: 650; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+.empty-state { display: flex; min-height: 120px; align-items: center; justify-content: center; gap: 10px; padding: 24px; color: var(--text-muted); font-size: 11px; }
+.empty-state p + p { margin-top: 3px; color: var(--text-faint); }
+.danger-state { color: var(--danger); border-color: #553038; background: color-mix(in srgb, var(--danger-muted) 40%, var(--surface)); }
+@media (max-width: 900px) {
+  .host-strip { align-items: flex-start; flex-wrap: wrap; }
+  .host-metrics { order: 3; width: 100%; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 10px; }
+}
+</style>

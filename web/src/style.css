@@ -2,30 +2,128 @@
 
 :root {
   color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  --canvas: #0a0c0f;
+  --sidebar: #0d1014;
+  --surface: #11151a;
+  --surface-raised: #151a20;
+  --surface-hover: #191f26;
+  --border: #252c34;
+  --border-strong: #343d47;
+  --text: #edf1f5;
+  --text-muted: #98a2ad;
+  --text-faint: #66717d;
+  --accent: #72a7ff;
+  --accent-muted: #172744;
+  --success: #47c98b;
+  --success-muted: #10281f;
+  --warning: #e6ad55;
+  --warning-muted: #2b2112;
+  --danger: #ef6a72;
+  --danger-muted: #30181b;
 }
+
+* { box-sizing: border-box; }
+
+html { background: var(--canvas); }
 
 body {
   margin: 0;
-  background-color: #0b0f17;
-  color: #f1f5f9;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--canvas);
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  min-height: 100vh;
 }
 
-/* Custom scrollbars */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+button, input, select, textarea { font: inherit; }
+button, select { cursor: pointer; }
+button:disabled, select:disabled { cursor: not-allowed; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
-::-webkit-scrollbar-track {
-  background: #0f172a;
-}
+
+::selection { background: #264d82; color: #fff; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--canvas); }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 3px;
+  background: var(--border-strong);
+  border: 2px solid var(--canvas);
+  border-radius: 8px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
 }
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.control {
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.control:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.status-dot.is-ok { background: var(--success); }
+.status-dot.is-warning { background: var(--warning); }
+.status-dot.is-danger { background: var(--danger); }
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-chip.is-ok {
+  color: var(--success);
+  border-color: #24583f;
+  background: var(--success-muted);
+}
+
+.status-chip.is-danger {
+  color: var(--danger);
+  border-color: #673139;
+  background: var(--danger-muted);
+}
+
+/* Keep legacy screens visually compatible while they move to shared patterns. */
+#app .rounded-2xl { border-radius: 8px !important; }
+#app .rounded-xl { border-radius: 7px !important; }
+#app [class*="backdrop-blur"] { backdrop-filter: none !important; }
+#app [class*="shadow-"] { box-shadow: none !important; }
+#app .animate-pulse { animation: none !important; }
+#app main h2.text-xl { font-size: 0.95rem !important; line-height: 1.4 !important; }
