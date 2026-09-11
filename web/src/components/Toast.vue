@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { CheckCircle2, AlertCircle, X } from 'lucide-vue-next'
+import { t } from '../i18n'
 
 defineProps<{
   show: boolean
@@ -40,6 +41,8 @@ const emit = defineEmits<{
       <button
         @click="emit('close')"
         class="text-zinc-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
+        :title="t('close')"
+        :aria-label="t('close')"
       >
         <X class="w-3.5 h-3.5" />
       </button>

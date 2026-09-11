@@ -44,7 +44,8 @@ FROM alpine:latest
 # Install minimal certificates for TLS/mTLS gRPC connections to Talos API
 RUN apk --no-cache add ca-certificates tzdata && \
     addgroup -S talosdeck -g 1000 && \
-    adduser -S talosdeck -u 1000 -G talosdeck
+    adduser -S talosdeck -u 1000 -G talosdeck && \
+    mkdir -p /app/data && chown -R talosdeck:talosdeck /app/data
 
 WORKDIR /app
 

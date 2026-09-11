@@ -37,6 +37,24 @@ const copyIp = async () => {
     console.error('Failed to copy IP', err)
   }
 }
+
+const getServiceStatus = (serviceName: 'etcd' | 'kubelet' | 'containerd' | 'apid'): { color: string; label: string } => {
+  const summary = props.node.servicesSummary
+  const raw = summary ? summary[serviceName] : undefined
+  if (raw === 'Healthy') {
+    return { color: 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]', label: 'Healthy' }
+  }
+  if (raw === 'Degraded') {
+    return { color: 'bg-rose-500 animate-pulse shadow-[0_0_6px_rgba(244,63,94,0.6)]', label: 'Degraded' }
+  }
+  if (raw === 'N/A') {
+    return { color: 'bg-zinc-600', label: 'N/A' }
+  }
+  if (props.node.ready) {
+    return { color: 'bg-emerald-400', label: 'Healthy' }
+  }
+  return { color: 'bg-rose-500', label: 'Degraded' }
+}
 </script>
 
 <template>
@@ -64,6 +82,7 @@ const copyIp = async () => {
               @click="copyIp"
               class="p-1 text-zinc-500 hover:text-cyan-400 rounded transition-colors cursor-pointer"
               :title="copied ? t('node_copied') : t('node_copy_ip')"
+              :aria-label="copied ? t('node_copied') : t('node_copy_ip')"
             >
               <Check v-if="copied" class="w-3.5 h-3.5 text-emerald-400" />
               <Copy v-else class="w-3.5 h-3.5" />
@@ -149,24 +168,34 @@ const copyIp = async () => {
           <!-- etcd (if controlplane) -->
           <div
             v-if="node.role === 'controlplane'"
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300"
+            class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300"
+            :title="`etcd: ${getServiceStatus('etcd').label}`"
           >
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+            <span :class="['w-1.5 h-1.5 rounded-full', getServiceStatus('etcd').color]"></span>
             <span>etcd</span>
           </div>
           <!-- kubelet -->
-          <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          <div
+            class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300"
+            :title="`kubelet: ${getServiceStatus('kubelet').label}`"
+          >
+            <span :class="['w-1.5 h-1.5 rounded-full', getServiceStatus('kubelet').color]"></span>
             <span>kubelet</span>
           </div>
           <!-- containerd -->
-          <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          <div
+            class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300"
+            :title="`containerd: ${getServiceStatus('containerd').label}`"
+          >
+            <span :class="['w-1.5 h-1.5 rounded-full', getServiceStatus('containerd').color]"></span>
             <span>containerd</span>
           </div>
           <!-- apid -->
-          <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          <div
+            class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300"
+            :title="`apid: ${getServiceStatus('apid').label}`"
+          >
+            <span :class="['w-1.5 h-1.5 rounded-full', getServiceStatus('apid').color]"></span>
             <span>apid</span>
           </div>
         </div>

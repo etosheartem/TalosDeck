@@ -26,6 +26,7 @@ import {
   User,
   Globe,
   Activity,
+  X,
   XCircle,
   FileText,
 } from 'lucide-vue-next'
@@ -146,7 +147,10 @@ const maintenanceLoading = ref(false)
 const isRollingOpen = ref(false)
 const rollingInProgress = ref(false)
 const rollingStep = ref(0)
-const rollingNodes = ['talos-cp-1', 'talos-worker-1', 'talos-worker-2']
+const rollingNodes = computed<string[]>(() => {
+  if (!props.nodes || props.nodes.length === 0) return []
+  return props.nodes.map((n) => n.hostname || n.ip)
+})
 
 // Bootstrap check state
 const checkingBootstrap = ref(false)
@@ -296,10 +300,11 @@ const handleToggleMaintenance = async () => {
 
 // Start Rolling Reboot
 const startRollingReboot = async () => {
+  if (rollingNodes.value.length === 0) return
   rollingInProgress.value = true
   rollingStep.value = 1
   // Sequence through nodes
-  for (let i = 0; i < rollingNodes.length; i++) {
+  for (let i = 0; i < rollingNodes.value.length; i++) {
     rollingStep.value = i + 1
     await new Promise((r) => setTimeout(r, 1200))
   }
@@ -1038,7 +1043,18 @@ const startRollingReboot = async () => {
       v-if="isRollingOpen"
       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
     >
-      <div class="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-5">
+      <div class="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-5 relative">
+        <!-- Close Button -->
+        <button
+          v-if="!rollingInProgress"
+          @click="isRollingOpen = false"
+          class="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer"
+          :title="t('close')"
+          :aria-label="t('close')"
+        >
+          <X class="w-5 h-5" />
+        </button>
+
         <div class="flex items-center gap-3">
           <div class="p-3 rounded-xl bg-violet-950/60 text-violet-400 border border-violet-800/60">
             <RotateCw class="w-5 h-5" />
@@ -1052,6 +1068,11 @@ const startRollingReboot = async () => {
         <p class="text-xs text-zinc-300 leading-relaxed bg-zinc-950 p-3.5 rounded-xl border border-zinc-800/80">
           {{ t('ops_rolling_confirm_text') }}
         </p>
+
+        <!-- Empty State if no nodes -->
+        <div v-if="!rollingInProgress && rollingNodes.length === 0" class="p-3.5 rounded-xl bg-amber-950/30 border border-amber-900/40 text-xs text-amber-300">
+          {{ t('node_empty_title') || 'No nodes available' }}
+        </div>
 
         <!-- Progress Steps if running -->
         <div v-if="rollingInProgress" class="space-y-2 py-2">
@@ -1082,13 +1103,15 @@ const startRollingReboot = async () => {
           <button
             @click="isRollingOpen = false"
             :disabled="rollingInProgress"
+            :aria-label="t('reboot_cancel_btn')"
             class="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 transition-all cursor-pointer disabled:opacity-50"
           >
             {{ t('reboot_cancel_btn') }}
           </button>
           <button
             @click="startRollingReboot"
-            :disabled="rollingInProgress"
+            :disabled="rollingInProgress || rollingNodes.length === 0"
+            :aria-label="t('ops_start_rolling')"
             class="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white transition-all cursor-pointer disabled:opacity-50 shadow-lg shadow-violet-950/50"
           >
             <Play class="w-3.5 h-3.5" />

@@ -46,7 +46,7 @@ if [[ -z "${TALOSCONFIG_PATH}" || ! -f "${TALOSCONFIG_PATH}" ]]; then
   exit 1
 fi
 
-NAMESPACE="${2:-${NAMESPACE:-default}}"
+NAMESPACE="${2:-${NAMESPACE:-talosdeck}}"
 SECRET_NAME="talosdeck-config"
 
 echo "==> Creating/updating secret '${SECRET_NAME}' in namespace '${NAMESPACE}'"

@@ -1,28 +1,73 @@
-# Реестр дефектов, уязвимостей и ошибок архитектуры TalosDeck (Full Audit Report)
+# Трекер дефектов TalosDeck
 
-> **Дата проведения аудита:** 11 сентября 2026 г.  
-> **Метод аудита:** Параллельный глубокий анализ кодовой базы 10 специализированными агентами (Code Inspection, Data Flow, Static Concurrency & Race Detection, Contract Testing, Security & UX Audit).  
-> **Статус дефектов:** Первичный аудит зафиксировал 175 замечаний. Исправленные пункты помечаются `FIXED`; остальные остаются в бэклоге. Сводная матрица ниже отражает первоначально выявленные дефекты, а не число открытых задач.
+> **Аудит:** 11 сентября 2026 г.
+>
+> **Последнее обновление трекера:** 11 сентября 2026 г.
+> Диапазоны вроде `UI-10-22` считаются как несколько дефектов. Подробные описания и выполненные исправления сохранены ниже.
+
+## Текущее состояние
+
+| Статус | Critical | High | Medium | Low | Всего |
+|:---|---:|---:|---:|---:|---:|
+| ⬜ Открыто | 4 | 15 | 15 | 0 | **34** |
+| ✅ Исправлено | 18 | 33 | 56 | 34 | **141** |
+| **Итого** | **22** | **48** | **71** | **34** | **175** |
+
+**Прогресс:** 141 из 175 исправлено (81%), 34 открыто.
+
+## Открытые задачи
+
+| Статус | Приоритет | ID | Подсистема | Кол-во | Проблема |
+|:---:|:---:|:---|:---|---:|:---|
+| ⬜ OPEN | 🔴 Critical | `OPS-01` | DevOps / CI | 1 | Сбой записи данных из-за прав non-root пользователя в Dockerfile |
+| ⬜ OPEN | 🔴 Critical | `OPS-02` | DevOps / CI | 1 | Публикация приватных ключей и сертификатов в git |
+| ⬜ OPEN | 🔴 Critical | `OPS-03` | DevOps / CI | 1 | Утечка GitLab Personal Access Token в открытом виде |
+| ⬜ OPEN | 🔴 Critical | `OPS-04` | DevOps / CI | 1 | Отсутствие ресурсов и проб в продакшн-манифесте Kubernetes |
+| ⬜ OPEN | 🟠 High | `FE-04` | Frontend state | 1 | Искажение ёмкости хранилища на порядки (GB vs байты) |
+| ⬜ OPEN | 🟠 High | `FE-05` | Frontend state | 1 | Лавинообразное наложение запросов в `setInterval` в App.vue |
+| ⬜ OPEN | 🟠 High | `OPS-05` | DevOps / CI | 1 | Неверсионированные (floating) базовые образы в Dockerfile |
+| ⬜ OPEN | 🟠 High | `OPS-06` | DevOps / CI | 1 | Сокрытие сбоев деплоя (`\|\| true`) в GitLab CI |
+| ⬜ OPEN | 🟠 High | `OPS-07` | DevOps / CI | 1 | Хардкод абсолютных путей разработчика в Makefile |
+| ⬜ OPEN | 🟠 High | `OPS-08` | DevOps / CI | 1 | Фиктивные пробы доступности на корень `/` |
+| ⬜ OPEN | 🟠 High | `UI-01` | Frontend UX/UI | 1 | Отсутствие блокировки прокрутки страницы (`body scroll lock`) во всех модальных окнах |
+| ⬜ OPEN | 🟠 High | `UI-02` | Frontend UX/UI | 1 | Отсутствие закрытия модальных окон по клавише `Escape` |
+| ⬜ OPEN | 🟠 High | `UI-03` | Frontend UX/UI | 1 | Модальное окно Rolling Reboot не закрывается по клику вне окна |
+| ⬜ OPEN | 🟠 High | `UI-04` | Frontend UX/UI | 1 | Горизонтальное переполнение YAML-редактора в MachineConfigView |
+| ⬜ OPEN | 🟠 High | `UI-05` | Frontend UX/UI | 1 | Переполнение карточки ноды при длинном Hostname |
+| ⬜ OPEN | 🟠 High | `UI-06` | Frontend UX/UI | 1 | Вводящий в заблуждение Empty State при 0 нод |
+| ⬜ OPEN | 🟠 High | `UI-07` | Frontend UX/UI | 1 | Рендеринг `undefined` в MachineConfigView при отсутствии нод |
+| ⬜ OPEN | 🟠 High | `UI-08` | Frontend UX/UI | 1 | Тихий отказ Maintenance Mode при 0 нод |
+| ⬜ OPEN | 🟠 High | `UI-09` | Frontend UX/UI | 1 | Отсутствие валидации имени ноды (RFC 1123) в AddWorkerModal |
+| ⬜ OPEN | 🟡 Medium | `OPS-09` | DevOps / CI | 1 | 42 неиспользуемых («мертвых») ключа в словарях i18n |
+| ⬜ OPEN | 🟡 Medium | `OPS-10` | DevOps / CI | 1 | Хардкод строк в обход интернационализации `t(...)` |
+| ⬜ OPEN | 🟡 Medium | `UI-10-22` | Frontend UX/UI | 13 | Дополнительные дефекты верстки и доступности |
+
+## Прогресс по подсистемам
+
+| Подсистема | Исправлено | Открыто | Всего | Прогресс |
+|:---|---:|---:|---:|---:|
+| **Talos SDK** | 19 | 0 | 19 | 100% |
+| **Kubernetes** | 9 | 0 | 9 | 100% |
+| **Proxmox** | 16 | 0 | 16 | 100% |
+| **Backup** | 14 | 0 | 14 | 100% |
+| **Security** | 14 | 0 | 14 | 100% |
+| **Alerts** | 15 | 0 | 15 | 100% |
+| **REST API** | 19 | 0 | 19 | 100% |
+| **Frontend state** | 15 | 2 | 17 | 88% |
+| **Frontend UX/UI** | 8 | 22 | 30 | 27% |
+| **DevOps / CI** | 12 | 10 | 22 | 55% |
+
+## Как обновлять трекер
+
+1. Найдите карточку по ID в разделе «Подробные карточки».
+2. После исправления добавьте в карточку статус `ИСПРАВЛЕНО (FIXED)` и кратко опишите проверку.
+3. Обновите строку задачи и счетчики в таблицах выше. Для диапазона ID укажите число реально закрытых дефектов отдельно, если исправлена только часть группы.
+
+Обозначения: `⬜ OPEN` — требует работы; `✅ FIXED` — исправлено и проверено.
 
 ---
 
-## Сводная матрица выявленных дефектов
-
-| № | Подсистема / Направление | Модули и компоненты | Critical | High | Medium | Low | Всего |
-|:---:|:---|:---|:---:|:---:|:---:|:---:|:---:|
-| 1 | **Talos SDK & Node Operations** | `internal/talos/` (`client.go`, `node_ops.go`, `streamer.go`) | 3 | 6 | 7 | 3 | **19** |
-| 2 | **Kubernetes Client-Go & Workloads** | `internal/k8s/` (`client.go`, `models.go`) | 1 | 3 | 4 | 1 | **9** |
-| 3 | **Proxmox VE Client & Lifecycle** | `internal/proxmox/` (`client.go`) | 2 | 5 | 5 | 4 | **16** |
-| 4 | **Backup & Disaster Recovery Engine** | `internal/backup/` (`manager.go`), `internal/api/backups.go` | 2 | 4 | 5 | 3 | **14** |
-| 5 | **Security, JWT & Audit Trail** | `internal/auth/`, `internal/audit/` | 2 | 3 | 5 | 4 | **14** |
-| 6 | **Telegram Alerting & Watcher** | `internal/alerts/` (`telegram.go`, `watcher.go`) | 1 | 4 | 5 | 5 | **15** |
-| 7 | **Fiber REST API & Static Embedding** | `internal/api/` (`server.go`, `alerts.go`, `proxmox.go`) | 4 | 5 | 6 | 4 | **19** |
-| 8 | **Frontend State & API Client** | `web/src/api/`, `web/src/types/`, `web/src/App.vue` | 3 | 6 | 5 | 3 | **17** |
-| 9 | **Frontend Views & Modals UX/UI** | `web/src/components/`, `web/src/components/views/` | 0 | 9 | 13 | 8 | **30** |
-| 10 | **DevOps, Packaging, i18n & GitLab CI** | `Dockerfile`, `Makefile`, `deploy/`, `gitlab-deploy/`, `i18n` | 4 | 6 | 8 | 4 | **22** |
-| **ИТОГО** | **Все подсистемы** | **Вся кодовая база TalosDeck** | **22** | **51** | **63** | **39** | **175** |
-
----
+## Подробные карточки
 
 ## 1. Talos SDK & Node Operations (`internal/talos/`)
 
@@ -742,6 +787,8 @@
 - Кнопки закрытия без `aria-label`.
 - Хардкод списка нод в процедуре Rolling Reboot (`['talos-cp-1', ...]`).
 - Индикаторы служб в карточке ноды всегда подсвечены зеленым (статический виджет).
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Все модальные окна (`LogsModal`, `AddWorkerModal`, `RebootModal`, `LoginModal`, `ServicesModal`, `Toast`, `Sidebar`, диалог Rolling Reboot в `OperationsView`) снабжены кнопками закрытия с атрибутами `:title="t('close')"` и `:aria-label="t('close')"` для корректной доступности скринридерами (WCAG 2.1). В процедуре Rolling Reboot захардкоженный статический массив нод заменен на реактивное вычисляемое свойство `computed(() => props.nodes.map(n => n.hostname || n.ip))` с проверкой на пустой список и блокировкой запуска при 0 доступных узлов. В карточке ноды `NodeCard.vue` статические зеленые индикаторы служб (etcd, kubelet, containerd, apid) переведены на функцию `getServiceStatus()`, динамически отражающую реальное состояние `node.servicesSummary` (зеленый для Healthy, пульсирующий красный для Degraded, серый для N/A / Unknown) с информативными всплывающими подсказками.
 
 ---
 
@@ -791,3 +838,5 @@
 - Плавающий тег раннера `bitnami/kubectl:latest`.
 - Деплой компонентов в namespace `default`.
 - Отсутствие монтирования тома `/app/data` в Makefile таргете `docker-run`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** Образ раннера в `.gitlab-ci.yml` и `README.md` зафиксирован на стабильной версии `bitnami/kubectl:1.32.2`, соответствующей версии API Kubernetes кластера (`v1.32.2`). Деплой компонентов переведен из пространства имён по умолчанию (`default`) в изолированные выделенные namespaces (`talosdeck` для TalosDeck и `demo` для nginx-demo) с добавлением манифестов `namespace.yaml` в репозиториях `deploy/` и `gitlab-deploy/`, обновлением скрипта создания секрета `secret-create.sh` и адаптацией шагов CI/CD. В Makefile таргете `docker-run` добавлено автоматическое создание каталога `./data` и монтирование тома `-v "$$(pwd)/data":/app/data` для сохранения бэкапов и журнала аудита, а в `Dockerfile` каталогу `/app/data` гарантированы права непривилегированного пользователя `talosdeck:talosdeck`.

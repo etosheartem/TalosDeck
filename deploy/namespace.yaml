@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: talosdeck
+  labels:
+    app.kubernetes.io/name: talosdeck
+    app.kubernetes.io/part-of: talosdeck

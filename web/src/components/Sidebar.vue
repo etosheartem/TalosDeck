@@ -82,7 +82,9 @@ const selectTab = (key: TabKey) => {
         <!-- Mobile close button -->
         <button
           @click="emit('closeMobile')"
-          class="lg:hidden p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+          class="lg:hidden p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 cursor-pointer"
+          :title="t('close')"
+          :aria-label="t('close')"
         >
           <X class="w-5 h-5" />
         </button>

@@ -250,6 +250,8 @@ const handleSubmit = async () => {
           v-if="!isCreating"
           @click="emit('close')"
           class="text-zinc-500 hover:text-zinc-300 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
+          :title="t('close')"
+          :aria-label="t('close')"
         >
           <X class="w-5 h-5" />
         </button>

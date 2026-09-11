@@ -104,6 +104,8 @@ const filteredServices = computed(() => {
         <button
           @click="emit('close')"
           class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer"
+          :title="t('close')"
+          :aria-label="t('close')"
         >
           <X class="w-5 h-5" />
         </button>

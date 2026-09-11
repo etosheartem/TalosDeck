@@ -5,6 +5,7 @@ APP_NAME ?= talosdeck
 IMAGE_NAME ?= talosdeck
 IMAGE_TAG ?= latest
 PORT ?= 8080
+NAMESPACE ?= talosdeck
 
 # Auto-detect kubeconfig location
 KUBECONFIG ?= $(shell \
@@ -26,7 +27,7 @@ export TALOSCONFIG
 # Detect package manager for frontend (bun or npm)
 PM ?= $(shell if command -v bun >/dev/null 2>&1; then echo "bun"; else echo "npm"; fi)
 
-.PHONY: all help build build-web build-go run docker-build docker-run k8s-secret k8s-deploy k8s-undeploy clean
+.PHONY: all help build build-web build-go run docker-build docker-run k8s-namespace k8s-secret k8s-deploy k8s-undeploy clean
 
 all: build
 
@@ -70,31 +71,35 @@ docker-run:
 		echo "ERROR: talosconfig not found. Specify TALOSCONFIG=/path/to/talosconfig"; \
 		exit 1; \
 	fi
+	@mkdir -p ./data
 	@echo "==> Running Docker container on port $(PORT)..."
 	docker run --rm -it \
 		-p $(PORT):8080 \
 		-v "$(TALOSCONFIG)":/etc/talos/talosconfig:ro \
+		-v "$$(pwd)/data":/app/data \
 		-e TALOSCONFIG=/etc/talos/talosconfig \
 		$(IMAGE_NAME):$(IMAGE_TAG)
 
-k8s-secret:
-	@echo "==> Creating/updating Kubernetes secret 'talosdeck-config'..."
-	@./deploy/secret-create.sh "$(TALOSCONFIG)"
+k8s-namespace:
+	@echo "==> Ensuring Kubernetes namespace '$(NAMESPACE)' exists..."
+	@kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+
+k8s-secret: k8s-namespace
+	@echo "==> Creating/updating Kubernetes secret 'talosdeck-config' in namespace '$(NAMESPACE)'..."
+	@./deploy/secret-create.sh "$(TALOSCONFIG)" "$(NAMESPACE)"
 
 k8s-deploy: k8s-secret
-	@echo "==> Deploying TalosDeck manifests to Kubernetes..."
-	kubectl apply -f deploy/deployment.yaml
-	kubectl apply -f deploy/service.yaml
+	@echo "==> Deploying TalosDeck manifests to Kubernetes namespace '$(NAMESPACE)'..."
+	kubectl apply -n $(NAMESPACE) -f deploy/
 	@echo "==> Deployment initiated. Checking rollout status..."
-	kubectl rollout status deployment/talosdeck --timeout=60s || true
+	kubectl rollout status deployment/talosdeck -n $(NAMESPACE) --timeout=60s || true
 	@echo "==> Service info:"
-	kubectl get svc talosdeck
+	kubectl get svc talosdeck -n $(NAMESPACE)
 
 k8s-undeploy:
-	@echo "==> Undeploying TalosDeck..."
-	kubectl delete -f deploy/service.yaml --ignore-not-found
-	kubectl delete -f deploy/deployment.yaml --ignore-not-found
-	kubectl delete secret talosdeck-config --ignore-not-found
+	@echo "==> Undeploying TalosDeck from namespace '$(NAMESPACE)'..."
+	kubectl delete -n $(NAMESPACE) -f deploy/ --ignore-not-found
+	kubectl delete secret talosdeck-config -n $(NAMESPACE) --ignore-not-found
 	@echo "==> Undeploy complete."
 
 clean:

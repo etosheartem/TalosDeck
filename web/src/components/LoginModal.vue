@@ -78,6 +78,8 @@ const fillDefaultPassword = () => {
       <button
         @click="emit('close')"
         class="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer"
+        :title="t('close')"
+        :aria-label="t('close')"
       >
         <X class="w-4 h-4" />
       </button>
