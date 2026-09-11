@@ -394,6 +394,23 @@ func (c *Client) allocateVMID(ctx context.Context) (int, error) {
 	return vmid, nil
 }
 
+// reserveVMID protects explicitly requested IDs with the same in-flight
+// reservation used by automatic allocation.
+func (c *Client) reserveVMID(vmid int) error {
+	c.vmidMu.Lock()
+	defer c.vmidMu.Unlock()
+
+	if c.inFlightVMIDs == nil {
+		c.inFlightVMIDs = make(map[int]bool)
+	}
+	if c.inFlightVMIDs[vmid] {
+		return fmt.Errorf("VMID %d is already being created", vmid)
+	}
+	c.inFlightVMIDs[vmid] = true
+
+	return nil
+}
+
 func (c *Client) releaseVMID(vmid int) {
 	c.vmidMu.Lock()
 	defer c.vmidMu.Unlock()
@@ -417,7 +434,7 @@ func (c *Client) CreateTalosWorker(ctx context.Context, opts CreateWorkerOpts) (
 		}
 	}
 
-	// Allocate VMID if not specified, protected against TOCTOU race (PVE-04)
+	// Reserve both automatic and explicit VMIDs for the entire create operation.
 	vmid := opts.VMID
 	if vmid <= 0 {
 		var err error
@@ -425,8 +442,10 @@ func (c *Client) CreateTalosWorker(ctx context.Context, opts CreateWorkerOpts) (
 		if err != nil {
 			return nil, fmt.Errorf("failed to auto-allocate VMID: %w", err)
 		}
-		defer c.releaseVMID(vmid)
+	} else if err := c.reserveVMID(vmid); err != nil {
+		return nil, err
 	}
+	defer c.releaseVMID(vmid)
 
 	// Apply sensible defaults matching TalosDeck worker template
 	name := strings.TrimSpace(opts.Name)

@@ -301,6 +301,27 @@ func TestCreateTalosWorker_Validation(t *testing.T) {
 	}
 }
 
+func TestCreateTalosWorker_ReservesExplicitVMID(t *testing.T) {
+	client, err := NewClient(Config{
+		BaseURL:  "http://localhost",
+		Node:     "pve",
+		APIToken: "test",
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	if err := client.reserveVMID(150); err != nil {
+		t.Fatalf("failed to arrange reservation: %v", err)
+	}
+	defer client.releaseVMID(150)
+
+	_, err = client.CreateTalosWorker(context.Background(), CreateWorkerOpts{VMID: 150})
+	if err == nil || !strings.Contains(err.Error(), "already being created") {
+		t.Fatalf("expected duplicate explicit VMID to be rejected, got %v", err)
+	}
+}
+
 func TestDeleteWorker_Success(t *testing.T) {
 	var shutdownCalled, deleteCalled bool
 

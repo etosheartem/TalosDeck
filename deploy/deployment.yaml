@@ -23,7 +23,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: talosdeck
-          image: talosdeck:latest
+          image: talosdeck:0.1.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

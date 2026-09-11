@@ -62,6 +62,7 @@ export interface DiskPartition {
   mountpoint?: string // e.g. "/boot/efi", "/var", "/system/state"
   label?: string
   used?: string // e.g. "64 MB"
+  usedBytes?: number
   usedPercent?: number // e.g. 12
 }
 

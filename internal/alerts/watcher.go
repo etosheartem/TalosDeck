@@ -177,7 +177,7 @@ func (w *Watcher) CheckClusterHealth(ctx context.Context) error {
 		servicesSummary := n.ServicesSummary
 
 		if !exists {
-			w.nodeStates[nodeIP] = NodeStateSnapshot{
+			snapshot := NodeStateSnapshot{
 				IP:          nodeIP,
 				Hostname:    hostname,
 				Ready:       ready,
@@ -193,8 +193,14 @@ func (w *Watcher) CheckClusterHealth(ctx context.Context) error {
 					sendFn: func() error {
 						return w.alerts.SendNodeStatusAlert(nodeIP, hostname, "NotReady", "New node detected in NotReady state")
 					},
-					onSuccess: func() {},
+					onSuccess: func() {
+						w.mu.Lock()
+						defer w.mu.Unlock()
+						w.nodeStates[nodeIP] = snapshot
+					},
 				})
+			} else {
+				w.nodeStates[nodeIP] = snapshot
 			}
 			continue
 		}
@@ -297,7 +303,6 @@ func (w *Watcher) CheckClusterHealth(ctx context.Context) error {
 	if etcdStatus != nil {
 		if w.lastEtcdHealthy == nil {
 			healthy := etcdStatus.Healthy
-			w.lastEtcdHealthy = &healthy
 			if !isInitial && !healthy && w.alerts != nil && w.alerts.IsEnabled() {
 				details := formatEtcdAlertDetails(etcdStatus)
 				alertsToSend = append(alertsToSend, alertTask{
@@ -305,8 +310,15 @@ func (w *Watcher) CheckClusterHealth(ctx context.Context) error {
 					sendFn: func() error {
 						return w.alerts.SendEtcdAlert(false, details)
 					},
-					onSuccess: func() {},
+					onSuccess: func() {
+						w.mu.Lock()
+						defer w.mu.Unlock()
+						h := false
+						w.lastEtcdHealthy = &h
+					},
 				})
+			} else {
+				w.lastEtcdHealthy = &healthy
 			}
 		} else if *w.lastEtcdHealthy != etcdStatus.Healthy {
 			healthy := etcdStatus.Healthy

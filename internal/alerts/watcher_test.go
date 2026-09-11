@@ -60,6 +60,18 @@ func (m *mockClusterInspector) setNodeCPU(ip string, cpu int) {
 	}
 }
 
+func (m *mockClusterInspector) addNode(node *talos.NodeOverview) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nodes = append(m.nodes, node)
+}
+
+func (m *mockClusterInspector) setEtcdStatus(status *talos.EtcdClusterStatus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.etcdStatus = status
+}
+
 func (m *mockClusterInspector) setEtcdHealthy(healthy bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -322,6 +334,68 @@ func TestWatcher_NoAlertSuppressionOnFailure(t *testing.T) {
 	_ = watcher.CheckClusterHealth(ctx)
 	if atomic.LoadInt32(&alertAttempts) != 2 {
 		t.Fatalf("expected alert attempts to stay 2, got %d", alertAttempts)
+	}
+}
+
+func TestWatcher_FirstObservedFailuresRetryUntilDelivered(t *testing.T) {
+	var shouldFail atomic.Bool
+	shouldFail.Store(true)
+	var alertAttempts int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&alertAttempts, 1)
+		if shouldFail.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"ok": false}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok": true}`))
+	}))
+	defer server.Close()
+
+	alertSvc := NewTelegramService("bot:token", "-100123", true)
+	alertSvc.SetAPIBaseURL(server.URL)
+	mockCluster := &mockClusterInspector{nodes: []*talos.NodeOverview{}}
+	watcher := NewWatcher(mockCluster, alertSvc, time.Second)
+
+	// Finish the initial scan without either resource being present.
+	if err := watcher.CheckClusterHealth(context.Background()); err != nil {
+		t.Fatalf("initial check failed: %v", err)
+	}
+	mockCluster.addNode(&talos.NodeOverview{IP: "10.42.0.120", Hostname: "new-worker", Role: "worker", Ready: false})
+
+	// A first-seen NotReady node must remain uncommitted after a failed send.
+	_ = watcher.CheckClusterHealth(context.Background())
+	if _, exists := watcher.GetNodeSnapshots()["10.42.0.120"]; exists {
+		t.Fatal("first-seen NotReady node was committed before alert delivery")
+	}
+	_ = watcher.CheckClusterHealth(context.Background())
+	if got := atomic.LoadInt32(&alertAttempts); got != 2 {
+		t.Fatalf("expected node alert retry, got %d attempts", got)
+	}
+
+	shouldFail.Store(false)
+	_ = watcher.CheckClusterHealth(context.Background())
+	if _, exists := watcher.GetNodeSnapshots()["10.42.0.120"]; !exists {
+		t.Fatal("node state was not committed after successful delivery")
+	}
+
+	// A degraded etcd state first observed later follows the same retry rule.
+	mockCluster.setEtcdStatus(&talos.EtcdClusterStatus{Healthy: false})
+	shouldFail.Store(true)
+	_ = watcher.CheckClusterHealth(context.Background())
+	if watcher.lastEtcdHealthy != nil {
+		t.Fatal("first degraded etcd state was committed before alert delivery")
+	}
+	_ = watcher.CheckClusterHealth(context.Background())
+	if got := atomic.LoadInt32(&alertAttempts); got != 5 {
+		t.Fatalf("expected etcd alert retry, got %d total attempts", got)
+	}
+
+	shouldFail.Store(false)
+	_ = watcher.CheckClusterHealth(context.Background())
+	if watcher.lastEtcdHealthy == nil || *watcher.lastEtcdHealthy {
+		t.Fatal("etcd state was not committed after successful delivery")
 	}
 }
 

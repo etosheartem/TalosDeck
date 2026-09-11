@@ -2,6 +2,7 @@ package talos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -68,6 +69,11 @@ func (m *TalosManager) calculateCPUUsage(nodeIP string, busy, total float64) int
 
 // GetNodeStatus fetches the runtime status, version, and health of a single node.
 func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeOverview, error) {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return nil, errors.New("talos client is not initialized")
+	}
+
 	nodeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	nodeCtx = client.WithNode(nodeCtx, nodeIP)
@@ -92,7 +98,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 	}
 
 	// 1. Check version & metadata
-	verResp, err := m.client.Version(nodeCtx)
+	verResp, err := talosClient.Version(nodeCtx)
 	if err != nil {
 		return overview, fmt.Errorf("failed to fetch version for %s: %w", nodeIP, err)
 	}
@@ -114,7 +120,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 	}
 
 	// 2. Fetch service list (handle all chunked messages)
-	svcResp, err := m.client.ServiceList(nodeCtx)
+	svcResp, err := talosClient.ServiceList(nodeCtx)
 	if err == nil {
 		for _, msg := range svcResp.GetMessages() {
 			for _, svc := range msg.GetServices() {
@@ -145,7 +151,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 
 	// TALOS-18: Query real node runtime metrics (Memory, CPU, Uptime, Kubernetes version) dynamically
 	// 1. Real Memory from Talos machine Memory API
-	if memResp, err := m.client.Memory(nodeCtx); err == nil && len(memResp.GetMessages()) > 0 {
+	if memResp, err := talosClient.Memory(nodeCtx); err == nil && len(memResp.GetMessages()) > 0 {
 		if meminfo := memResp.GetMessages()[0].GetMeminfo(); meminfo != nil {
 			totalBytes := meminfo.GetMemtotal() * 1024
 			availBytes := meminfo.GetMemavailable() * 1024
@@ -160,7 +166,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 	}
 
 	// 2. Real CPU usage from COSI perf.CPU
-	if cpuRes, err := safe.StateGet[*perf.CPU](nodeCtx, m.client.COSI, resource.NewMetadata(perf.NamespaceName, perf.CPUType, perf.CPUID, resource.VersionUndefined)); err == nil && cpuRes != nil && cpuRes.TypedSpec() != nil {
+	if cpuRes, err := safe.StateGet[*perf.CPU](nodeCtx, talosClient.COSI, resource.NewMetadata(perf.NamespaceName, perf.CPUType, perf.CPUID, resource.VersionUndefined)); err == nil && cpuRes != nil && cpuRes.TypedSpec() != nil {
 		stat := cpuRes.TypedSpec().CPUTotal
 		total := stat.User + stat.Nice + stat.System + stat.Idle + stat.Iowait + stat.Irq + stat.SoftIrq + stat.Steal
 		if total > 0 {
@@ -177,7 +183,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 	}
 
 	// 3. Real Uptime from /proc/uptime via client.Read
-	if uptimeReader, err := m.client.Read(nodeCtx, "/proc/uptime"); err == nil {
+	if uptimeReader, err := talosClient.Read(nodeCtx, "/proc/uptime"); err == nil {
 		var upSec, idleSec float64
 		if data, err := io.ReadAll(uptimeReader); err == nil {
 			if _, err := fmt.Sscanf(string(data), "%f %f", &upSec, &idleSec); err == nil && upSec > 0 {
@@ -198,7 +204,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 	}
 
 	// 4. Real Kubernetes Version from COSI k8s.KubeletStatus
-	if k8sList, err := safe.StateListAll[*talosk8s.KubeletStatus](nodeCtx, m.client.COSI); err == nil {
+	if k8sList, err := safe.StateListAll[*talosk8s.KubeletStatus](nodeCtx, talosClient.COSI); err == nil {
 		for ks := range k8sList.All() {
 			if ks == nil || ks.TypedSpec() == nil {
 				continue
@@ -351,11 +357,16 @@ func (m *TalosManager) GetClusterInfo(ctx context.Context) (*ClusterInfo, error)
 
 // ListServices lists the system services and their health on a node.
 func (m *TalosManager) ListServices(ctx context.Context, nodeIP string) ([]*TalosService, error) {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return nil, errors.New("talos client is not initialized")
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	nodeCtx := client.WithNode(reqCtx, nodeIP)
 
-	resp, err := m.client.ServiceList(nodeCtx)
+	resp, err := talosClient.ServiceList(nodeCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list services on %s: %w", nodeIP, err)
 	}
@@ -411,6 +422,11 @@ func (m *TalosManager) ListServices(ctx context.Context, nodeIP string) ([]*Talo
 
 // ListContainers lists containers running on a node.
 func (m *TalosManager) ListContainers(ctx context.Context, nodeIP, namespace string) ([]*ContainerInfo, error) {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return nil, errors.New("talos client is not initialized")
+	}
+
 	if namespace == "" {
 		namespace = "system"
 	}
@@ -418,7 +434,7 @@ func (m *TalosManager) ListContainers(ctx context.Context, nodeIP, namespace str
 	defer cancel()
 	nodeCtx := client.WithNode(reqCtx, nodeIP)
 
-	resp, err := m.client.Containers(nodeCtx, namespace, common.ContainerDriver_CONTAINERD)
+	resp, err := talosClient.Containers(nodeCtx, namespace, common.ContainerDriver_CONTAINERD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers on %s (ns: %s): %w", nodeIP, namespace, err)
 	}
@@ -443,36 +459,73 @@ func (m *TalosManager) ListContainers(ctx context.Context, nodeIP, namespace str
 
 // RebootNode sends a reboot signal to the node with timeout.
 func (m *TalosManager) RebootNode(ctx context.Context, nodeIP string) error {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return errors.New("talos client is not initialized")
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	nodeCtx := client.WithNode(reqCtx, nodeIP)
-	return m.client.Reboot(nodeCtx)
+	return talosClient.Reboot(nodeCtx)
 }
 
 // RestartService requests a restart of the specified service on the node.
 func (m *TalosManager) RestartService(ctx context.Context, nodeIP string, serviceID string) error {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return errors.New("talos client is not initialized")
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	nodeCtx := client.WithNode(reqCtx, nodeIP)
-	_, err := m.client.ServiceRestart(nodeCtx, serviceID)
+	_, err := talosClient.ServiceRestart(nodeCtx, serviceID)
 	return err
 }
 
 // GetNodeDisks queries physical disks and their partition details for a given node.
 func (m *TalosManager) GetNodeDisks(ctx context.Context, nodeIP string) ([]*DiskInfo, error) {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return nil, errors.New("talos client is not initialized")
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	nodeCtx := client.WithNode(reqCtx, nodeIP)
 
 	// Fetch physical disks via Talos SDK
-	resp, err := m.client.Disks(nodeCtx)
+	resp, err := talosClient.Disks(nodeCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query disks on %s: %w", nodeIP, err)
 	}
 
+	type filesystemUsage struct {
+		used    uint64
+		percent int
+	}
+	usageByPath := make(map[string]filesystemUsage)
+	if mountsResp, mountsErr := talosClient.Mounts(nodeCtx); mountsErr != nil {
+		log.Printf("[WARN] Talos Mounts returned error for %s: %v", nodeIP, mountsErr)
+	} else {
+		for _, msg := range mountsResp.GetMessages() {
+			for _, stat := range msg.GetStats() {
+				used, percent := calculateFilesystemUsage(stat.GetSize(), stat.GetAvailable())
+				usage := filesystemUsage{used: used, percent: percent}
+				if filesystem := stat.GetFilesystem(); filesystem != "" {
+					usageByPath[filesystem] = usage
+				}
+				if mountPath := stat.GetMountedOn(); mountPath != "" {
+					usageByPath[mountPath] = usage
+				}
+			}
+		}
+	}
+
 	// Fetch volume statuses via COSI to resolve partition details
 	partitionsByParent := make(map[string][]PartitionInfo)
-	volumes, err := safe.StateListAll[*block.VolumeStatus](nodeCtx, m.client.COSI)
+	volumes, err := safe.StateListAll[*block.VolumeStatus](nodeCtx, talosClient.COSI)
 	if err != nil {
 		log.Printf("[WARN] COSI StateListAll VolumeStatus returned error for %s: %v", nodeIP, err)
 	} else {
@@ -511,6 +564,15 @@ func (m *TalosManager) GetNodeDisks(ctx context.Context, nodeIP string) ([]*Disk
 					MountPath:      mountPath,
 					Phase:          spec.Phase.String(),
 					UUID:           spec.UUID,
+				}
+				usage, ok := usageByPath[spec.Location]
+				if !ok && mountPath != "" {
+					usage, ok = usageByPath[mountPath]
+				}
+				if ok {
+					pInfo.UsedBytes = usage.used
+					pInfo.Used = formatBytes(usage.used)
+					pInfo.UsedPercent = usage.percent
 				}
 				partitionsByParent[parent] = append(partitionsByParent[parent], pInfo)
 			}
@@ -561,11 +623,16 @@ func (m *TalosManager) GetNodeDisks(ctx context.Context, nodeIP string) ([]*Disk
 
 // GetNodeConfig reads the active machine configuration of a node.
 func (m *TalosManager) GetNodeConfig(ctx context.Context, nodeIP string) ([]byte, error) {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return nil, errors.New("talos client is not initialized")
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	nodeCtx := client.WithNode(reqCtx, nodeIP)
 
-	mc, err := safe.StateGet[*talosconfig.MachineConfig](nodeCtx, m.client.COSI, resource.NewMetadata("config", talosconfig.MachineConfigType, talosconfig.ActiveID, resource.VersionUndefined))
+	mc, err := safe.StateGet[*talosconfig.MachineConfig](nodeCtx, talosClient.COSI, resource.NewMetadata("config", talosconfig.MachineConfigType, talosconfig.ActiveID, resource.VersionUndefined))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read machine config from %s: %w", nodeIP, err)
 	}
@@ -584,6 +651,11 @@ func (m *TalosManager) GetNodeConfig(ctx context.Context, nodeIP string) ([]byte
 
 // GetEtcdStatus queries etcd members and alarms from the cluster control plane with multi-node failover.
 func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, error) {
+	talosClient := m.GetClient()
+	if talosClient == nil {
+		return nil, errors.New("talos client is not initialized")
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 
@@ -614,7 +686,7 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 	for _, cp := range cpCandidates {
 		subCtx, subCancel := context.WithTimeout(reqCtx, 4*time.Second)
 		nodeCtx := client.WithNode(subCtx, cp)
-		resp, err := m.client.EtcdMemberList(nodeCtx, &machine.EtcdMemberListRequest{})
+		resp, err := talosClient.EtcdMemberList(nodeCtx, &machine.EtcdMemberListRequest{})
 		subCancel()
 		if err == nil && resp != nil {
 			memberResp = resp
@@ -658,7 +730,7 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 	var raftTerm, raftIndex uint64
 	for _, cp := range cpCandidates {
 		statusCtx, statusCancel := context.WithTimeout(reqCtx, 3*time.Second)
-		statusResp, statusErr := m.client.EtcdStatus(client.WithNode(statusCtx, cp))
+		statusResp, statusErr := talosClient.EtcdStatus(client.WithNode(statusCtx, cp))
 		statusCancel()
 		if statusErr != nil || statusResp == nil {
 			continue
@@ -713,7 +785,7 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 	defer alarmCancel()
 	alarmNodeCtx := client.WithNode(alarmCtx, activeCP)
 
-	alarmResp, alarmErr := m.client.EtcdAlarmList(alarmNodeCtx)
+	alarmResp, alarmErr := talosClient.EtcdAlarmList(alarmNodeCtx)
 	if alarmErr == nil && alarmResp != nil {
 		alarmCheckSuccess = true
 		for _, msg := range alarmResp.GetMessages() {
@@ -744,6 +816,17 @@ func (m *TalosManager) GetEtcdStatus(ctx context.Context) (*EtcdClusterStatus, e
 		RaftTerm:    raftTerm,
 		RaftIndex:   raftIndex,
 	}, nil
+}
+
+func calculateFilesystemUsage(size, available uint64) (uint64, int) {
+	if size == 0 {
+		return 0, 0
+	}
+	if available > size {
+		available = size
+	}
+	used := size - available
+	return used, int(float64(used) / float64(size) * 100)
 }
 
 func formatBytes(bytes uint64) string {

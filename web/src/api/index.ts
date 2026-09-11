@@ -283,6 +283,34 @@ export const rebootNode = async (ip: string): Promise<{ success: boolean; messag
   }
 }
 
+export const waitForNodeReboot = async (ip: string, timeoutMs = 180000): Promise<void> => {
+	const deadline = Date.now() + timeoutMs
+	let observedUnavailable = false
+
+	// Give Talos time to begin the reboot before the first health probe.
+	await new Promise((resolve) => setTimeout(resolve, 2000))
+	while (Date.now() < deadline) {
+		try {
+			const res = await fetchWithTimeout(`/api/nodes/${encodeURIComponent(ip)}`, {}, 5000)
+			if (!res.ok) {
+				observedUnavailable = true
+			} else {
+				const node = await res.json()
+				if (node?.ready === false) {
+					observedUnavailable = true
+				} else if (observedUnavailable && node?.ready === true) {
+					return
+				}
+			}
+		} catch {
+			observedUnavailable = true
+		}
+		await new Promise((resolve) => setTimeout(resolve, 2000))
+	}
+
+	throw new Error(`Node ${ip} did not return to Ready within ${Math.round(timeoutMs / 1000)} seconds`)
+}
+
 export const getDmesgWsUrl = (ip: string): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${window.location.host}/ws/nodes/${encodeURIComponent(ip)}/dmesg`
@@ -542,9 +570,10 @@ const normalizePhysicalDisk = (raw: any): PhysicalDisk => {
         type: partition.type,
         filesystem: partition.filesystem,
         mountpoint: partition.mountpoint || partition.mountPath,
-        label: partition.label,
-        used: partition.used,
-        usedPercent: partition.usedPercent,
+		label: partition.label,
+		used: partition.used || (typeof partition.usedBytes === 'number' ? formatBytes(partition.usedBytes) : undefined),
+		usedBytes: typeof partition.usedBytes === 'number' ? partition.usedBytes : undefined,
+		usedPercent: partition.usedPercent,
       }
     }),
   }
@@ -576,9 +605,9 @@ export const fetchAllNodeDisks = async (nodes: NodeOverview[]): Promise<NodeDisk
     disks.forEach((d) => {
       totalGB += sizeToGiB(d.sizeBytes ?? d.size)
       d.partitions.forEach((p) => {
-        if (p.used) {
-          usedGB += sizeToGiB(p.used)
-        }
+		if (p.usedBytes !== undefined || p.used) {
+			usedGB += sizeToGiB(p.usedBytes ?? p.used ?? 0)
+		}
       })
     })
 
@@ -1046,45 +1075,79 @@ export const fetchPods = async (): Promise<{ pods: K8sPod[] }> => {
 // 5. Operations & Bootstrap Diagnostics
 // ----------------------------------------------------
 export const runBootstrapCheck = async (): Promise<BootstrapCheckItem[]> => {
-  // Simulate diagnosis with small delay
-  await new Promise((r) => setTimeout(r, 600))
-  return [
-    {
-      id: 'talos-api',
-      title: 'Talos OS API & mTLS',
-      description: 'TCP :50000 mTLS connectivity to all cluster nodes',
-      status: 'success',
-      detail: 'Latency < 2ms across all 3 nodes (10.42.0.110, 10.42.0.111, 10.42.0.112)',
-    },
-    {
-      id: 'etcd-quorum',
-      title: 'etcd Cluster Quorum',
-      description: 'Distributed key-value store consensus and raft status',
-      status: 'success',
-      detail: 'Leader: talos-cp-1 (ID 8e9e35c7d0f6fa98), Raft Term 4, 0 alarms',
-    },
-    {
-      id: 'k8s-apiserver',
-      title: 'Kubernetes Control Plane',
-      description: 'kube-apiserver /readyz and /livez endpoints',
-      status: 'success',
-      detail: 'HTTP 200 OK via https://10.42.0.110:6443',
-    },
-    {
-      id: 'cni-network',
-      title: 'CNI Fabric & PodCIDR',
-      description: 'Flannel overlay network and node routing table',
-      status: 'success',
-      detail: 'Subnet 10.244.0.0/16 distributed across 3 nodes',
-    },
-    {
-      id: 'coredns-service',
-      title: 'CoreDNS Resolution',
-      description: 'In-cluster DNS service responsiveness',
-      status: 'success',
-      detail: '2/2 replicas active, resolved kubernetes.default.svc.cluster.local in 1.4ms',
-    },
-  ]
+	type ProbeResult = { ok: boolean; status: number; data?: any; error?: string }
+	const probe = async (url: string): Promise<ProbeResult> => {
+		try {
+			const response = await fetchWithTimeout(url, {}, 10000)
+			if (!response.ok) {
+				return { ok: false, status: response.status, error: `HTTP ${response.status}` }
+			}
+			return { ok: true, status: response.status, data: await response.json() }
+		} catch (error: any) {
+			return { ok: false, status: 0, error: error?.name === 'AbortError' ? 'timeout' : String(error?.message || error) }
+		}
+	}
+
+	const [nodesProbe, clusterProbe, etcdProbe, podsProbe] = await Promise.all([
+		probe('/api/nodes'),
+		probe('/api/cluster'),
+		probe('/api/cluster/etcd'),
+		probe('/api/k8s/pods'),
+	])
+	const nodes = Array.isArray(nodesProbe.data) ? nodesProbe.data : []
+	const pods = Array.isArray(podsProbe.data) ? podsProbe.data : []
+	const readyNodes = nodes.filter((node: any) => node?.ready === true).length
+	const podStatus = (pod: any) => String(pod?.status || '').toLowerCase()
+	const matchingPods = (names: string[]) => pods.filter((pod: any) => {
+		const name = String(pod?.name || '').toLowerCase()
+		return names.some((needle) => name.includes(needle))
+	})
+	const cniPods = matchingPods(['flannel', 'cilium', 'calico', 'weave'])
+	const dnsPods = matchingPods(['coredns'])
+	const workloadCheck = (id: string, title: string, description: string, found: any[]): BootstrapCheckItem => {
+		if (!podsProbe.ok) {
+			return { id, title, description, status: 'error', detail: `Pod API unavailable: ${podsProbe.error}` }
+		}
+		if (found.length === 0) {
+			return { id, title, description, status: 'warning', detail: 'No matching pods were reported' }
+		}
+		const running = found.filter((pod: any) => podStatus(pod) === 'running').length
+		return {
+			id,
+			title,
+			description,
+			status: running === found.length ? 'success' : 'error',
+			detail: `${running}/${found.length} pod(s) Running`,
+		}
+	}
+
+	return [
+		{
+			id: 'talos-api',
+			title: 'Talos OS API & mTLS',
+			description: 'TCP :50000 mTLS connectivity to all cluster nodes',
+			status: !nodesProbe.ok || !Array.isArray(nodesProbe.data) ? 'error' : nodes.length > 0 && readyNodes === nodes.length ? 'success' : 'warning',
+			detail: nodesProbe.ok ? `${readyNodes}/${nodes.length} node(s) Ready` : `Node API unavailable: ${nodesProbe.error}`,
+		},
+		{
+			id: 'etcd-quorum',
+			title: 'etcd Cluster Quorum',
+			description: 'Distributed key-value store consensus and raft status',
+			status: !etcdProbe.ok || !etcdProbe.data?.healthy ? 'error' : 'success',
+			detail: etcdProbe.ok
+				? `Leader: ${etcdProbe.data?.leaderName || 'unknown'}, term ${etcdProbe.data?.raftTerm || 0}, ${(etcdProbe.data?.alarms || []).length} alarm(s)`
+				: `etcd API unavailable: ${etcdProbe.error}`,
+		},
+		{
+			id: 'k8s-apiserver',
+			title: 'Kubernetes Control Plane',
+			description: 'Cluster metadata and Kubernetes pod API availability',
+			status: clusterProbe.ok && podsProbe.ok && Array.isArray(podsProbe.data) ? 'success' : 'error',
+			detail: clusterProbe.ok && podsProbe.ok ? `${pods.length} pod(s) returned by the API` : `Cluster API: ${clusterProbe.error || 'OK'}, Pod API: ${podsProbe.error || 'OK'}`,
+		},
+		workloadCheck('cni-network', 'CNI Fabric & PodCIDR', 'CNI system pod health', cniPods),
+		workloadCheck('coredns-service', 'CoreDNS Resolution', 'CoreDNS pod health', dnsPods),
+	]
 }
 
 export const toggleMaintenanceMode = async (

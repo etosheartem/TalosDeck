@@ -170,8 +170,18 @@ func TestAuthAndAuditEndpoints(t *testing.T) {
 		t.Logf("Found %d audit events", len(events))
 	})
 
-	// 8. POST /api/auth/logout -> revokes token (SEC-08)
+	// 8. POST /api/auth/logout requires a valid token and revokes it (SEC-08, SEC-15)
 	t.Run("POST /api/auth/logout", func(t *testing.T) {
+		unauthorizedReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+		unauthorizedReq.Header.Set("Authorization", "Bearer attacker-controlled-token")
+		unauthorizedResp, err := app.Test(unauthorizedReq)
+		if err != nil {
+			t.Fatalf("unauthorized request failed: %v", err)
+		}
+		if unauthorizedResp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected forged logout to return 401, got %d", unauthorizedResp.StatusCode)
+		}
+
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := app.Test(req)

@@ -47,6 +47,8 @@ import {
   updateAlertsConfig,
   sendTestAlert,
   fetchAuditLogs,
+  rebootNode,
+  waitForNodeReboot,
 } from '../../api'
 
 const props = defineProps<{
@@ -147,6 +149,7 @@ const maintenanceLoading = ref(false)
 const isRollingOpen = ref(false)
 const rollingInProgress = ref(false)
 const rollingStep = ref(0)
+const rollingError = ref('')
 const rollingNodes = computed<string[]>(() => {
   if (!props.nodes || props.nodes.length === 0) return []
   return props.nodes.map((n) => n.hostname || n.ip)
@@ -155,6 +158,8 @@ const rollingNodes = computed<string[]>(() => {
 // Bootstrap check state
 const checkingBootstrap = ref(false)
 const bootstrapResults = ref<BootstrapCheckItem[]>([])
+const bootstrapPassedCount = computed(() => bootstrapResults.value.filter((item) => item.status === 'success').length)
+const bootstrapHasErrors = computed(() => bootstrapResults.value.some((item) => item.status === 'error'))
 
 const loadEtcd = async () => {
   loadingEtcd.value = true
@@ -270,9 +275,13 @@ onMounted(() => {
 const startBootstrapCheck = async () => {
   checkingBootstrap.value = true
   bootstrapResults.value = []
-  try {
-    bootstrapResults.value = await runBootstrapCheck()
-    emit('show-toast', { message: t('ops_check_passed'), type: 'success' })
+	try {
+		bootstrapResults.value = await runBootstrapCheck()
+		const allPassed = bootstrapResults.value.every((item) => item.status === 'success')
+		emit('show-toast', {
+			message: allPassed ? t('ops_check_passed') : `${bootstrapPassedCount.value}/${bootstrapResults.value.length} checks passed`,
+			type: allPassed ? 'success' : bootstrapHasErrors.value ? 'error' : 'info',
+		})
   } catch (err) {
     console.error('Bootstrap check failed', err)
   } finally {
@@ -306,17 +315,26 @@ const handleToggleMaintenance = async () => {
 
 // Start Rolling Reboot
 const startRollingReboot = async () => {
-  if (rollingNodes.value.length === 0) return
-  rollingInProgress.value = true
-  rollingStep.value = 1
-  // Sequence through nodes
-  for (let i = 0; i < rollingNodes.value.length; i++) {
-    rollingStep.value = i + 1
-    await new Promise((r) => setTimeout(r, 1200))
-  }
-  rollingInProgress.value = false
-  isRollingOpen.value = false
-  emit('show-toast', { message: t('ops_rolling_success'), type: 'success' })
+	if (rollingNodes.value.length === 0) return
+	const nodes = [...props.nodes]
+	rollingInProgress.value = true
+	rollingStep.value = 1
+	rollingError.value = ''
+	try {
+		for (let i = 0; i < nodes.length; i++) {
+			rollingStep.value = i + 1
+			await rebootNode(nodes[i].ip)
+			await waitForNodeReboot(nodes[i].ip)
+		}
+		rollingStep.value = nodes.length + 1
+		isRollingOpen.value = false
+		emit('show-toast', { message: t('ops_rolling_success'), type: 'success' })
+	} catch (err: any) {
+		rollingError.value = err?.message || 'Rolling reboot failed'
+		emit('show-toast', { message: rollingError.value, type: 'error' })
+	} finally {
+		rollingInProgress.value = false
+	}
 }
 </script>
 
@@ -849,14 +867,15 @@ const startRollingReboot = async () => {
     <!-- Bootstrap Diagnostics Results (if run) -->
     <div
       v-if="bootstrapResults.length > 0"
-      class="bg-zinc-900/90 border border-cyan-800/50 rounded-2xl p-5 space-y-3.5 backdrop-blur-md shadow-lg shadow-cyan-950/20"
+      :class="['bg-zinc-900/90 border rounded-2xl p-5 space-y-3.5 backdrop-blur-md shadow-lg', bootstrapHasErrors ? 'border-red-800/50 shadow-red-950/20' : 'border-cyan-800/50 shadow-cyan-950/20']"
     >
       <div class="flex items-center justify-between pb-2 border-b border-zinc-800">
         <h4 class="text-sm font-bold text-zinc-100 flex items-center gap-2">
-          <CheckCircle2 class="w-4 h-4 text-emerald-400" />
-          <span>{{ t('ops_bootstrap_check') }}: {{ t('ops_check_passed') }}</span>
+          <XCircle v-if="bootstrapHasErrors" class="w-4 h-4 text-red-400" />
+          <CheckCircle2 v-else class="w-4 h-4 text-emerald-400" />
+          <span>{{ t('ops_bootstrap_check') }}: {{ bootstrapPassedCount }}/{{ bootstrapResults.length }} passed</span>
         </h4>
-        <span class="text-xs font-mono text-zinc-500">5/5 passed</span>
+        <span class="text-xs font-mono text-zinc-500">{{ bootstrapPassedCount }}/{{ bootstrapResults.length }} passed</span>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
@@ -865,8 +884,10 @@ const startRollingReboot = async () => {
           :key="item.id"
           class="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800 flex items-start gap-3"
         >
-          <div class="p-1.5 rounded-lg bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 shrink-0 mt-0.5">
-            <Check class="w-3.5 h-3.5" />
+          <div :class="['p-1.5 rounded-lg border shrink-0 mt-0.5', item.status === 'success' ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/60' : item.status === 'warning' ? 'bg-amber-950/80 text-amber-400 border-amber-800/60' : 'bg-red-950/80 text-red-400 border-red-800/60']">
+            <Check v-if="item.status === 'success'" class="w-3.5 h-3.5" />
+            <AlertTriangle v-else-if="item.status === 'warning'" class="w-3.5 h-3.5" />
+            <XCircle v-else class="w-3.5 h-3.5" />
           </div>
           <div>
             <span class="font-bold text-zinc-200 block">{{ item.title }}</span>
@@ -1089,6 +1110,10 @@ const startRollingReboot = async () => {
         <div v-if="!rollingInProgress && rollingNodes.length === 0" class="p-3.5 rounded-xl bg-amber-950/30 border border-amber-900/40 text-xs text-amber-300">
           {{ t('node_empty_title') || 'No nodes available' }}
         </div>
+
+		<div v-if="rollingError" class="p-3.5 rounded-xl bg-red-950/30 border border-red-900/40 text-xs text-red-300">
+			{{ rollingError }}
+		</div>
 
         <!-- Progress Steps if running -->
         <div v-if="rollingInProgress" class="space-y-2 py-2">

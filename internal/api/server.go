@@ -230,14 +230,16 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		})
 	})
 
-	// POST /api/auth/logout (SEC-08: Revoke token on logout)
-	api.Post("/auth/logout", func(c *fiber.Ctx) error {
+	// POST /api/auth/logout (SEC-08, SEC-15: authenticate before revoking)
+	api.Post("/auth/logout", auth.RequireAuth(authMgr), func(c *fiber.Ctx) error {
 		user := auth.GetContextUser(c, authMgr)
 		authHeader := c.Get("Authorization")
 		if authHeader != "" && authMgr != nil {
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-				_ = authMgr.RevokeToken(parts[1])
+				if err := authMgr.RevokeToken(parts[1]); err != nil {
+					return fiber.NewError(fiber.StatusUnauthorized, "invalid token")
+				}
 			}
 		}
 		if auditMgr != nil {

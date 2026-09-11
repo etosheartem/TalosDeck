@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 APP_NAME ?= talosdeck
 IMAGE_NAME ?= talosdeck
-IMAGE_TAG ?= latest
+IMAGE_TAG ?= 0.1.0
 PORT ?= 8080
 NAMESPACE ?= talosdeck
 
@@ -89,6 +89,7 @@ k8s-secret: k8s-namespace
 k8s-deploy: k8s-secret
 	@echo "==> Deploying TalosDeck manifests to Kubernetes namespace '$(NAMESPACE)'..."
 	kubectl apply -n $(NAMESPACE) -f deploy/
+	kubectl set image deployment/$(APP_NAME) $(APP_NAME)=$(IMAGE_NAME):$(IMAGE_TAG) -n $(NAMESPACE)
 	@echo "==> Deployment initiated. Checking rollout status..."
 	kubectl rollout status deployment/talosdeck -n $(NAMESPACE) --timeout=60s || true
 	@echo "==> Service info:"

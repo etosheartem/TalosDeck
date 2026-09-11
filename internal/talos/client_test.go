@@ -104,6 +104,28 @@ func TestCalculateCPUUsage(t *testing.T) {
 	}
 }
 
+func TestCalculateFilesystemUsage(t *testing.T) {
+	tests := []struct {
+		name            string
+		size, available uint64
+		wantUsed        uint64
+		wantUsedPercent int
+	}{
+		{name: "normal", size: 1000, available: 250, wantUsed: 750, wantUsedPercent: 75},
+		{name: "empty filesystem", size: 0, available: 0, wantUsed: 0, wantUsedPercent: 0},
+		{name: "invalid available value", size: 100, available: 200, wantUsed: 0, wantUsedPercent: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			used, percent := calculateFilesystemUsage(tt.size, tt.available)
+			if used != tt.wantUsed || percent != tt.wantUsedPercent {
+				t.Fatalf("got (%d, %d), want (%d, %d)", used, percent, tt.wantUsed, tt.wantUsedPercent)
+			}
+		})
+	}
+}
+
 func TestGetClusterName_ThreadSafety(t *testing.T) {
 	mgr := &TalosManager{}
 	if name := mgr.GetClusterName(); name != "talos-cluster" {

@@ -81,6 +81,9 @@ type PartitionInfo struct {
 	PrettySize     string `json:"prettySize"`
 	Filesystem     string `json:"filesystem"`
 	MountPath      string `json:"mountPath"`
+	Used           string `json:"used,omitempty"`
+	UsedBytes      uint64 `json:"usedBytes,omitempty"`
+	UsedPercent    int    `json:"usedPercent,omitempty"`
 	Phase          string `json:"phase"`
 	UUID           string `json:"uuid,omitempty"`
 }

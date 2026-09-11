@@ -213,18 +213,14 @@ func (a *AuthManager) RevokeToken(tokenString string) error {
 		return ErrInvalidToken
 	}
 
-	var jti string
-	expiry := time.Now().Add(a.tokenTTL)
+	claims, err := a.ValidateToken(tokenString)
+	if err != nil {
+		return err
+	}
 
-	parser := jwt.NewParser()
-	var claims Claims
-	if _, _, err := parser.ParseUnverified(tokenString, &claims); err == nil {
-		if claims.ID != "" {
-			jti = claims.ID
-		}
-		if claims.ExpiresAt != nil {
-			expiry = claims.ExpiresAt.Time
-		}
+	expiry := time.Now().Add(a.tokenTTL)
+	if claims.ExpiresAt != nil {
+		expiry = claims.ExpiresAt.Time
 	}
 
 	a.revokedMu.Lock()
@@ -242,8 +238,8 @@ func (a *AuthManager) RevokeToken(tokenString string) error {
 		}
 	}
 
-	if jti != "" {
-		a.revokedTokens[jti] = expiry
+	if claims.ID != "" {
+		a.revokedTokens[claims.ID] = expiry
 	}
 	a.revokedTokens[tokenString] = expiry
 
