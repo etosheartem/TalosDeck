@@ -1,4 +1,4 @@
-# TalosDeck: образ в GitLab Registry и запуск через Argo CD
+# TalosDeck: образ в GitHub Container Registry (GHCR) и запуск через Argo CD
 
 Инструкция для текущего проекта, 12 сентября 2026. Команды выполняются вручную; Argo CD следит за манифестами в Git. Сборку образов Argo CD не выполняет.
 
@@ -86,31 +86,22 @@ kubectl -n talosdeck create secret generic talosdeck-kubeconfig \
   --from-file=kubeconfig="$TD_SECRET_DIR/kubeconfig" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-read -r -s -p 'Новый пароль администратора TalosDeck: ' TD_ADMIN_PASSWORD
-printf '\n'
-# Пароль должен быть непустым и однострочным.
+# Задайте пароль администратора (замените на свой пароль):
+export TD_ADMIN_PASSWORD="ВашНадежныйПароль123!"
+
 printf 'TALOSDECK_ADMIN_PASSWORD=%s\n' "$TD_ADMIN_PASSWORD" > "$TD_SECRET_DIR/runtime.env"
 printf 'TALOSDECK_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" >> "$TD_SECRET_DIR/runtime.env"
 unset TD_ADMIN_PASSWORD
+
 kubectl -n talosdeck create secret generic talosdeck-runtime \
   --from-env-file="$TD_SECRET_DIR/runtime.env" \
   --dry-run=client -o yaml | kubectl apply -f -
-```
 
-Сохрани введённый пароль в менеджере паролей. При повторной генерации JWT secret существующие сессии станут недействительными после перезапуска приложения.
-
-Теперь pull token. Временный Docker config содержит только учётную запись скачивания, а не все твои Docker credentials:
-
-```bash
-read -r -p 'GitLab registry pull username: ' TD_PULL_USER
-read -r -s -p 'GitLab registry pull token: ' TD_PULL_TOKEN
-printf '\n'
-printf '%s' "$TD_PULL_TOKEN" | docker --config "$TD_SECRET_DIR/docker" \
-  login "$TD_REGISTRY" --username "$TD_PULL_USER" --password-stdin
-unset TD_PULL_TOKEN
-kubectl -n talosdeck create secret generic talosdeck-registry \
-  --type=kubernetes.io/dockerconfigjson \
-  --from-file=.dockerconfigjson="$TD_SECRET_DIR/docker/config.json" \
+# Секрет для скачивания из GHCR (если пакет в GitHub сделан Public, этот шаг можно пропустить):
+kubectl -n talosdeck create secret docker-registry talosdeck-registry \
+  --docker-server=ghcr.io \
+  --docker-username=etosheartem \
+  --docker-password="$TD_PUSH_TOKEN" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 rm -rf -- "$TD_SECRET_DIR"
@@ -209,25 +200,43 @@ Service здесь `ClusterIP`: первый доступ через port-forwar
 ```bash
 git add gitops/talosdeck
 git commit -m "deploy: add TalosDeck Argo CD manifests"
-git push gitlab HEAD
+git push origin main
 ```
 
 Каталог — копия базовых манифестов: дальнейшие изменения поставки вноси в `gitops/talosdeck`, иначе Argo CD их не увидит. [Как Argo CD обрабатывает Kustomize](https://argo-cd.readthedocs.io/en/stable/user-guide/kustomize/).
 
-## 5. Подключить GitLab к Argo CD
+## 5. Подключить GitHub к Argo CD
 
-Доступ к Git и скачивание образа — отдельные учётные данные. `imagePullSecrets` не дают Argo CD доступ к Git.
+Доступ к Git и скачивание образов — это разные вещи. Если ваш репозиторий на GitHub **публичный**, Argo CD клонирует его **без каких-либо настроек и секретов**!
 
-В интерфейсе Argo CD: **Settings → Repositories → Connect Repo**:
+Если репозиторий GitHub **приватный**, добавьте его в Argo CD:
 
-- Type: `git`.
-- Repository URL: `git@gitlab.lan:root/talosdeck.git`.
-- SSH private key: отдельный ключ, публичная часть которого добавлена в GitLab как read-only Deploy Key проекта.
-- Для SSH настрой проверенный host key GitLab в Argo CD known hosts. Отпечаток сверяй с администратором GitLab, не отключай проверку.
+### Через веб-интерфейс Argo CD:
+1. В UI Argo CD перейдите в **Settings → Repositories → Connect Repo**.
+2. Укажите:
+   - **Choose your connection method**: `VIA HTTPS`
+   - **Type**: `git`
+   - **Repository URL**: `https://github.com/etosheartem/TalosDeck.git`
+   - **Username**: `etosheartem`
+   - **Password**: ваш GitHub Personal Access Token (с правом `repo`)
+3. Нажмите **CONNECT** (статус должен стать `Successful`).
 
-Альтернатива — реальный HTTPS clone URL из GitLab, username и token с `read_repository`. Для GitLab используй URL с `.git`. Если репозиторий уже подключён и статус Successful, повторять не нужно. [Приватные репозитории и доверие сертификатам](https://argo-cd.readthedocs.io/en/stable/user-guide/private-repositories/).
-
-Имена `gitlab.lan` и registry должны разрешаться из кластера. Для частного CA доверие настраивается отдельно: Git CA в Argo CD, registry CA на Kubernetes/Talos-нодах и на машине сборки. Настройка сертификата Git в Argo CD не исправит `ImagePullBackOff` из-за registry CA.
+### Либо через секрет Kubernetes:
+```bash
+kubectl apply -n argocd -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-talosdeck-github
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  type: git
+  url: https://github.com/etosheartem/TalosDeck.git
+  username: etosheartem
+  password: "ВАШ_GITHUB_PAT"
+EOF
+```
 
 ## 6. Создать Application и выполнить первый sync
 
@@ -242,8 +251,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@gitlab.lan:root/talosdeck.git
-    targetRevision: redesign/operator-console
+    repoURL: https://github.com/etosheartem/TalosDeck.git
+    targetRevision: main
     path: gitops/talosdeck
   destination:
     server: https://kubernetes.default.svc
@@ -253,12 +262,10 @@ spec:
       - CreateNamespace=true
 ```
 
-Если используешь HTTPS clone URL, измени `repoURL` на точно такой же, как при подключении репозитория. Если Argo CD разворачивает в другом кластере, укажи его зарегистрированный destination. AppProject должен разрешать этот repo, destination и типы ресурсов; пример использует `default`.
-
 ```bash
 git add gitops/talosdeck-application.yaml
 git commit -m "deploy: add TalosDeck Argo CD application"
-git push gitlab HEAD
+git push origin main
 
 kubectl apply -f gitops/talosdeck-application.yaml
 ```
@@ -344,7 +351,7 @@ kubectl -n talosdeck rollout restart deployment/talosdeck
 
 | Симптом | Что проверить |
 |---|---|
-| Argo CD не читает Git | Repository status, deploy key/token, DNS `gitlab.lan`, SSH known hosts или HTTPS CA, совпадение repoURL |
+| Argo CD не читает Git | Repository status в Argo CD, доступность GitHub, права токена (repo), точное совпадение repoURL и targetRevision: main |
 | `ImagePullBackOff` | Образ/тег реально опубликован, pull token имеет `read_registry`, Secret в namespace `talosdeck`, registry доступен нодам, CA доверен container runtime |
 | `no matching manifest` / `exec format error` | Архитектура образа соответствует ноде |
 | `CreateContainerConfigError` | Созданы все четыре Secret из шага 3, имена совпадают с патчем |

@@ -1,5 +1,7 @@
 # 🚀 TalosDeck — Руководство по развёртыванию (Deployment Guide)
 
+> **Развёртывание через Argo CD и публикация в GitHub Container Registry (GHCR):** [пошаговая инструкция](DEPLOY_ARGOCD.md). Для этого сценария используй её: примеры ниже частично относятся к прежней поставке.
+
 > **GitHub**: [https://github.com/etosheartem/TalosDeck](https://github.com/etosheartem/TalosDeck)
 
 В этом документе описаны все способы запуска **TalosDeck**: от локального запуска на рабочей станции до полноценного контейнерного деплоя внутри кластера Kubernetes.
