@@ -282,7 +282,13 @@ const startBootstrapCheck = async () => {
 
 // Toggle Maintenance
 const handleToggleMaintenance = async () => {
-  if (!targetNodeIP.value) return
+  if (props.nodes.length === 0 || !targetNodeIP.value) {
+    emit('show-toast', {
+      message: t('ops_maintenance_no_target') || 'No nodes available for maintenance',
+      type: 'error',
+    })
+    return
+  }
   maintenanceLoading.value = true
   const current = Boolean(maintenanceState.value[targetNodeIP.value])
   const next = !current
@@ -808,7 +814,7 @@ const startRollingReboot = async () => {
 
           <button
             @click="handleToggleMaintenance"
-            :disabled="maintenanceLoading"
+            :disabled="maintenanceLoading || props.nodes.length === 0"
             class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-amber-950/70 hover:bg-amber-900/80 border border-amber-800/70 text-xs font-semibold text-amber-200 transition-all cursor-pointer active:scale-95 disabled:opacity-50 shadow-sm"
           >
             <Wrench class="w-3.5 h-3.5" />
@@ -1045,6 +1051,7 @@ const startRollingReboot = async () => {
     <!-- Rolling Reboot Confirmation / Progress Modal -->
     <div
       v-if="isRollingOpen"
+      @click.self="!rollingInProgress && (isRollingOpen = false)"
       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
     >
       <div

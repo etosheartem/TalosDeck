@@ -9,29 +9,17 @@
 
 | Статус | Critical | High | Medium | Low | Всего |
 |:---|---:|---:|---:|---:|---:|
-| ⬜ Открыто | 0 | 13 | 0 | 0 | **13** |
-| ✅ Исправлено | 22 | 35 | 71 | 34 | **162** |
+| ⬜ Открыто | 0 | 0 | 0 | 0 | **0** |
+| ✅ Исправлено | 22 | 48 | 71 | 34 | **175** |
 | **Итого** | **22** | **48** | **71** | **34** | **175** |
 
-**Прогресс:** 162 из 175 исправлено (93%), 13 открыто.
+**Прогресс:** 175 из 175 исправлено (100%), 0 открыто. 🎉 Все дефекты аудита успешно устранены!
 
 ## Открытые задачи
 
 | Статус | Приоритет | ID | Подсистема | Кол-во | Проблема |
 |:---:|:---:|:---|:---|---:|:---|
-| ⬜ OPEN | 🟠 High | `OPS-05` | DevOps / CI | 1 | Неверсионированные (floating) базовые образы в Dockerfile |
-| ⬜ OPEN | 🟠 High | `OPS-06` | DevOps / CI | 1 | Сокрытие сбоев деплоя (`\|\| true`) в GitLab CI |
-| ⬜ OPEN | 🟠 High | `OPS-07` | DevOps / CI | 1 | Хардкод абсолютных путей разработчика в Makefile |
-| ⬜ OPEN | 🟠 High | `OPS-08` | DevOps / CI | 1 | Фиктивные пробы доступности на корень `/` |
-| ⬜ OPEN | 🟠 High | `UI-01` | Frontend UX/UI | 1 | Отсутствие блокировки прокрутки страницы (`body scroll lock`) во всех модальных окнах |
-| ⬜ OPEN | 🟠 High | `UI-02` | Frontend UX/UI | 1 | Отсутствие закрытия модальных окон по клавише `Escape` |
-| ⬜ OPEN | 🟠 High | `UI-03` | Frontend UX/UI | 1 | Модальное окно Rolling Reboot не закрывается по клику вне окна |
-| ⬜ OPEN | 🟠 High | `UI-04` | Frontend UX/UI | 1 | Горизонтальное переполнение YAML-редактора в MachineConfigView |
-| ⬜ OPEN | 🟠 High | `UI-05` | Frontend UX/UI | 1 | Переполнение карточки ноды при длинном Hostname |
-| ⬜ OPEN | 🟠 High | `UI-06` | Frontend UX/UI | 1 | Вводящий в заблуждение Empty State при 0 нод |
-| ⬜ OPEN | 🟠 High | `UI-07` | Frontend UX/UI | 1 | Рендеринг `undefined` в MachineConfigView при отсутствии нод |
-| ⬜ OPEN | 🟠 High | `UI-08` | Frontend UX/UI | 1 | Тихий отказ Maintenance Mode при 0 нод |
-| ⬜ OPEN | 🟠 High | `UI-09` | Frontend UX/UI | 1 | Отсутствие валидации имени ноды (RFC 1123) в AddWorkerModal |
+| — | — | — | — | 0 | *Все выявленные дефекты устранены. Открытых задач нет.* |
 
 ## Прогресс по подсистемам
 
@@ -45,8 +33,8 @@
 | **Alerts** | 15 | 0 | 15 | 100% |
 | **REST API** | 19 | 0 | 19 | 100% |
 | **Frontend state** | 17 | 0 | 17 | 100% |
-| **Frontend UX/UI** | 21 | 9 | 30 | 70% |
-| **DevOps / CI** | 18 | 4 | 22 | 82% |
+| **Frontend UX/UI** | 30 | 0 | 30 | 100% |
+| **DevOps / CI** | 22 | 0 | 22 | 100% |
 
 ## Как обновлять трекер
 
@@ -738,38 +726,56 @@
 ### [HIGH] UI-01: Отсутствие блокировки прокрутки страницы (`body scroll lock`) во всех модальных окнах
 - **Файлы:** Все модальные окна (`AddWorkerModal`, `LoginModal`, `LogsModal`, `RebootModal`, `ServicesModal`, `OperationsView`)
 - **Описание:** При открытом модальном окне пользователь может свободно прокручивать контент основной страницы.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/App.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/App.vue) реализована централизованная блокировка скролла страницы (`body scroll lock`). Реактивный `watch` отслеживает состояние всех модальных окон (`isServicesOpen`, `isLogsOpen`, `isRebootOpen`, `isAddWorkerOpen`, `isLoginModalOpen`). При открытии любого окна устанавливается `document.body.style.overflow = 'hidden'`, при закрытии всех окон восстанавливается исходное состояние. Функция корректно очищается при демонтировании компонента.
 
 ### [HIGH] UI-02: Отсутствие закрытия модальных окон по клавише `Escape`
 - **Файлы:** Все модальные окна
 - **Описание:** Ни один компонент не обрабатывает нажатие клавиши `Escape`.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/App.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/App.vue) добавлен глобальный слушатель события `keydown` на клавишу `Escape`. При нажатии последовательно закрываются открытые модальные окна (приоритетно текущее активное окно). Обработчик безопасно удаляется в хуке `onUnmounted`.
 
 ### [HIGH] UI-03: Модальное окно Rolling Reboot не закрывается по клику вне окна
 - **Файл:** [`web/src/components/views/OperationsView.vue:1037-1040`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/OperationsView.vue#L1037-L1040)
 - **Описание:** Отсутствует `@click.self` на оверлее, окно невозможно закрыть кликом по фону.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/components/views/OperationsView.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/OperationsView.vue) на оверлей модального диалога Rolling Reboot добавлен директивный модификатор `@click.self="!rollingInProgress && (isRollingOpen = false)"`, позволяющий закрывать модалку кликом по фону вне окна (с блокировкой во время активного процесса перезагрузки).
 
 ### [HIGH] UI-04: Горизонтальное переполнение YAML-редактора в MachineConfigView
 - **Файл:** [`web/src/components/views/MachineConfigView.vue:259, 276`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/MachineConfigView.vue#L259)
 - **Описание:** Отсутствует `overflow-x-auto`, длинные строки конфигурации раздвигают верстку страницы.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/components/views/MachineConfigView.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/MachineConfigView.vue) контейнерам редактора и просмотрщика конфигурации добавлены классы `overflow-x-auto`, `max-w-full` и корректный перенос `whitespace-pre`, предотвращающие раздвигание страницы по горизонтали длинными YAML-строками.
 
 ### [HIGH] UI-05: Переполнение карточки ноды при длинном Hostname
 - **Файл:** [`web/src/components/NodeCard.vue:53-58`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/NodeCard.vue#L53-L58)
 - **Описание:** Заголовок не имеет `truncate`/`min-w-0`, длинное имя FQDN ломает сетку карточек.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/components/NodeCard.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/NodeCard.vue) контейнер заголовка ноды и тег `<h3>` получили классы `min-w-0 max-w-full truncate` и всплывающую подсказку `:title="node.hostname"`. Длинные FQDN-имена узлов аккуратно усекаются многоточием и не ломают карточную сетку.
 
 ### [HIGH] UI-06: Вводящий в заблуждение Empty State при 0 нод
 - **Файл:** [`web/src/components/views/NodesView.vue:285-292`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/NodesView.vue#L285-L292)
 - **Описание:** Предлагает сбросить фильтры поиска вместо сообщения о потере связи с кластером.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/components/views/NodesView.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/NodesView.vue) разделены сценарии Empty State: при отсутствии соединения/0 доступных узлов в кластере (`props.nodes.length === 0`) отображается предупреждающий статус о потере связи с кластером, а при 0 отфильтрованных узлов (`filteredNodes.length === 0`) выводится подсказка для сброса параметров поиска и фильтрации.
 
 ### [HIGH] UI-07: Рендеринг `undefined` в MachineConfigView при отсутствии нод
 - **Файл:** [`web/src/components/views/MachineConfigView.vue:28-47, 246`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/MachineConfigView.vue#L28-L47)
 - **Описание:** Выводит эндпоинт `/api/nodes/undefined/config` без предупреждения.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/components/views/MachineConfigView.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/MachineConfigView.vue) внедрена защитная проверка на пустой список узлов кластера. При отсутствии нод запросы к `/api/nodes/undefined/config` блокируются, заголовок и хлебные крошки не рендерят `undefined`, а пользователю отображается информативный Empty State.
 
 ### [HIGH] UI-08: Тихий отказ Maintenance Mode при 0 нод
 - **Файл:** [`web/src/components/views/OperationsView.vue:280-295`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/OperationsView.vue#L280-L295)
 - **Описание:** Кнопка молча ничего не делает при клике.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/components/views/OperationsView.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/views/OperationsView.vue) в методе `setMaintenance` добавлена проверка наличия узлов и выбранного таргета с выводом тост-уведомления об ошибке вместо тихого игнорирования клика, а кнопка перевода в Maintenance деактивируется (`:disabled`) при 0 узлов.
 
 ### [HIGH] UI-09: Отсутствие валидации имени ноды (RFC 1123) в AddWorkerModal
 - **Файл:** [`web/src/components/AddWorkerModal.vue:170-180`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/AddWorkerModal.vue#L170-L180)
 - **Описание:** Допускаются заглавные буквы и спецсимволы, вызывающие сбой создания ВМ.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`web/src/components/AddWorkerModal.vue`](file:///home/artem/laba-kuber/TalosDeck/web/src/components/AddWorkerModal.vue) внедрена валидация имени создаваемой ноды по спецификации RFC 1123 (`/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/`, до 63 символов). При вводе некорректных символов или заглавных букв выводится понятное сообщение об ошибке, а кнопка подтверждения блокируется.
 
 ### [MEDIUM] UI-10-22: Дополнительные дефекты верстки и доступности
 - Сжатие кнопок действий в карточке ноды на экранах смартфонов <375px.
@@ -821,18 +827,26 @@
 ### [HIGH] OPS-05: Неверсионированные (floating) базовые образы в Dockerfile
 - **Файл:** [`Dockerfile:4, 18, 42`](file:///home/artem/laba-kuber/TalosDeck/Dockerfile#L4)
 - **Описание:** `alpine:latest`, `golang:alpine`, `oven/bun:1-alpine` нарушают воспроизводимость сборки.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`TalosDeck/Dockerfile`](file:///home/artem/laba-kuber/TalosDeck/Dockerfile) все плавающие теги базовых образов зафиксированы на детерминированных версиях: `oven/bun:1.2.4-alpine`, `golang:1.24-alpine`, `alpine:3.21.3`.
 
 ### [HIGH] OPS-06: Сокрытие сбоев деплоя (`|| true`) в GitLab CI
 - **Файл:** [`gitlab-deploy/.gitlab-ci.yml:30, 47`](file:///home/artem/laba-kuber/gitlab-deploy/.gitlab-ci.yml#L30)
 - **Описание:** Команды `kubectl rollout status ... || true` маскируют падение подов, рапортуя успешный статус пайплайна при аварии.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`gitlab-deploy/.gitlab-ci.yml`](file:///home/artem/laba-kuber/gitlab-deploy/.gitlab-ci.yml) удалены конструкции `|| true` из команд проверки статуса роллаута `kubectl rollout status` для сервисов `talosdeck` и `k8s-demo`. Теперь при падении подов или ошибке развертывания пайплайн корректно завершается со сбоем.
 
 ### [HIGH] OPS-07: Хардкод абсолютных путей разработчика в Makefile
 - **Файл:** [`Makefile:13, 21`](file:///home/artem/laba-kuber/TalosDeck/Makefile#L13)
 - **Описание:** Пути `/home/artem/laba-kuber/kubeconfig` делают сборку непереносимой.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`TalosDeck/Makefile`](file:///home/artem/laba-kuber/TalosDeck/Makefile) устранены захардкоженные абсолютные пути разработчика. Пути к `KUBECONFIG` и `TALOSCONFIG` приведены к переносимому виду со стандартными локациями `$${HOME}/.kube/config` и `$${HOME}/.talos/config`, а локальные пути сборки сделаны относительными.
 
 ### [HIGH] OPS-08: Фиктивные пробы доступности на корень `/`
 - **Файл:** [`TalosDeck/deploy/deployment.yaml:37-52`](file:///home/artem/laba-kuber/TalosDeck/deploy/deployment.yaml#L37-L52)
 - **Описание:** Проба проверяет только раздачу статического SPA HTML, но не проверяет соединение с Talos gRPC или etcd.
+- **Статус:** **ИСПРАВЛЕНО (FIXED)** ✅
+- **Выполненное исправление:** В [`TalosDeck/internal/api/server.go`](file:///home/artem/laba-kuber/TalosDeck/internal/api/server.go) реализованы выделенные эндпоинты `/healthz` (liveness probe) и `/readyz` (readiness probe, валидирующий подключение к TalosManager и доступность кластера). В манифестах [`TalosDeck/deploy/deployment.yaml`](file:///home/artem/laba-kuber/TalosDeck/deploy/deployment.yaml) и [`gitlab-deploy/manifests/talosdeck/deployment.yaml`](file:///home/artem/laba-kuber/gitlab-deploy/manifests/talosdeck/deployment.yaml) параметры `livenessProbe` и `readinessProbe` переключены на `/healthz` и `/readyz`.
 
 ### [MEDIUM] OPS-09: 42 неиспользуемых («мертвых») ключа в словарях i18n
 - **Файл:** [`web/src/i18n/index.ts:20-648`](file:///home/artem/laba-kuber/TalosDeck/web/src/i18n/index.ts#L20-L648)

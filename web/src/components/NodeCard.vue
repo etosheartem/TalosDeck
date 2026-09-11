@@ -69,9 +69,12 @@ const getServiceStatus = (serviceName: 'etcd' | 'kubelet' | 'containerd' | 'apid
     <!-- Top Row: Hostname & Role + Status -->
     <div>
       <div class="flex items-start justify-between gap-3 mb-3">
-        <div>
-          <div class="flex items-center gap-2">
-            <h3 class="text-base font-bold text-zinc-100 tracking-tight font-mono group-hover:text-cyan-300 transition-colors">
+        <div class="min-w-0 max-w-full">
+          <div class="flex items-center gap-2 min-w-0 max-w-full">
+            <h3
+              class="text-base font-bold text-zinc-100 tracking-tight font-mono group-hover:text-cyan-300 transition-colors truncate min-w-0 max-w-full"
+              :title="node.hostname"
+            >
               {{ node.hostname }}
             </h3>
           </div>
@@ -94,7 +97,7 @@ const getServiceStatus = (serviceName: 'etcd' | 'kubelet' | 'containerd' | 'apid
         </div>
 
         <!-- Badges: Role and Ready -->
-        <div class="flex flex-col items-end gap-1.5">
+        <div class="flex flex-col items-end gap-1.5 shrink-0">
           <!-- Ready Badge with Glowing Dot -->
           <div
             :class="[

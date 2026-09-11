@@ -101,6 +101,58 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	// REST API Routes Group
 	api := app.Group("/api")
 
+	// OPS-08: Health and Readiness Probes (GET /healthz, GET /readyz, GET /api/health)
+	healthzHandler := func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"status": "ok",
+		})
+	}
+	app.Get("/healthz", healthzHandler)
+	api.Get("/healthz", healthzHandler)
+
+	readyzHandler := func(c *fiber.Ctx) error {
+		if manager == nil || manager.GetClient() == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"status": "not ready",
+				"error":  "talos manager not initialized",
+			})
+		}
+
+		ctx, cancel := context.WithTimeout(c.UserContext(), 5*time.Second)
+		defer cancel()
+
+		info, err := manager.GetClusterInfo(ctx)
+		if err != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"status": "not ready",
+				"error":  fmt.Sprintf("failed to reach cluster: %v", err),
+			})
+		}
+
+		if !info.Healthy || info.ReadyNodes == 0 {
+			status := "degraded"
+			if info.ReadyNodes == 0 {
+				status = "not ready"
+			}
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"status":     status,
+				"healthy":    false,
+				"readyNodes": info.ReadyNodes,
+				"totalNodes": info.TotalNodes,
+			})
+		}
+
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"status":     "ok",
+			"healthy":    true,
+			"readyNodes": info.ReadyNodes,
+			"totalNodes": info.TotalNodes,
+		})
+	}
+	app.Get("/readyz", readyzHandler)
+	api.Get("/readyz", readyzHandler)
+	api.Get("/health", readyzHandler)
+
 	// API-09: Rate limiting on login attempts to mitigate brute-force attacks
 	loginLimiter := limiter.New(limiter.Config{
 		Max:        30,
@@ -873,7 +925,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 				Browse: false,
 				Next: func(c *fiber.Ctx) bool {
 					path := c.Path()
-					return strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/ws")
+					return strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/ws") || path == "/healthz" || path == "/readyz"
 				},
 			}))
 			// SPA client-side fallback: serve index.html for non-API/non-WS paths

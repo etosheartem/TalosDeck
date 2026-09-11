@@ -37,7 +37,7 @@ spec:
               readOnly: true
           livenessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 15
@@ -45,7 +45,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /
+              path: /readyz
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10

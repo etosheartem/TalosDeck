@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import {
   Info,
   ExternalLink,
@@ -59,6 +59,63 @@ const isLogsOpen = ref(false)
 
 const activeRebootNode = ref<NodeOverview | null>(null)
 const isRebootOpen = ref(false)
+
+// UI-01 & UI-02: Modal management (body scroll lock & Escape listener)
+let modalObserver: MutationObserver | null = null
+
+const updateScrollLock = () => {
+  if (typeof document === 'undefined') return
+  const isAppModalOpen = isServicesOpen.value || isLogsOpen.value || isRebootOpen.value
+  const isDomModalOpen = Boolean(document.querySelector('[role="dialog"]'))
+  if (isAppModalOpen || isDomModalOpen) {
+    document.body.style.overflow = 'hidden'
+  } else {
+    document.body.style.overflow = ''
+  }
+}
+
+watch([isServicesOpen, isLogsOpen, isRebootOpen], (states) => {
+  if (states.some(Boolean)) {
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = 'hidden'
+    }
+  } else {
+    nextTick(() => {
+      updateScrollLock()
+    })
+  }
+})
+
+const handleKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape') {
+    if (isServicesOpen.value) {
+      isServicesOpen.value = false
+      return
+    }
+    if (isLogsOpen.value) {
+      isLogsOpen.value = false
+      return
+    }
+    if (isRebootOpen.value) {
+      isRebootOpen.value = false
+      return
+    }
+    if (typeof document !== 'undefined') {
+      const dialog = document.querySelector('[role="dialog"]')
+      if (dialog) {
+        const xIcon = dialog.querySelector('svg.lucide-x') || dialog.parentElement?.querySelector('svg.lucide-x')
+        const closeBtn = xIcon?.closest('button') || dialog.querySelector<HTMLButtonElement>('button[aria-label="Close"], button[aria-label="close"]')
+        if (closeBtn) {
+          closeBtn.click()
+          return
+        }
+      }
+    }
+    if (mobileOpen.value) {
+      mobileOpen.value = false
+    }
+  }
+}
 
 // Toast
 const toast = ref<{
@@ -128,12 +185,36 @@ onMounted(async () => {
   isUnmounted = false
   await loadData()
   setupAutoRefresh()
+
+  // UI-01: Watch DOM for child component modals
+  if (typeof MutationObserver !== 'undefined') {
+    modalObserver = new MutationObserver(() => {
+      updateScrollLock()
+    })
+    modalObserver.observe(document.body, { childList: true, subtree: true })
+  }
+  updateScrollLock()
+
+  // UI-02: Add global Escape keydown listener
+  window.addEventListener('keydown', handleKeyDown)
 })
 
 onUnmounted(() => {
   isUnmounted = true
   if (autoRefreshTimer) clearTimeout(autoRefreshTimer)
   if (toastTimer) clearTimeout(toastTimer)
+
+  // UI-01: Clean up body scroll lock and observer
+  if (modalObserver) {
+    modalObserver.disconnect()
+    modalObserver = null
+  }
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = ''
+  }
+
+  // UI-02: Clean up Escape key listener
+  window.removeEventListener('keydown', handleKeyDown)
 })
 
 // Modal Open Handlers

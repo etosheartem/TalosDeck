@@ -14,6 +14,7 @@ import (
 	"talosdeck/internal/alerts"
 	"talosdeck/internal/audit"
 	"talosdeck/internal/auth"
+	"talosdeck/internal/talos"
 )
 
 func TestAPISecurityAndRouteDefects(t *testing.T) {
@@ -300,4 +301,138 @@ func TestAPISecurityAndRouteDefects(t *testing.T) {
 			}
 		}
 	})
+
+	// OPS-08: Healthz liveness probe returns 200 OK
+	t.Run("OPS-08: Healthz liveness probe returns 200 OK", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", resp.StatusCode)
+		}
+
+		var data map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+			t.Fatalf("failed to decode JSON response: %v", err)
+		}
+		if data["status"] != "ok" {
+			t.Errorf("expected status 'ok', got %v", data["status"])
+		}
+	})
+
+	// OPS-08: Readyz readiness probe returns 503 when manager uninitialized
+	t.Run("OPS-08: Readyz probe returns 503 when manager uninitialized", func(t *testing.T) {
+		for _, path := range []string{"/readyz", "/api/health"} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("request failed for %s: %v", path, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Errorf("expected 503 Service Unavailable for %s, got %d", path, resp.StatusCode)
+			}
+
+			var data map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+				t.Fatalf("failed to decode JSON response for %s: %v", path, err)
+			}
+			if data["status"] != "not ready" && data["status"] != "degraded" {
+				t.Errorf("expected not ready or degraded status for %s, got %v", path, data["status"])
+			}
+		}
+	})
 }
+
+func TestHealthAndReadinessProbes(t *testing.T) {
+	// 1. Uninitialized manager -> /healthz is 200, /readyz is 503
+	appUninit := SetupServer(ServerConfig{Port: ":0"})
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	resp, err := appUninit.Test(req)
+	if err != nil {
+		t.Fatalf("request to /healthz failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for /healthz, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	resp, err = appUninit.Test(req)
+	if err != nil {
+		t.Fatalf("request to /readyz failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 for /readyz without manager, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	req = httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	resp, err = appUninit.Test(req)
+	if err != nil {
+		t.Fatalf("request to /api/health failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 for /api/health without manager, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 2. Live cluster test if talosconfig exists
+	configPath := "/home/artem/laba-kuber/cluster-config/talosconfig"
+	if _, err := os.Stat(configPath); err == nil {
+		mgr, err := talos.NewTalosManager(configPath, "10.42.0.110")
+		if err == nil {
+			defer mgr.Close()
+			appLive := SetupServer(ServerConfig{
+				Manager: mgr,
+				Port:    ":0",
+			})
+			req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+			resp, err = appLive.Test(req, 10000)
+			if err != nil {
+				t.Fatalf("request to /readyz with live manager failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			var data map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+				t.Fatalf("failed to decode JSON response: %v", err)
+			}
+
+			// When live cluster is healthy, expect 200 OK and status "ok"
+			if resp.StatusCode == http.StatusOK {
+				if data["status"] != "ok" {
+					t.Errorf("expected status 'ok', got %v", data["status"])
+				}
+				if healthy, ok := data["healthy"].(bool); !ok || !healthy {
+					t.Errorf("expected healthy to be true, got %v", data["healthy"])
+				}
+			} else if resp.StatusCode == http.StatusServiceUnavailable {
+				if data["status"] != "degraded" && data["status"] != "not ready" {
+					t.Errorf("expected degraded or not ready, got %v", data["status"])
+				}
+			} else {
+				t.Errorf("unexpected status code for /readyz: %d", resp.StatusCode)
+			}
+
+			// 3. Closed manager -> client is nil -> /readyz returns 503
+			_ = mgr.Close()
+			req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+			respClosed, err := appLive.Test(req, 5000)
+			if err != nil {
+				t.Fatalf("request to /readyz with closed manager failed: %v", err)
+			}
+			defer respClosed.Body.Close()
+			if respClosed.StatusCode != http.StatusServiceUnavailable {
+				t.Errorf("expected 503 for /readyz with closed manager, got %d", respClosed.StatusCode)
+			}
+		}
+	}
+}
+

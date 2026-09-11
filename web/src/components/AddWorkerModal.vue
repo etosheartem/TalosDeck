@@ -39,6 +39,13 @@ const storage = ref<string>('local-lvm')
 const bridge = ref<string>('vmbr0')
 const autoStart = ref<boolean>(true)
 
+// RFC 1123 node name validation
+const RFC1123_REGEX = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+const isNameValid = computed(() => {
+  const val = name.value
+  return val.length >= 1 && val.length <= 63 && RFC1123_REGEX.test(val)
+})
+
 // Host status state
 const proxmoxStatus = ref<ProxmoxStatusResponse | null>(null)
 const loadingProxmox = ref<boolean>(false)
@@ -171,6 +178,10 @@ const handleSubmit = async () => {
   errorMessage.value = ''
   if (!name.value.trim()) {
     errorMessage.value = 'Пожалуйста, введите имя ноды'
+    return
+  }
+  if (!isNameValid.value) {
+    errorMessage.value = 'Имя ноды должно соответствовать RFC 1123 (строчные буквы a-z, цифры 0-9, дефис, длина 1-63)'
     return
   }
   if (vmid.value <= 0) {
@@ -482,9 +493,18 @@ const handleSubmit = async () => {
                   v-model="name"
                   type="text"
                   :placeholder="t('add_worker_name_placeholder')"
-                  class="w-full pl-9 pr-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-cyan-500/70 focus:ring-1 focus:ring-cyan-500/30 transition-all"
+                  :class="[
+                    'w-full pl-9 pr-3 py-2 rounded-xl bg-zinc-900 border text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 transition-all',
+                    !isNameValid
+                      ? 'border-rose-500/70 focus:border-rose-500 focus:ring-rose-500/30'
+                      : 'border-zinc-800 focus:border-cyan-500/70 focus:ring-cyan-500/30'
+                  ]"
                 />
               </div>
+              <p v-if="!isNameValid" class="text-[11px] text-rose-400 flex items-center gap-1 mt-1">
+                <AlertCircle class="w-3.5 h-3.5 shrink-0" />
+                <span>Имя должно соответствовать RFC 1123 (строчные буквы a-z, цифры 0-9, дефис, 1–63 символа)</span>
+              </p>
             </div>
 
             <!-- VMID -->
@@ -718,7 +738,7 @@ const handleSubmit = async () => {
           <button
             type="button"
             @click="handleSubmit"
-            :disabled="isCreating"
+            :disabled="isCreating || !isNameValid"
             class="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white text-xs font-semibold shadow-lg shadow-cyan-900/40 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
           >
             <RotateCw v-if="isCreating" class="w-4 h-4 animate-spin" />

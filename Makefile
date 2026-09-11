@@ -11,7 +11,6 @@ NAMESPACE ?= talosdeck
 KUBECONFIG ?= $(shell \
 	if [ -f "../kubeconfig" ]; then echo "$$(pwd)/../kubeconfig"; \
 	elif [ -f "./kubeconfig" ]; then echo "$$(pwd)/kubeconfig"; \
-	elif [ -f "/home/artem/laba-kuber/kubeconfig" ]; then echo "/home/artem/laba-kuber/kubeconfig"; \
 	else echo "$${HOME}/.kube/config"; fi)
 export KUBECONFIG
 
@@ -19,7 +18,6 @@ export KUBECONFIG
 TALOSCONFIG ?= $(shell \
 	if [ -f "../cluster-config/talosconfig" ]; then echo "$$(pwd)/../cluster-config/talosconfig"; \
 	elif [ -f "./cluster-config/talosconfig" ]; then echo "$$(pwd)/cluster-config/talosconfig"; \
-	elif [ -f "/home/artem/laba-kuber/cluster-config/talosconfig" ]; then echo "/home/artem/laba-kuber/cluster-config/talosconfig"; \
 	elif [ -f "$${HOME}/.talos/config" ]; then echo "$${HOME}/.talos/config"; \
 	else echo ""; fi)
 export TALOSCONFIG

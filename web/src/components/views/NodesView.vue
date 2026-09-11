@@ -8,8 +8,9 @@ import {
   Plus,
   HardDrive,
   Layers,
+  AlertTriangle,
 } from 'lucide-vue-next'
-import { t } from '../../i18n'
+import { t, currentLocale } from '../../i18n'
 import { fetchProxmoxStatus } from '../../api'
 import type { NodeOverview, ProxmoxStatusResponse, CreateWorkerResult } from '../../types'
 import NodeCard from '../NodeCard.vue'
@@ -270,7 +271,7 @@ const handleWorkerError = (err: string) => {
     </div>
 
     <!-- Node Cards Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
+    <div v-if="filteredNodes.length > 0" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
       <NodeCard
         v-for="node in filteredNodes"
         :key="node.ip"
@@ -281,9 +282,23 @@ const handleWorkerError = (err: string) => {
       />
     </div>
 
+    <!-- Empty state when cluster is disconnected / no nodes discovered -->
+    <div
+      v-else-if="nodes.length === 0"
+      class="py-16 px-6 text-center rounded-2xl bg-rose-950/20 border border-rose-900/40"
+    >
+      <AlertTriangle class="w-10 h-10 mx-auto text-rose-400 mb-3 animate-pulse" />
+      <p class="text-sm font-semibold text-rose-300">
+        {{ currentLocale === 'ru' ? 'Связь с кластером потеряна: ноды недоступны' : 'Cluster connection lost: nodes unreachable' }}
+      </p>
+      <p class="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
+        {{ currentLocale === 'ru' ? 'Не удалось обнаружить ни одной ноды в кластере. Проверьте сетевое подключение к Talos API или состояние виртуальных машин.' : 'Could not discover any nodes in the cluster. Check network connectivity to Talos API or VM state.' }}
+      </p>
+    </div>
+
     <!-- Empty state when search matches nothing -->
     <div
-      v-if="filteredNodes.length === 0"
+      v-else
       class="py-16 text-center rounded-2xl bg-zinc-900/40 border border-zinc-800/60"
     >
       <Server class="w-10 h-10 mx-auto text-zinc-600 mb-3" />

@@ -1,7 +1,7 @@
 # ==============================================================================
 # Stage 1: Build the frontend (Vue 3 + Tailwind CSS with Bun)
 # ==============================================================================
-FROM oven/bun:1-alpine AS frontend-builder
+FROM oven/bun:1.2.4-alpine AS frontend-builder
 WORKDIR /app/web
 
 # Install frontend dependencies with lockfile caching
@@ -15,7 +15,7 @@ RUN bun run build
 # ==============================================================================
 # Stage 2: Build the Go backend binary (with embedded frontend)
 # ==============================================================================
-FROM golang:alpine AS backend-builder
+FROM golang:1.24-alpine AS backend-builder
 WORKDIR /app
 
 RUN apk add --no-cache ca-certificates git
@@ -39,7 +39,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ==============================================================================
 # Stage 3: Minimal runtime image (Alpine Linux)
 # ==============================================================================
-FROM alpine:latest
+FROM alpine:3.21.3
 
 # Install minimal certificates for TLS/mTLS gRPC connections to Talos API
 # and prepare data directories with proper permissions for unprivileged user
