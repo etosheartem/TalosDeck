@@ -36,7 +36,7 @@ The new interface has ten navigation entries and the footer reads **Console UI 2
 
 ## Scope notes
 
-The new interface uses Russian labels with standard infrastructure terms in English.
-Legacy RU/EN translation files remain in the repository but are not loaded by the new UI.
+The console supports Russian and English through `console/i18n.ts` and `console/en.json`.
+The sidebar selector persists the language in localStorage. Legacy translation files are not loaded.
 Real reboot, provisioning, backup and notification side effects were not executed
 against the user's cluster; their UI/request flows were checked with fixtures.

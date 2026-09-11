@@ -223,7 +223,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 
 // ListNodes queries all configured cluster nodes concurrently and returns their overview.
 func (m *TalosManager) ListNodes(ctx context.Context) ([]*NodeOverview, error) {
-	nodeIPs := m.GetConfiguredNodes()
+	nodeIPs := m.clusterNodes(ctx)
 	sort.Strings(nodeIPs)
 
 	results := make([]*NodeOverview, len(nodeIPs))

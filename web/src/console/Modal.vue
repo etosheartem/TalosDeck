@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t } from "./i18n";
+
 import { ref, onMounted, onUnmounted } from "vue";
 import { X } from "lucide-vue-next";
 defineProps<{ title: string; wide?: boolean }>();
@@ -20,7 +22,11 @@ onUnmounted(() => previous?.focus());
   >
     <header>
       <h2>{{ title }}</h2>
-      <button class="icon-button" aria-label="Закрыть" @click="emit('close')">
+      <button
+        class="icon-button"
+        :aria-label="t('Закрыть')"
+        @click="emit('close')"
+      >
         <X :size="18" />
       </button>
     </header>

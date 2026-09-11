@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t, locale, setLocale } from "./i18n";
+
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import {
   Activity,
@@ -49,86 +51,90 @@ import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
 import NodeInspector from "./NodeInspector.vue";
 
-const pages = [
+const pages = computed(() => [
   {
     id: "overview",
-    title: "Обзор",
+    title: t("Обзор"),
     icon: Activity,
-    group: "КЛАСТЕР",
-    description: "Доступность, ресурсы и состояние инфраструктуры.",
+    group: t("КЛАСТЕР"),
+    description: t("Доступность, ресурсы и состояние инфраструктуры."),
   },
   {
     id: "nodes",
-    title: "Ноды",
+    title: t("Ноды"),
     icon: Server,
-    group: "КЛАСТЕР",
-    description:
+    group: t("КЛАСТЕР"),
+    description: t(
       "Машины Talos Linux. Выберите ноду для просмотра сервисов и логов.",
+    ),
   },
   {
     id: "workloads",
-    title: "Рабочие нагрузки",
+    title: t("Рабочие нагрузки"),
     icon: Boxes,
-    group: "КЛАСТЕР",
-    description: "Поды Kubernetes во всех пространствах имён.",
+    group: t("КЛАСТЕР"),
+    description: t("Поды Kubernetes во всех пространствах имён."),
   },
   {
     id: "storage",
-    title: "Хранилище",
+    title: t("Хранилище"),
     icon: HardDrive,
-    group: "КЛАСТЕР",
-    description: "Диски, разделы и точки монтирования на каждой машине.",
+    group: t("КЛАСТЕР"),
+    description: t("Диски, разделы и точки монтирования на каждой машине."),
   },
   {
     id: "config",
-    title: "Конфигурация",
+    title: t("Конфигурация"),
     icon: FileCode2,
-    group: "УПРАВЛЕНИЕ",
-    description: "Просмотр и экспорт MachineConfig. Доступ только для чтения.",
+    group: t("УПРАВЛЕНИЕ"),
+    description: t(
+      "Просмотр и экспорт MachineConfig. Доступ только для чтения.",
+    ),
   },
   {
     id: "etcd",
     title: "etcd",
     icon: Database,
-    group: "УПРАВЛЕНИЕ",
-    description: "Участники, лидер и состояние распределённой базы данных.",
+    group: t("УПРАВЛЕНИЕ"),
+    description: t("Участники, лидер и состояние распределённой базы данных."),
   },
   {
     id: "backups",
-    title: "Резервные копии",
+    title: t("Резервные копии"),
     icon: Archive,
-    group: "УПРАВЛЕНИЕ",
-    description: "Снимки etcd и полные резервные копии кластера.",
+    group: t("УПРАВЛЕНИЕ"),
+    description: t("Снимки etcd и полные резервные копии кластера."),
   },
   {
     id: "maintenance",
-    title: "Обслуживание",
+    title: t("Обслуживание"),
     icon: Wrench,
-    group: "УПРАВЛЕНИЕ",
-    description:
+    group: t("УПРАВЛЕНИЕ"),
+    description: t(
       "Диагностика, обслуживание машин и последовательная перезагрузка.",
+    ),
   },
   {
     id: "audit",
-    title: "Аудит",
+    title: t("Аудит"),
     icon: ScrollText,
-    group: "СИСТЕМА",
-    description: "История действий и результаты операций.",
+    group: t("СИСТЕМА"),
+    description: t("История действий и результаты операций."),
   },
   {
     id: "settings",
-    title: "Настройки",
+    title: t("Настройки"),
     icon: Settings,
-    group: "СИСТЕМА",
-    description: "Интеграции, уведомления и параметры опроса.",
+    group: t("СИСТЕМА"),
+    description: t("Интеграции, уведомления и параметры опроса."),
   },
-];
+]);
 const initial = () =>
-  pages.some((p) => p.id === location.hash.slice(1))
+  pages.value.some((p) => p.id === location.hash.slice(1))
     ? location.hash.slice(1)
     : "overview";
 const active = ref(initial());
-const page = computed(() => pages.find((p) => p.id === active.value)!);
+const page = computed(() => pages.value.find((p) => p.id === active.value)!);
 const mobile = ref(false);
 const navSearch = ref("");
 const interval = ref(30);
@@ -213,7 +219,7 @@ const issueRows = computed(() => [
     .filter((n) => !n.ready)
     .map((n) => ({
       name: n.hostname,
-      reason: "Нода не готова",
+      reason: t("Нода не готова"),
       kind: "nodes",
     })),
   ...nodes.value.flatMap((n) =>
@@ -221,7 +227,7 @@ const issueRows = computed(() => [
       .filter(([, v]) => v === "Degraded")
       .map(([service]) => ({
         name: `${n.hostname} / ${service}`,
-        reason: "Сервис деградирован",
+        reason: t("Сервис деградирован"),
         kind: "nodes",
       })),
   ),
@@ -234,22 +240,22 @@ const issueRows = computed(() => [
     ? [
         {
           name: "etcd",
-          reason: "Проблема кворума или участников",
+          reason: t("Проблема кворума или участников"),
           kind: "etcd",
         },
       ]
     : []),
 ]);
-const nodeColumns = [
-  { key: "hostname", title: "Имя", mono: true },
-  { key: "status", title: "Состояние" },
-  { key: "role", title: "Роль" },
-  { key: "ip", title: "Адрес", mono: true },
+const nodeColumns = computed(() => [
+  { key: "hostname", title: t("Имя"), mono: true },
+  { key: "status", title: t("Состояние") },
+  { key: "role", title: t("Роль") },
+  { key: "ip", title: t("Адрес"), mono: true },
   { key: "cpu", title: "CPU", mono: true },
-  { key: "memory", title: "Память", mono: true },
+  { key: "memory", title: t("Память"), mono: true },
   { key: "version", title: "Talos", mono: true },
-  { key: "uptime", title: "Время работы", mono: true },
-];
+  { key: "uptime", title: t("Время работы"), mono: true },
+]);
 const copyConfig = () => navigator.clipboard.writeText(config.value);
 function notify(message: string) {
   toast.value = message;
@@ -258,7 +264,7 @@ function notify(message: string) {
 }
 async function perform(
   run: () => Promise<unknown>,
-  message = "Операция выполнена",
+  message = t("Операция выполнена"),
 ) {
   if (busy.value) return;
   busy.value = true;
@@ -361,7 +367,7 @@ async function loadSection() {
       );
       result = parts.flatMap((p) => (p.status === "fulfilled" ? p.value : []));
       if (parts.some((p) => p.status === "rejected"))
-        throw new Error("Не удалось получить диски выбранной ноды");
+        throw new Error(t("Не удалось получить диски выбранной ноды"));
     }
     if (section === "config" && nodeIP.value) {
       const r = await request(
@@ -433,7 +439,7 @@ async function signIn() {
     await perform(async () => {
       const r = await login(password.value);
       if (!r.success) throw new Error(r.error);
-    }, "Вход выполнен")
+    }, t("Вход выполнен"))
   ) {
     dialog.value = "";
     password.value = "";
@@ -453,7 +459,7 @@ async function createWorker() {
   if (
     await perform(
       () => post("/proxmox/worker", worker.value),
-      "Рабочая машина создана",
+      t("Рабочая машина создана"),
     )
   ) {
     dialog.value = "";
@@ -471,7 +477,7 @@ async function saveAlerts() {
           : {}),
         ...(token.value ? { bot_token: token.value } : {}),
       }),
-    "Настройки сохранены",
+    t("Настройки сохранены"),
   );
   token.value = "";
 }
@@ -480,7 +486,7 @@ async function rollingReboot() {
     ...nodes.value.filter((n) => n.role === "worker"),
     ...nodes.value.filter((n) => n.role !== "worker"),
   ]) {
-    rolling.value = `Перезагрузка ${n.hostname}`;
+    rolling.value = t("Перезагрузка {0}", [n.hostname]);
     await rebootNode(n.ip);
     await waitForNodeReboot(n.ip);
   }
@@ -502,7 +508,7 @@ const protectedPage = computed(
         <div>TalosDeck<small>INFRASTRUCTURE CONSOLE</small></div></a
       ><button
         class="mobile-close icon-button"
-        aria-label="Закрыть навигацию"
+        :aria-label="t('Закрыть навигацию')"
         @click="mobile = false"
       >
         <X :size="20" />
@@ -510,12 +516,12 @@ const protectedPage = computed(
       <label class="nav-search"
         ><Search :size="15" /><input
           v-model="navSearch"
-          placeholder="Найти раздел"
-          aria-label="Найти раздел"
+          :placeholder="t('Найти раздел')"
+          :aria-label="t('Найти раздел')"
       /></label>
-      <nav aria-label="Главная навигация">
+      <nav :aria-label="t('Главная навигация')">
         <template
-          v-for="group in ['КЛАСТЕР', 'УПРАВЛЕНИЕ', 'СИСТЕМА']"
+          v-for="group in [t('КЛАСТЕР'), t('УПРАВЛЕНИЕ'), t('СИСТЕМА')]"
           :key="group"
           ><p class="nav-group">{{ group }}</p>
           <button
@@ -537,35 +543,53 @@ const protectedPage = computed(
         >
       </nav>
       <div class="rail-footer">
+        <label class="language-switch">
+          <span>{{ t("Язык интерфейса") }}</span>
+          <select
+            :value="locale"
+            :aria-label="t('Язык интерфейса')"
+            @change="setLocale(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <a
+          href="https://github.com/etosheartem/TalosDeck"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {{ t("Проект на GitHub") }} <ArrowUpRight :size="13" />
+        </a>
         <span class="state muted"><i />Console rebuild</span
         ><code>UI 2 · operator-console</code
-        ><a href="https://www.talos.dev" target="_blank" rel="noopener"
-          >Документация Talos <ArrowUpRight :size="13"
+        ><a href="https://www.talos.dev" target="_blank" rel="noopener">
+          {{ t("Документация Talos") }} <ArrowUpRight :size="13"
         /></a>
       </div>
     </aside>
     <button
       v-if="mobile"
       class="nav-backdrop"
-      aria-label="Закрыть меню"
+      :aria-label="t('Закрыть меню')"
       @click="mobile = false"
     />
     <div class="workspace">
       <header class="topline">
         <button
           class="mobile-menu icon-button"
-          aria-label="Открыть меню"
+          :aria-label="t('Открыть меню')"
           @click="mobile = true"
         >
           <Menu :size="20" />
         </button>
         <div class="breadcrumbs">
-          <Network :size="16" /><span>{{ cluster?.name || "Кластер" }}</span
+          <Network :size="16" /><span>{{ cluster?.name || t("Кластер") }}</span
           ><ChevronRight :size="14" /><strong>{{ page.title }}</strong>
         </div>
         <div class="session">
           <span class="viewer-label">{{
-            isAuthenticated ? currentUser.username : "Только просмотр"
+            isAuthenticated ? currentUser.username : t("Только просмотр")
           }}</span
           ><button
             v-if="!isAuthenticated"
@@ -574,7 +598,7 @@ const protectedPage = computed(
               actionError = '';
             "
           >
-            <LogIn :size="15" />Войти</button
+            <LogIn :size="15" /> {{ t("Войти") }}</button
           ><button
             v-else
             @click="
@@ -582,11 +606,11 @@ const protectedPage = computed(
                 config = '';
                 data = [];
                 alerts = null;
-                notify('Вы вышли');
+                notify(t('Вы вышли'));
               })
             "
           >
-            <LogOut :size="15" />Выйти
+            <LogOut :size="15" /> {{ t("Выйти") }}
           </button>
         </div>
       </header>
@@ -598,17 +622,18 @@ const protectedPage = computed(
             <p>{{ page.description }}</p>
           </div>
           <div class="refresh-tools">
-            <span v-if="refreshed">Опрос {{ refreshed }}</span
-            ><select v-model="interval" aria-label="Интервал обновления">
-              <option :value="0">Вручную</option>
-              <option :value="10">10 сек</option>
-              <option :value="30">30 сек</option>
-              <option :value="60">1 мин</option></select
+            <span v-if="refreshed"> {{ t("Опрос") }} {{ refreshed }}</span
+            ><select v-model="interval" :aria-label="t('Интервал обновления')">
+              <option :value="0">{{ t("Вручную") }}</option>
+              <option :value="10">{{ t("10 сек") }}</option>
+              <option :value="30">{{ t("30 сек") }}</option>
+              <option :value="60">{{ t("1 мин") }}</option></select
             ><button
               :disabled="loading || sectionLoading"
               @click="refresh().then(loadSection)"
             >
-              <RefreshCw :size="15" :class="{ spin: loading }" />Обновить
+              <RefreshCw :size="15" :class="{ spin: loading }" />
+              {{ t("Обновить") }}
             </button>
           </div>
         </div>
@@ -619,10 +644,12 @@ const protectedPage = computed(
         >
           <AlertTriangle :size="18" />
           <div>
-            <strong>Часть данных недоступна</strong>
-            <p>Последние полученные значения могут быть устаревшими.</p>
+            <strong> {{ t("Часть данных недоступна") }} </strong>
+            <p>
+              {{ t("Последние полученные значения могут быть устаревшими.") }}
+            </p>
             <details>
-              <summary>Подробности</summary>
+              <summary>{{ t("Подробности") }}</summary>
               <p v-for="(message, key) in errors" :key="key">
                 {{ key }}: {{ message }}
               </p>
@@ -630,15 +657,16 @@ const protectedPage = computed(
           </div>
         </div>
         <div v-if="loading && !refreshed" class="loading-state">
-          <RefreshCw :size="22" class="spin" />Подключение к кластеру…
+          <RefreshCw :size="22" class="spin" />
+          {{ t("Подключение к кластеру…") }}
         </div>
         <template v-if="active === 'overview'">
           <div class="overview-grid">
             <section class="availability">
-              <div class="section-label">ДОСТУПНОСТЬ КЛАСТЕРА</div>
+              <div class="section-label">{{ t("ДОСТУПНОСТЬ КЛАСТЕРА") }}</div>
               <div class="availability-value">
                 <span>{{ refreshed && !errors.nodes ? ready : "—" }}</span
-                ><small>/ {{ nodes.length || "—" }} нод</small>
+                ><small>/ {{ nodes.length || "—" }} {{ t("нод") }} </small>
               </div>
               <p>
                 <span
@@ -652,12 +680,12 @@ const protectedPage = computed(
                   ]"
                   ><i />{{
                     errors.nodes
-                      ? "Нет актуальных данных"
+                      ? t("Нет актуальных данных")
                       : nodes.length
                         ? ready === nodes.length
-                          ? "Все ноды готовы"
-                          : "Требует внимания"
-                        : "Ожидание данных"
+                          ? t("Все ноды готовы")
+                          : t("Требует внимания")
+                        : t("Ожидание данных")
                   }}</span
                 >
               </p>
@@ -670,7 +698,7 @@ const protectedPage = computed(
                 />
               </div>
               <button class="text-link" @click="navigate('nodes')">
-                Открыть список нод <ArrowUpRight :size="16" />
+                {{ t("Открыть список нод") }} <ArrowUpRight :size="16" />
               </button>
             </section>
             <section class="overview-metrics">
@@ -679,19 +707,21 @@ const protectedPage = computed(
                 ><strong>{{
                   nodes.filter((n) => n.role === "controlplane").length
                 }}</strong
-                ><small>Управление кластером</small>
+                ><small> {{ t("Управление кластером") }} </small>
               </div>
               <div>
                 <span>Workers</span
                 ><strong>{{
                   nodes.filter((n) => n.role === "worker").length
                 }}</strong
-                ><small>Вычислительные ноды</small>
+                ><small> {{ t("Вычислительные ноды") }} </small>
               </div>
               <div>
-                <span>Поды</span
+                <span> {{ t("Поды") }} </span
                 ><strong>{{ errors.pods ? "—" : pods.length }}</strong
-                ><small>{{ troubled.length }} требуют внимания</small>
+                ><small
+                  >{{ troubled.length }} {{ t("требуют внимания") }}
+                </small>
               </div>
               <div>
                 <span>etcd</span
@@ -704,15 +734,18 @@ const protectedPage = computed(
                         ? "Degraded"
                         : "—"
                 }}</strong
-                ><small>Участники: {{ etcd?.members?.length ?? "—" }}</small>
+                ><small>
+                  {{ t("Участники:") }}
+                  {{ etcd?.members?.length ?? "—" }}</small
+                >
               </div>
             </section>
           </div>
           <div class="two-columns">
             <section class="surface">
               <header class="surface-heading">
-                <h2>Ресурсы машин</h2>
-                <span>Текущий срез</span>
+                <h2>{{ t("Ресурсы машин") }}</h2>
+                <span> {{ t("Текущий срез") }} </span>
               </header>
               <div v-for="n in nodes" :key="n.ip" class="resource-meter">
                 <button class="resource-link" @click="inspected = n">
@@ -730,25 +763,25 @@ const protectedPage = computed(
                 <small class="mono">RAM {{ n.memoryUsage || "—" }}</small>
               </div>
               <div v-if="!nodes.length" class="empty-state">
-                Нет данных о машинах
+                {{ t("Нет данных о машинах") }}
               </div>
             </section>
             <section class="surface">
               <header class="surface-heading">
-                <h2>Требует внимания</h2>
+                <h2>{{ t("Требует внимания") }}</h2>
                 <span>{{ issueRows.length }}</span>
               </header>
               <div v-if="!issueRows.length" class="quiet-state">
                 <CheckCircle2 :size="28" /><strong>{{
                   Object.keys(errors).length
-                    ? "Проверка неполная"
-                    : "Активных проблем не обнаружено"
+                    ? t("Проверка неполная")
+                    : t("Активных проблем не обнаружено")
                 }}</strong>
                 <p>
                   {{
                     Object.keys(errors).length
-                      ? "Часть источников не ответила."
-                      : "По последним ответам Talos и Kubernetes."
+                      ? t("Часть источников не ответила.")
+                      : t("По последним ответам Talos и Kubernetes.")
                   }}
                 </p>
               </div>
@@ -779,16 +812,16 @@ const protectedPage = computed(
             </div>
             <div>
               <span>Proxmox VE</span
-              ><code>{{ pve?.configured ? pve.node : "Не настроен" }}</code>
+              ><code>{{ pve?.configured ? pve.node : t("Не настроен") }}</code>
             </div>
           </section>
         </template>
         <template v-else-if="active === 'nodes'"
           ><div class="toolbar">
-            <label
-              >Роль
+            <label>
+              {{ t("Роль") }}
               <select v-model="role">
-                <option value="all">Все роли</option>
+                <option value="all">{{ t("Все роли") }}</option>
                 <option value="controlplane">Control plane</option>
                 <option value="worker">Worker</option>
               </select></label
@@ -797,7 +830,7 @@ const protectedPage = computed(
               :disabled="!isAuthenticated || !pve?.configured"
               @click="showWorker"
             >
-              <Plus :size="16" />Добавить worker
+              <Plus :size="16" /> {{ t("Добавить worker") }}
             </button>
           </div>
           <ResourceTable
@@ -810,34 +843,35 @@ const protectedPage = computed(
             <label
               >Namespace
               <select v-model="namespace">
-                <option value="all">Все пространства имён</option>
+                <option value="all">{{ t("Все пространства имён") }}</option>
                 <option v-for="ns in namespaces" :key="ns">{{ ns }}</option>
               </select></label
             ><span class="spacer" /><span class="state muted"
-              >{{ troubled.length }} требуют внимания</span
-            >
+              >{{ troubled.length }} {{ t("требуют внимания") }}
+            </span>
           </div>
           <ResourceTable
             :rows="podRows"
             :columns="[
-              { key: 'name', title: 'Под', mono: true },
+              { key: 'name', title: t('Под'), mono: true },
               { key: 'namespace', title: 'Namespace' },
-              { key: 'status', title: 'Состояние' },
-              { key: 'readyContainers', title: 'Готовность' },
-              { key: 'restarts', title: 'Рестарты' },
-              { key: 'nodeName', title: 'Нода' },
+              { key: 'status', title: t('Состояние') },
+              { key: 'readyContainers', title: t('Готовность') },
+              { key: 'restarts', title: t('Рестарты') },
+              { key: 'nodeName', title: t('Нода') },
               { key: 'ip', title: 'IP', mono: true },
-              { key: 'age', title: 'Возраст' },
+              { key: 'age', title: t('Возраст') },
             ]"
             @select="detail = $event"
         /></template>
         <template v-else-if="active === 'etcd'"
           ><div class="cluster-facts surface">
             <div>
-              <span>Лидер</span><code>{{ etcd?.leaderName || "—" }}</code>
+              <span> {{ t("Лидер") }} </span
+              ><code>{{ etcd?.leaderName || "—" }}</code>
             </div>
             <div>
-              <span>Размер базы</span
+              <span> {{ t("Размер базы") }} </span
               ><code>{{ etcd?.totalDbSize || "—" }}</code>
             </div>
             <div>
@@ -860,18 +894,18 @@ const protectedPage = computed(
               }))
             "
             :columns="[
-              { key: 'name', title: 'Участник' },
-              { key: 'status', title: 'Состояние' },
-              { key: 'role', title: 'Роль' },
-              { key: 'dbSize', title: 'Размер БД' },
+              { key: 'name', title: t('Участник') },
+              { key: 'status', title: t('Состояние') },
+              { key: 'role', title: t('Роль') },
+              { key: 'dbSize', title: t('Размер БД') },
               { key: 'peerURLs', title: 'Peer URLs', mono: true },
             ]"
             @select="detail = $event"
         /></template>
         <div v-else-if="protectedPage" class="access-state">
           <LogIn :size="28" />
-          <h2>Требуется вход</h2>
-          <p>Раздел «{{ page.title }}» доступен администратору.</p>
+          <h2>{{ t("Требуется вход") }}</h2>
+          <p>{{ t("Раздел «{0}» доступен администратору.", [page.title]) }}</p>
           <button
             class="primary"
             @click="
@@ -879,7 +913,7 @@ const protectedPage = computed(
               actionError = '';
             "
           >
-            Войти
+            {{ t("Войти") }}
           </button>
         </div>
         <template v-else>
@@ -887,10 +921,12 @@ const protectedPage = computed(
             v-if="['storage', 'config', 'maintenance'].includes(active)"
             class="toolbar"
           >
-            <label
-              >Машина
+            <label>
+              {{ t("Машина") }}
               <select v-model="nodeIP">
-                <option v-if="!nodes.length" value="">Нет доступных нод</option>
+                <option v-if="!nodes.length" value="">
+                  {{ t("Нет доступных нод") }}
+                </option>
                 <option v-for="n in nodes" :key="n.ip" :value="n.ip">
                   {{ n.hostname }} · {{ n.ip }}
                 </option>
@@ -898,28 +934,32 @@ const protectedPage = computed(
             >
           </div>
           <div v-if="errors.section" class="notice error" role="alert">
-            {{ errors.section }}<button @click="loadSection">Повторить</button>
+            {{ errors.section
+            }}<button @click="loadSection">{{ t("Повторить") }}</button>
           </div>
           <div v-if="sectionLoading" class="loading-state">
-            <RefreshCw :size="20" class="spin" />Загрузка раздела…
+            <RefreshCw :size="20" class="spin" /> {{ t("Загрузка раздела…") }}
           </div>
           <template v-else-if="active === 'storage'"
             ><ResourceTable
               :rows="data"
               :columns="[
-                { key: 'name', title: 'Устройство', mono: true },
-                { key: 'node', title: 'Нода' },
-                { key: 'model', title: 'Модель' },
-                { key: 'size', title: 'Размер' },
-                { key: 'type', title: 'Тип' },
-                { key: 'status', title: 'Здоровье' },
-                { key: 'bus', title: 'Шина' },
+                { key: 'name', title: t('Устройство'), mono: true },
+                { key: 'node', title: t('Нода') },
+                { key: 'model', title: t('Модель') },
+                { key: 'size', title: t('Размер') },
+                { key: 'type', title: t('Тип') },
+                { key: 'status', title: t('Здоровье') },
+                { key: 'bus', title: t('Шина') },
               ]"
               @select="detail = $event"
             />
             <p class="footnote">
-              Выберите диск, чтобы увидеть разделы, файловые системы и точки
-              монтирования.
+              {{
+                t(
+                  "Выберите диск, чтобы увидеть разделы, файловые системы и точки монтирования.",
+                )
+              }}
             </p></template
           >
           <template v-else-if="active === 'config'"
@@ -931,21 +971,21 @@ const protectedPage = computed(
                 <div class="toolbar">
                   <button
                     :disabled="!config"
-                    @click="perform(() => copyConfig(), 'Скопировано')"
+                    @click="perform(() => copyConfig(), t('Скопировано'))"
                   >
-                    Копировать</button
+                    {{ t("Копировать") }}</button
                   ><button
                     :disabled="!config"
                     @click="download(config, `${nodeIP}-machineconfig.yaml`)"
                   >
-                    Скачать YAML
+                    {{ t("Скачать YAML") }}
                   </button>
                 </div>
               </header>
               <label class="search-field"
                 ><Search :size="16" /><input
                   v-model="configQuery"
-                  placeholder="Найти в конфигурации"
+                  :placeholder="t('Найти в конфигурации')"
               /></label>
               <div class="code-lines">
                 <div
@@ -963,40 +1003,43 @@ const protectedPage = computed(
                 <p v-if="!config">
                   {{
                     errors.section
-                      ? "Конфигурация недоступна."
-                      : "Выберите ноду для просмотра конфигурации."
+                      ? t("Конфигурация недоступна.")
+                      : t("Выберите ноду для просмотра конфигурации.")
                   }}
                 </p>
               </div>
-              <footer>Закрытые ключи маскируются сервером.</footer>
+              <footer>{{ t("Закрытые ключи маскируются сервером.") }}</footer>
             </section></template
           >
           <template v-else-if="active === 'backups'"
             ><div class="toolbar">
-              <select v-model="backupType" aria-label="Тип резервной копии">
-                <option value="etcd">Снимок etcd</option>
-                <option value="full">Полная копия</option></select
+              <select
+                v-model="backupType"
+                :aria-label="t('Тип резервной копии')"
+              >
+                <option value="etcd">{{ t("Снимок etcd") }}</option>
+                <option value="full">{{ t("Полная копия") }}</option></select
               ><button
                 class="primary"
                 :disabled="busy"
                 @click="
                   perform(
                     () => createBackup(backupType),
-                    'Резервная копия создана',
+                    t('Резервная копия создана'),
                   ).then(loadSection)
                 "
               >
-                <Plus :size="16" />Создать копию
+                <Plus :size="16" /> {{ t("Создать копию") }}
               </button>
             </div>
             <ResourceTable
               :rows="data"
               :columns="[
-                { key: 'filename', title: 'Файл', mono: true },
-                { key: 'type', title: 'Тип' },
-                { key: 'humanSize', title: 'Размер' },
-                { key: 'timestamp', title: 'Создано' },
-                { key: 'node', title: 'Нода' },
+                { key: 'filename', title: t('Файл'), mono: true },
+                { key: 'type', title: t('Тип') },
+                { key: 'humanSize', title: t('Размер') },
+                { key: 'timestamp', title: t('Создано') },
+                { key: 'node', title: t('Нода') },
               ]"
               @select="detail = $event"
           /></template>
@@ -1004,11 +1047,11 @@ const protectedPage = computed(
             ><ResourceTable
               :rows="data"
               :columns="[
-                { key: 'action', title: 'Действие' },
-                { key: 'user', title: 'Пользователь' },
-                { key: 'status', title: 'Результат' },
-                { key: 'ip', title: 'Адрес', mono: true },
-                { key: 'timestamp', title: 'Время' },
+                { key: 'action', title: t('Действие') },
+                { key: 'user', title: t('Пользователь') },
+                { key: 'status', title: t('Результат') },
+                { key: 'ip', title: t('Адрес'), mono: true },
+                { key: 'timestamp', title: t('Время') },
               ]"
               @select="detail = $event"
           /></template>
@@ -1016,10 +1059,13 @@ const protectedPage = computed(
             ><section class="surface operation-list">
               <article>
                 <div>
-                  <h2>Проверка кластера</h2>
+                  <h2>{{ t("Проверка кластера") }}</h2>
                   <p>
-                    Проверить доступность API, системные компоненты и рабочие
-                    нагрузки.
+                    {{
+                      t(
+                        "Проверить доступность API, системные компоненты и рабочие нагрузки.",
+                      )
+                    }}
                   </p>
                 </div>
                 <button
@@ -1027,24 +1073,28 @@ const protectedPage = computed(
                   @click="
                     perform(async () => {
                       checks = await runBootstrapCheck();
-                    }, 'Проверка завершена')
+                    }, t('Проверка завершена'))
                   "
                 >
-                  Запустить проверку
+                  {{ t("Запустить проверку") }}
                 </button>
               </article>
               <article>
                 <div>
-                  <h2>Режим обслуживания</h2>
-                  <p>Управление режимом обслуживания выбранной ноды.</p>
+                  <h2>{{ t("Режим обслуживания") }}</h2>
+                  <p>
+                    {{ t("Управление режимом обслуживания выбранной ноды.") }}
+                  </p>
                 </div>
                 <div class="toolbar">
                   <button
                     :disabled="!isAuthenticated || !nodeIP || busy"
                     @click="
                       ask(
-                        'Включить обслуживание',
-                        `Нода ${nodeIP} будет переведена в режим обслуживания.`,
+                        t('Включить обслуживание'),
+                        t('Нода {0} будет переведена в режим обслуживания.', [
+                          nodeIP,
+                        ]),
                         () =>
                           post(`/nodes/${nodeIP}/maintenance`, {
                             enable: true,
@@ -1052,13 +1102,13 @@ const protectedPage = computed(
                       )
                     "
                   >
-                    Включить</button
+                    {{ t("Включить") }}</button
                   ><button
                     :disabled="!isAuthenticated || !nodeIP || busy"
                     @click="
                       ask(
-                        'Выключить обслуживание',
-                        `Выйти из режима обслуживания на ${nodeIP}.`,
+                        t('Выключить обслуживание'),
+                        t('Выйти из режима обслуживания на {0}.', [nodeIP]),
                         () =>
                           post(`/nodes/${nodeIP}/maintenance`, {
                             enable: false,
@@ -1066,16 +1116,19 @@ const protectedPage = computed(
                       )
                     "
                   >
-                    Выключить
+                    {{ t("Выключить") }}
                   </button>
                 </div>
               </article>
               <article>
                 <div>
-                  <h2>Перезагрузить ноду</h2>
+                  <h2>{{ t("Перезагрузить ноду") }}</h2>
                   <p>
-                    Рабочие нагрузки на {{ nodeIP || "выбранной ноде" }} будут
-                    прерваны.
+                    {{
+                      t("Рабочие нагрузки на {0} будут прерваны.", [
+                        nodeIP || t("выбранной ноде"),
+                      ])
+                    }}
                   </p>
                 </div>
                 <button
@@ -1083,21 +1136,24 @@ const protectedPage = computed(
                   :disabled="!isAuthenticated || !nodeIP || busy"
                   @click="
                     ask(
-                      'Перезагрузить ноду',
-                      `Подтвердите перезагрузку ${nodeIP}.`,
+                      t('Перезагрузить ноду'),
+                      t('Подтвердите перезагрузку {0}.', [nodeIP]),
                       () => rebootNode(nodeIP),
                     )
                   "
                 >
-                  Перезагрузить
+                  {{ t("Перезагрузить") }}
                 </button>
               </article>
               <article>
                 <div>
-                  <h2>Последовательная перезагрузка</h2>
+                  <h2>{{ t("Последовательная перезагрузка") }}</h2>
                   <p>
-                    Сначала workers, затем control plane. Ожидание готовности
-                    каждой ноды.
+                    {{
+                      t(
+                        "Сначала workers, затем control plane. Ожидание готовности каждой ноды.",
+                      )
+                    }}
                   </p>
                 </div>
                 <button
@@ -1105,13 +1161,15 @@ const protectedPage = computed(
                   :disabled="!isAuthenticated || !nodes.length || busy"
                   @click="
                     ask(
-                      'Перезагрузить кластер',
-                      'Перезагрузить все ноды по очереди? Операция может занять несколько минут.',
+                      t('Перезагрузить кластер'),
+                      t(
+                        'Перезагрузить все ноды по очереди? Операция может занять несколько минут.',
+                      ),
                       rollingReboot,
                     )
                   "
                 >
-                  Перезагрузить все
+                  {{ t("Перезагрузить все") }}
                 </button>
               </article>
             </section>
@@ -1120,9 +1178,9 @@ const protectedPage = computed(
               v-if="checks.length"
               :rows="checks"
               :columns="[
-                { key: 'title', title: 'Проверка' },
-                { key: 'status', title: 'Результат' },
-                { key: 'detail', title: 'Подробности' },
+                { key: 'title', title: t('Проверка') },
+                { key: 'status', title: t('Результат') },
+                { key: 'detail', title: t('Подробности') },
               ]"
               @select="detail = $event"
           /></template>
@@ -1132,25 +1190,28 @@ const protectedPage = computed(
                 <header class="surface-heading">
                   <h2>Telegram</h2>
                   <span class="state muted">{{
-                    alerts?.bot_configured ? "Настроен" : "Не настроен"
+                    alerts?.bot_configured ? t("Настроен") : t("Не настроен")
                   }}</span>
                 </header>
                 <form class="settings-form" @submit.prevent="saveAlerts">
                   <label class="check-label"
-                    ><input v-model="enabled" type="checkbox" /> Отправлять
-                    уведомления</label
+                    ><input v-model="enabled" type="checkbox" />
+                    {{ t("Отправлять уведомления") }} </label
                   ><label
                     >Bot token<input
                       v-model="token"
                       type="password"
                       autocomplete="new-password"
-                      placeholder="Оставьте пустым, чтобы сохранить текущий" /></label
+                      :placeholder="
+                        t('Оставьте пустым, чтобы сохранить текущий')
+                      " /></label
                   ><label
                     >Chat ID<input
                       v-model="chat"
-                      placeholder="Например, -1001234567890" /></label
-                  ><label
-                    >Минимальный уровень<select v-model="level">
+                      :placeholder="t('Например, -1001234567890')" /></label
+                  ><label>
+                    {{ t("Минимальный уровень") }}
+                    <select v-model="level">
                       <option>INFO</option>
                       <option>WARNING</option>
                       <option>CRITICAL</option>
@@ -1161,18 +1222,18 @@ const protectedPage = computed(
                       class="primary"
                       :disabled="busy || !!errors.section"
                     >
-                      Сохранить</button
+                      {{ t("Сохранить") }}</button
                     ><button
                       type="button"
                       :disabled="busy"
                       @click="
                         perform(
                           () => post('/alerts/test', {}),
-                          'Тестовое уведомление отправлено',
+                          t('Тестовое уведомление отправлено'),
                         )
                       "
                     >
-                      Отправить тест
+                      {{ t("Отправить тест") }}
                     </button>
                   </div>
                 </form>
@@ -1181,30 +1242,32 @@ const protectedPage = computed(
                 <header class="surface-heading">
                   <h2>Proxmox VE</h2>
                   <span class="state muted">{{
-                    pve?.configured ? "Настроен" : "Не настроен"
+                    pve?.configured ? t("Настроен") : t("Не настроен")
                   }}</span>
                 </header>
                 <dl class="definition-list">
-                  <dt>Хост</dt>
+                  <dt>{{ t("Хост") }}</dt>
                   <dd>{{ pve?.node || "—" }}</dd>
                   <dt>CPU</dt>
                   <dd>
                     {{ pve?.status?.cpuUsagePercent?.toFixed(1) ?? "—" }}%
                   </dd>
-                  <dt>Свободная RAM</dt>
+                  <dt>{{ t("Свободная RAM") }}</dt>
                   <dd>{{ bytes(pve?.status?.memory?.available) }}</dd>
-                  <dt>Свободный диск</dt>
+                  <dt>{{ t("Свободный диск") }}</dt>
                   <dd>{{ bytes(pve?.status?.storage?.free) }}</dd>
                 </dl>
                 <p class="footnote">
-                  Подключение Proxmox задаётся в конфигурации сервера.
+                  {{
+                    t("Подключение Proxmox задаётся в конфигурации сервера.")
+                  }}
                 </p>
                 <button
                   class="settings-action"
                   :disabled="!pve?.configured"
                   @click="showWorker"
                 >
-                  Добавить рабочую машину
+                  {{ t("Добавить рабочую машину") }}
                 </button>
               </section>
             </div></template
@@ -1227,7 +1290,7 @@ const protectedPage = computed(
       <CheckCircle2 :size="18" />{{ toast
       }}<button
         class="icon-button"
-        aria-label="Закрыть сообщение"
+        :aria-label="t('Закрыть сообщение')"
         @click="toast = ''"
       >
         <X :size="16" />
@@ -1235,12 +1298,13 @@ const protectedPage = computed(
     </div>
     <Modal
       v-if="dialog === 'login'"
-      title="Вход администратора"
+      :title="t('Вход администратора')"
       @close="dialog = ''"
       ><form class="settings-form" @submit.prevent="signIn">
-        <p>Введите пароль администратора TalosDeck.</p>
-        <label
-          >Пароль<input
+        <p>{{ t("Введите пароль администратора TalosDeck.") }}</p>
+        <label>
+          {{ t("Пароль") }}
+          <input
             v-model="password"
             type="password"
             autocomplete="current-password"
@@ -1251,19 +1315,20 @@ const protectedPage = computed(
           {{ actionError }}
         </div>
         <button class="primary" :disabled="busy">
-          {{ busy ? "Вход…" : "Войти" }}
+          {{ busy ? t("Вход…") : t("Войти") }}
         </button>
       </form></Modal
     >
     <Modal
       v-if="dialog === 'worker'"
-      title="Новая рабочая машина"
+      :title="t('Новая рабочая машина')"
       @close="!busy && (dialog = '')"
       ><form class="settings-form" @submit.prevent="createWorker">
-        <p>Создать виртуальную машину Talos в Proxmox VE.</p>
+        <p>{{ t("Создать виртуальную машину Talos в Proxmox VE.") }}</p>
         <div class="form-grid">
-          <label
-            >Имя<input
+          <label>
+            {{ t("Имя") }}
+            <input
               v-model="worker.name"
               required
               pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?"
@@ -1275,7 +1340,7 @@ const protectedPage = computed(
               type="number"
               min="100"
               max="9999"
-              placeholder="Автоматически" /></label
+              :placeholder="t('Автоматически')" /></label
           ><label
             >vCPU<input
               v-model.number="worker.cores"
@@ -1289,8 +1354,9 @@ const protectedPage = computed(
               type="number"
               min="512"
               required /></label
-          ><label
-            >Диск, GiB<input
+          ><label>
+            {{ t("Диск, GiB") }}
+            <input
               v-model.number="worker.diskGB"
               type="number"
               min="10"
@@ -1298,16 +1364,18 @@ const protectedPage = computed(
           ><label>Storage<input v-model="worker.storage" required /></label
           ><label>Bridge<input v-model="worker.bridge" required /></label
           ><label
-            >ISO<input v-model="worker.iso" placeholder="По настройке сервера"
+            >ISO<input
+              v-model="worker.iso"
+              :placeholder="t('По настройке сервера')"
           /></label>
         </div>
         <label class="check-label"
-          ><input v-model="worker.start" type="checkbox" /> Запустить после
-          создания</label
-        >
+          ><input v-model="worker.start" type="checkbox" />
+          {{ t("Запустить после создания") }}
+        </label>
         <div v-if="actionError" class="notice error">{{ actionError }}</div>
         <button class="primary" :disabled="busy || !isAuthenticated">
-          {{ busy ? "Создание…" : "Создать машину" }}
+          {{ busy ? t("Создание…") : t("Создать машину") }}
         </button>
       </form></Modal
     >
@@ -1319,9 +1387,10 @@ const protectedPage = computed(
       <div v-if="actionError" class="notice error">{{ actionError }}</div>
       <p v-if="rolling">{{ rolling }}</p>
       <div class="dialog-actions">
-        <button :disabled="busy" @click="confirmation = null">Отмена</button
+        <button :disabled="busy" @click="confirmation = null">
+          {{ t("Отмена") }}</button
         ><button class="danger" :disabled="busy" @click="confirm">
-          {{ busy ? "Выполняется…" : "Подтвердить" }}
+          {{ busy ? t("Выполняется…") : t("Подтвердить") }}
         </button>
       </div></Modal
     >
@@ -1339,7 +1408,7 @@ const protectedPage = computed(
         detail.filename ||
         detail.action ||
         detail.title ||
-        'Подробности'
+        t('Подробности')
       "
       wide
       @close="detail = null"
@@ -1347,16 +1416,16 @@ const protectedPage = computed(
         ><div class="toolbar">
           <button
             :disabled="busy"
-            @click="perform(() => downloadBackup(detail), 'Файл скачан')"
+            @click="perform(() => downloadBackup(detail), t('Файл скачан'))"
           >
-            Скачать</button
+            {{ t("Скачать") }}</button
           ><button
             class="danger"
             :disabled="busy"
             @click="
               ask(
-                'Удалить резервную копию',
-                `Файл ${detail.filename} будет удалён.`,
+                t('Удалить резервную копию'),
+                t('Файл {0} будет удалён.', [detail.filename]),
                 async () => {
                   await deleteBackup(detail.id);
                   detail = null;
@@ -1364,7 +1433,7 @@ const protectedPage = computed(
               )
             "
           >
-            Удалить
+            {{ t("Удалить") }}
           </button>
         </div></template
       ><ResourceTable
@@ -1372,12 +1441,12 @@ const protectedPage = computed(
         :search="false"
         :rows="detail.partitions"
         :columns="[
-          { key: 'device', title: 'Раздел' },
-          { key: 'label', title: 'Метка' },
-          { key: 'filesystem', title: 'ФС' },
-          { key: 'mountpoint', title: 'Точка монтирования' },
-          { key: 'size', title: 'Размер' },
-          { key: 'used', title: 'Занято' },
+          { key: 'device', title: t('Раздел') },
+          { key: 'label', title: t('Метка') },
+          { key: 'filesystem', title: t('ФС') },
+          { key: 'mountpoint', title: t('Точка монтирования') },
+          { key: 'size', title: t('Размер') },
+          { key: 'used', title: t('Занято') },
         ]"
         @select="notify($event.device)"
       />

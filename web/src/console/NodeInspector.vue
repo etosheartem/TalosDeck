@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t } from "./i18n";
+
 import { ref, watch, onUnmounted, nextTick } from "vue";
 import type { NodeOverview } from "../types";
 import { getAuthToken, isAuthenticated } from "../api";
@@ -37,7 +39,7 @@ function connect() {
   status.value = "Подключение…";
   const token = getAuthToken();
   if (!token) {
-    error.value = "Войдите для просмотра живого потока";
+    error.value = t("Войдите для просмотра живого потока");
     return;
   }
   const path =
@@ -51,8 +53,9 @@ function connect() {
   socket.onopen = () => (status.value = "Подключено");
   socket.onclose = () => (status.value = "Отключено");
   socket.onerror = () => {
-    error.value =
-      "Не удалось подключиться к потоку. Проверьте авторизацию и доступность ноды.";
+    error.value = t(
+      "Не удалось подключиться к потоку. Проверьте авторизацию и доступность ноды.",
+    );
   };
   socket.onmessage = (e) => {
     if (paused.value) return;
@@ -111,7 +114,7 @@ async function restart() {
 <template>
   <div class="inspector-meta">
     <span class="mono">{{ node.ip }}</span
-    ><span>{{ node.role || "Роль неизвестна" }}</span
+    ><span>{{ node.role || t("Роль неизвестна") }}</span
     ><span>Talos {{ node.version || "—" }}</span
     ><span>CPU {{ node.cpuUsage ?? "—" }}%</span
     ><span>RAM {{ node.memoryUsage || "—" }}</span>
@@ -119,9 +122,9 @@ async function restart() {
   <nav class="section-tabs">
     <button
       v-for="item in [
-        ['services', 'Сервисы'],
-        ['containers', 'Контейнеры'],
-        ['logs', 'Живые логи'],
+        ['services', t('Сервисы')],
+        ['containers', t('Контейнеры')],
+        ['logs', t('Живые логи')],
       ]"
       :key="item[0]"
       :class="{ selected: tab === item[0] }"
@@ -131,33 +134,37 @@ async function restart() {
     </button>
   </nav>
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
-  <div v-if="loading" class="loading-state">Загрузка…</div>
+  <div v-if="loading" class="loading-state">{{ t("Загрузка…") }}</div>
   <template v-else-if="tab === 'logs'"
     ><div class="toolbar">
-      <select v-model="service" aria-label="Источник логов" @change="connect">
+      <select
+        v-model="service"
+        :aria-label="t('Источник логов')"
+        @change="connect"
+      >
         <option>dmesg</option>
         <option>kubelet</option>
         <option>etcd</option>
         <option>containerd</option>
         <option>apid</option></select
-      ><span class="state muted">{{ status }}</span
-      ><button @click="connect">Подключить</button
+      ><span class="state muted">{{ t(status) }}</span
+      ><button @click="connect">{{ t("Подключить") }}</button
       ><button @click="paused = !paused">
-        {{ paused ? "Продолжить" : "Пауза" }}</button
-      ><button @click="logs = []">Очистить</button
+        {{ paused ? t("Продолжить") : t("Пауза") }}</button
+      ><button @click="logs = []">{{ t("Очистить") }}</button
       ><button @click="download(logs.join('\n'), `${node.hostname}.log`)">
-        Экспорт
+        {{ t("Экспорт") }}
       </button>
     </div>
     <div class="toolbar">
-      <input v-model="filter" placeholder="Фильтр строк" /><label
-        ><input v-model="autoscroll" type="checkbox" /> Автопрокрутка</label
-      >
+      <input v-model="filter" :placeholder="t('Фильтр строк')" /><label
+        ><input v-model="autoscroll" type="checkbox" /> {{ t("Автопрокрутка") }}
+      </label>
     </div>
     <pre ref="viewport" class="log-view">{{
       logs
         .filter((l) => l.toLowerCase().includes(filter.toLowerCase()))
-        .join("\n") || "Ожидание сообщений…"
+        .join("\n") || t("Ожидание сообщений…")
     }}</pre>
   </template>
   <template v-else
@@ -166,16 +173,16 @@ async function restart() {
       :columns="
         tab === 'services'
           ? [
-              { key: 'id', title: 'Сервис', mono: true },
-              { key: 'state', title: 'Состояние' },
-              { key: 'healthy', title: 'Здоровье' },
-              { key: 'description', title: 'Описание' },
+              { key: 'id', title: t('Сервис'), mono: true },
+              { key: 'state', title: t('Состояние') },
+              { key: 'healthy', title: t('Здоровье') },
+              { key: 'description', title: t('Описание') },
             ]
           : [
-              { key: 'id', title: 'Контейнер', mono: true },
-              { key: 'name', title: 'Имя' },
-              { key: 'status', title: 'Состояние' },
-              { key: 'image', title: 'Образ' },
+              { key: 'id', title: t('Контейнер'), mono: true },
+              { key: 'name', title: t('Имя') },
+              { key: 'status', title: t('Состояние') },
+              { key: 'image', title: t('Образ') },
             ]
       "
       @select="detail = $event"
@@ -187,14 +194,14 @@ async function restart() {
         :disabled="!isAuthenticated"
         @click="pending = detail.id"
       >
-        Перезапустить сервис
+        {{ t("Перезапустить сервис") }}
       </button>
     </section>
     <div v-if="pending" class="notice warning">
-      <p>Перезапустить {{ pending }} на {{ node.hostname }}?</p>
-      <button :disabled="busy" @click="pending = ''">Отмена</button
+      <p>{{ t("Перезапустить {0} на {1}?", [pending, node.hostname]) }}</p>
+      <button :disabled="busy" @click="pending = ''">{{ t("Отмена") }}</button
       ><button class="danger" :disabled="busy" @click="restart">
-        Подтвердить перезапуск
+        {{ t("Подтвердить перезапуск") }}
       </button>
     </div></template
   >

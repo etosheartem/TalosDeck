@@ -1238,3 +1238,12 @@ td .mono {
     transition: none !important;
   }
 }
+
+.language-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.language-switch select {
+  width: 100%;
+}

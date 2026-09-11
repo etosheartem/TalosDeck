@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/siderolabs/talos/pkg/machinery/client/config"
@@ -21,6 +22,9 @@ type TalosManager struct {
 	mu              sync.RWMutex
 	metricsMu       sync.Mutex
 	cpuSamples      map[string]cpuSnapshot
+	discoveryMu     sync.Mutex
+	discoveryAt     time.Time
+	discoveredNodes []string
 }
 
 // NewTalosManager opens the given talosconfig and initializes a Talos client.

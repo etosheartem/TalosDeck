@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t } from "./i18n";
+
 import { computed, ref } from "vue";
 import { ArrowDown, ArrowUp, Search } from "lucide-vue-next";
 import { display } from "./client";
@@ -14,7 +16,7 @@ const props = withDefaults(
     search?: boolean;
     empty?: string;
   }>(),
-  { search: true, empty: "Записей пока нет" },
+  { search: true, empty: "" },
 );
 const emit = defineEmits<{ select: [row: any] }>();
 const query = ref("");
@@ -60,12 +62,12 @@ const tone = (v: any) =>
       <label class="search-field"
         ><Search :size="16" /><input
           v-model="query"
-          placeholder="Поиск по всем полям…"
-          aria-label="Поиск по таблице" /></label
-      ><span>{{ filtered.length }} из {{ rows.length }}</span
+          :placeholder="t('Поиск по всем полям…')"
+          :aria-label="t('Поиск по таблице')" /></label
+      ><span>{{ filtered.length }} {{ t("из") }} {{ rows.length }}</span
       ><slot name="tools" />
     </div>
-    <div class="table-scroll" tabindex="0" aria-label="Таблица ресурсов">
+    <div class="table-scroll" tabindex="0" :aria-label="t('Таблица ресурсов')">
       <table>
         <thead>
           <tr>
@@ -116,14 +118,16 @@ const tone = (v: any) =>
     </div>
     <div v-if="!filtered.length" class="empty-state">
       <Search :size="24" /><strong>{{
-        query ? "Ничего не найдено" : empty
+        query ? t("Ничего не найдено") : empty || t("Записей пока нет")
       }}</strong
       ><span>{{
         query
-          ? "Измените запрос или сбросьте фильтр."
-          : "Данные появятся после получения от кластера."
+          ? t("Измените запрос или сбросьте фильтр.")
+          : t("Данные появятся после получения от кластера.")
       }}</span
-      ><button v-if="query" @click="query = ''">Сбросить поиск</button>
+      ><button v-if="query" @click="query = ''">
+        {{ t("Сбросить поиск") }}
+      </button>
     </div>
   </div>
 </template>

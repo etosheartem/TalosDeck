@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import {
   getAuthHeaders,
   isAuthenticated,
@@ -33,8 +34,9 @@ export async function request<T = any>(
     if (!response.ok)
       throw new Error(
         response.status === 401
-          ? "Требуется вход администратора"
-          : data?.error || `Запрос завершился с ошибкой ${response.status}`,
+          ? t("Требуется вход администратора")
+          : data?.error ||
+              t("Запрос завершился с ошибкой {0}", [response.status]),
       );
     return data as T;
   } finally {

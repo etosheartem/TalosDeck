@@ -219,6 +219,27 @@ try {
     path: artifacts + "/console-overview.png",
     fullPage: true,
   });
+  // Language changes update mounted sections, persist across reloads and keep
+  // resource data intact. The project link is available in both languages.
+  await page.getByLabel("Язык интерфейса", { exact: true }).selectOption("en");
+  await page.getByRole("button", { name: "View nodes", exact: true }).waitFor();
+  assert.equal(await page.locator("html").getAttribute("lang"), "en");
+  assert.equal(
+    await page
+      .getByRole("link", { name: "Project on GitHub" })
+      .getAttribute("href"),
+    "https://github.com/etosheartem/TalosDeck",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "View nodes", exact: true }).waitFor();
+  assert.equal(await page.getByLabel("Interface language").inputValue(), "en");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Password", { exact: true })
+    .waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByLabel("Interface language").selectOption("ru");
   await page.getByRole("button", { name: "Войти", exact: true }).click();
   await page.getByLabel("Пароль", { exact: true }).fill("test");
   await page
@@ -245,6 +266,36 @@ try {
       fullPage: true,
     });
   }
+  await page.getByLabel("Язык интерфейса", { exact: true }).selectOption("en");
+  for (const [id, title] of Object.entries({
+    overview: "Overview",
+    nodes: "Nodes",
+    workloads: "Workloads",
+    storage: "Storage",
+    config: "Configuration",
+    etcd: "etcd",
+    backups: "Backups",
+    maintenance: "Maintenance",
+    audit: "Audit",
+    settings: "Settings",
+  })) {
+    await page.goto(`http://127.0.0.1:5175/#${id}`);
+    await page.getByRole("heading", { name: title, exact: true }).waitFor();
+    await page.waitForTimeout(150);
+    assert(
+      !/[А-Яа-яЁё]/.test(await page.locator(".workspace").innerText()),
+      `Russian UI text remains in ${id}`,
+    );
+  }
+  await page.goto("http://127.0.0.1:5175/#nodes");
+  await page.getByRole("button", { name: "talos-cp-01", exact: true }).click();
+  await page.getByRole("button", { name: "Live logs", exact: true }).click();
+  await page
+    .getByText("kernel: test stream connected", { exact: true })
+    .waitFor();
+  await page.getByRole("button", { name: "Pause", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByLabel("Interface language").selectOption("ru");
   await page.goto("http://127.0.0.1:5175/#nodes");
   await page
     .getByRole("button", { name: "talos-cp-01", exact: true })
@@ -348,7 +399,7 @@ try {
   assert.equal(await offline.locator(".code-lines").count(), 0);
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: 10 sections, auth, table search, inspector, WebSocket logs, pause, disk normalization, etcd URLs, protected config, escape, provisioning, confirmation cancellation, settings, mobile navigation, no page overflow, offline/no mock fallback.",
+    "PASS: RU/EN in 10 sections, persisted language, GitHub link, auth, table search, inspector, WebSocket logs, pause, disk normalization, etcd URLs, protected config, escape, provisioning, confirmation cancellation, settings, mobile navigation, no page overflow, offline/no mock fallback.",
   );
   console.log("Screenshots:", artifacts);
 } finally {
