@@ -37,6 +37,7 @@ type ClusterInfo struct {
 
 // TalosService represents an OS or system service on a node.
 type TalosService struct {
+	HealthKnown bool   `json:"healthKnown"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	State       string `json:"state"`

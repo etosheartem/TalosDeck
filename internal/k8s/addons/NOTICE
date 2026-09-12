@@ -1,0 +1,18 @@
+Bundled Kubernetes manifests
+
+Cilium 1.20.1: https://github.com/cilium/cilium/tree/v1.20.1
+Chart: https://helm.cilium.io/cilium-1.20.1.tgz
+Apache-2.0; see CILIUM-LICENSE.
+Rendered with namespace kube-system, ipam.mode=kubernetes,
+kubeProxyReplacement=false, hubble.enabled=false, operator.replicas=1,
+cgroup.autoMount.enabled=false, cgroup.hostRoot=/sys/fs/cgroup,
+k8sServiceHost=TALOSDECK_API_HOST, k8sServicePort=6443,
+securityContext.capabilities.ciliumAgent=[CHOWN,KILL,NET_ADMIN,NET_RAW,IPC_LOCK,SYS_ADMIN,SYS_RESOURCE,DAC_OVERRIDE,FOWNER,SETGID,SETUID],
+securityContext.capabilities.cleanCiliumState=[NET_ADMIN,SYS_ADMIN,SYS_RESOURCE].
+The API endpoint placeholder is replaced at provisioning time.
+
+Local Path Provisioner 0.0.34:
+https://github.com/rancher/local-path-provisioner/tree/v0.0.34
+Source: deploy/local-path-storage.yaml; Apache-2.0, see LOCAL-PATH-LICENSE.
+Changes: privileged namespace label, default StorageClass annotation,
+Talos persistent kubelet data directory, pinned busybox helper image.

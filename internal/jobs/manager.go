@@ -28,11 +28,17 @@ const MaxEvents = 2000
 const MaxJobs = 100
 
 type Request struct {
+	BackupID         string `json:"backupId,omitempty"`
+	BackupType       string `json:"backupType,omitempty"`
+	TargetID         string `json:"targetId,omitempty"`
+	RestorePlanID    string `json:"restorePlanId,omitempty"`
+	DedupeKey        string `json:"dedupeKey,omitempty"`
 	Kind             string `json:"kind"`
 	Version          string `json:"version,omitempty"`
 	AllowDowntime    bool   `json:"allowDowntime,omitempty"`
 	ConfigRevisionID string `json:"configRevisionId,omitempty"`
 	Node             string `json:"node,omitempty"`
+	ProvisionID      string `json:"provisionId,omitempty"`
 }
 type Event struct {
 	Time    time.Time `json:"time"`
@@ -68,9 +74,18 @@ type Manager struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	runner     Runner
+	onComplete func(Job)
 	clusterID  string
 	closeOnce  sync.Once
 	closeErr   error
+}
+
+// SetCompletionHandler installs a bounded observer for audit/notifications.
+// It runs outside the manager lock and cannot change the persisted job result.
+func (m *Manager) SetCompletionHandler(handler func(Job)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onComplete = handler
 }
 
 func Open(dir string, runner Runner) (*Manager, error) {
@@ -197,8 +212,27 @@ func (m *Manager) ReserveManual() (func(), error) {
 	return func() { m.mu.Lock(); m.manual = false; m.mu.Unlock() }, nil
 }
 func (m *Manager) Submit(r Request, user string) (Job, error) {
+	// Fiber parameters may alias reusable request buffers. The journal and
+	// asynchronous runner must own their strings after the handler returns.
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		return Job{}, err
+	}
+	var owned Request
+	if err = json.Unmarshal(encoded, &owned); err != nil {
+		return Job{}, err
+	}
+	r = owned
+	user = strings.Clone(user)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if r.DedupeKey != "" {
+		for _, j := range m.jobs {
+			if j.Request.DedupeKey == r.DedupeKey && j.Request.Kind == r.Kind {
+				return clone(j), nil
+			}
+		}
+	}
 	if err := m.available(); err != nil {
 		return Job{}, err
 	}
@@ -239,7 +273,6 @@ func (m *Manager) run(id string) {
 			runErr = errors.New("operation interrupted unexpectedly; inspect cluster state")
 		}
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		j := m.jobs[id]
 		switch {
 		case m.ctx.Err() != nil || m.storageErr != nil || panicked || errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) || errors.Is(runErr, ErrUncertain):
@@ -262,6 +295,11 @@ func (m *Manager) run(id string) {
 			j.Error = "Cannot persist completion: " + err.Error()
 		}
 		m.active = ""
+		completed, handler := clone(j), m.onComplete
+		m.mu.Unlock()
+		if handler != nil {
+			func() { defer func() { _ = recover() }(); handler(completed) }()
+		}
 	}()
 	m.mu.Lock()
 	j := m.jobs[id]

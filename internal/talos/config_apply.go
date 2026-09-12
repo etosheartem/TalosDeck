@@ -11,7 +11,9 @@ import (
 // ApplyNodeConfig uses the authenticated connection and exactly one selected
 // node. Response bodies can contain configuration values and are never logged.
 func (m *TalosManager) ApplyNodeConfig(ctx context.Context, node string, data []byte, mode string, dryRun bool) error {
-	modes := map[string]machine.ApplyConfigurationRequest_Mode{"auto": machine.ApplyConfigurationRequest_AUTO, "reboot": machine.ApplyConfigurationRequest_REBOOT, "staged": machine.ApplyConfigurationRequest_STAGED}
+	// REBOOT was removed from Talos 1.14. Stage then explicitly reboot, which
+	// preserves the requested semantics on both supported Talos generations.
+	modes := map[string]machine.ApplyConfigurationRequest_Mode{"auto": machine.ApplyConfigurationRequest_AUTO, "reboot": machine.ApplyConfigurationRequest_STAGED, "staged": machine.ApplyConfigurationRequest_STAGED}
 	selected, ok := modes[mode]
 	if !ok {
 		return fmt.Errorf("unsupported configuration mode")
@@ -33,6 +35,11 @@ func (m *TalosManager) ApplyNodeConfig(ctx context.Context, node string, data []
 		}
 		if message.Metadata != nil && message.Metadata.Error != "" {
 			return fmt.Errorf("Talos node rejected configuration request")
+		}
+	}
+	if mode == "reboot" && !dryRun {
+		if err := c.Reboot(client.WithNode(ctx, node)); err != nil {
+			return fmt.Errorf("configuration staged but reboot outcome is uncertain; inspect node before retrying")
 		}
 	}
 	return nil

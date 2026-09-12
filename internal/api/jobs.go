@@ -12,12 +12,9 @@ import (
 	"talosdeck/internal/operations"
 )
 
-// Job reads include operational details and are admin-only, just like submission.
+// Reads are available to authenticated roles; mutation checks include job kind.
 func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *operations.Service, authMgr *auth.AuthManager) {
 	group := router.Group("/jobs", auth.RequireAuth(authMgr), func(c *fiber.Ctx) error {
-		if c.Locals("role") != "admin" {
-			return fiber.NewError(fiber.StatusForbidden, "Administrator access required")
-		}
 		if manager == nil || service == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "Background jobs are unavailable")
 		}
@@ -28,6 +25,9 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		var r jobs.Request
 		if err := c.BodyParser(&r); err != nil {
 			return fiber.NewError(400, "Invalid operation request")
+		}
+		if !auth.CanJob(roleName(c), r.Kind) {
+			return fiber.NewError(403, "Operation not permitted for this role")
 		}
 		if err := operations.Validate(r); err != nil {
 			return fiber.NewError(400, err.Error())
@@ -47,6 +47,9 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		}
 		if err := c.BodyParser(&body); err != nil {
 			return fiber.NewError(400, "Invalid operation request")
+		}
+		if !auth.CanJob(roleName(c), body.Kind) {
+			return fiber.NewError(403, "Operation not permitted for this role")
 		}
 		if err := operations.Validate(body.Request); err != nil {
 			return fiber.NewError(400, err.Error())
@@ -76,12 +79,26 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		return c.JSON(job)
 	})
 	group.Post("/:id/stop", func(c *fiber.Ctx) error {
+		j, err := manager.Get(c.Params("id"))
+		if err != nil {
+			return jobError(err)
+		}
+		if !auth.CanJob(roleName(c), j.Request.Kind) {
+			return fiber.NewError(403, "Operation not permitted for this role")
+		}
 		if err := manager.Stop(c.Params("id")); err != nil {
 			return jobError(err)
 		}
 		return c.SendStatus(fiber.StatusAccepted)
 	})
 	group.Post("/:id/acknowledge", func(c *fiber.Ctx) error {
+		j, err := manager.Get(c.Params("id"))
+		if err != nil {
+			return jobError(err)
+		}
+		if !auth.CanJob(roleName(c), j.Request.Kind) {
+			return fiber.NewError(403, "Operation not permitted for this role")
+		}
 		var body struct {
 			Reviewed bool `json:"reviewed"`
 		}
@@ -94,6 +111,7 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		return c.SendStatus(fiber.StatusOK)
 	})
 }
+func roleName(c *fiber.Ctx) string { role, _ := c.Locals("role").(string); return role }
 func jobError(err error) error {
 	switch {
 	case errors.Is(err, jobs.ErrBusy):
@@ -113,6 +131,9 @@ func jobMutationGuard(manager *jobs.Manager) fiber.Handler {
 			return c.Next()
 		}
 		path := c.Path()
+		if strings.HasPrefix(path, "/api/backups") {
+			return c.Next()
+		}
 		if !strings.HasPrefix(path, "/api/nodes/") && !strings.HasPrefix(path, "/api/proxmox/") && !strings.HasPrefix(path, "/api/backups") {
 			return c.Next()
 		}

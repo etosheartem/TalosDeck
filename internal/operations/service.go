@@ -40,13 +40,16 @@ type Backups interface {
 	VerifyBackup(string) (bool, string, error)
 }
 type Service struct {
-	Talos        Talos
-	Kubernetes   Kubernetes
-	Backups      Backups
-	CLI          CommandRunner
-	PollInterval time.Duration
-	Config       *ConfigService
-	ClusterName  string
+	Diagnostics     *DiagnosticsService
+	BackupLifecycle *BackupService
+	Talos           Talos
+	Kubernetes      Kubernetes
+	Backups         Backups
+	CLI             CommandRunner
+	PollInterval    time.Duration
+	Config          *ConfigService
+	ClusterName     string
+	Provision       *ProvisionService
 }
 
 func (s *Service) ConfirmationName() string {
@@ -84,7 +87,10 @@ func parseVersion(s string) (semver.Version, error) {
 	return semver.Parse(strings.TrimPrefix(s, "v"))
 }
 func Validate(r jobs.Request) error {
-	if r.Node != "" || r.ConfigRevisionID != "" {
+	if r.BackupID != "" || r.BackupType != "" || r.TargetID != "" || r.RestorePlanID != "" || r.DedupeKey != "" {
+		return fmt.Errorf("backup references are not accepted by upgrade endpoints")
+	}
+	if r.Node != "" || r.ConfigRevisionID != "" || r.ProvisionID != "" {
 		return fmt.Errorf("configuration references are not accepted by upgrade endpoints")
 	}
 	switch r.Kind {
@@ -307,6 +313,24 @@ func (s *Service) args(node string) []string {
 	return []string{"--talosconfig", s.Talos.GetConfigPath(), "--context", s.Talos.GetClusterName(), "--nodes", node}
 }
 func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) error {
+	if r.Kind == "diagnostics" {
+		if s.Diagnostics == nil {
+			return fmt.Errorf("diagnostics unavailable")
+		}
+		return s.Diagnostics.Run(ctx, e, r)
+	}
+	if r.Kind == "backup-create" || r.Kind == "backup-restore" {
+		if s.BackupLifecycle == nil {
+			return fmt.Errorf("backup lifecycle unavailable")
+		}
+		return s.BackupLifecycle.Run(ctx, e, r)
+	}
+	if r.Kind == "cluster-create" || r.Kind == "worker-create" || r.Kind == "worker-delete" || r.Kind == "machine-cleanup" {
+		if s.Provision == nil {
+			return fmt.Errorf("provisioning unavailable")
+		}
+		return s.Provision.Run(ctx, e, r)
+	}
 	if r.Kind == "config-apply" || r.Kind == "config-restore" {
 		if s.Config == nil {
 			return fmt.Errorf("configuration operations unavailable")
@@ -399,7 +423,9 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 			if err = e.Checkpoint(ctx, "node", fmt.Sprintf("%s: %s", r.Kind, node.Name)); err != nil {
 				return err
 			}
-			args := s.args(node.IP)
+			// Observe reboot/upgrade events directly from the target. A proxy
+			// control plane can lose the remote event stream during reboot.
+			args := append(s.args(node.IP), "--endpoints", node.IP)
 			if r.Kind == "talos-upgrade" {
 				args = append(args, "upgrade", "--image", node.Image, "--drain", "--wait", "--timeout", "20m", "--progress", "plain")
 			} else {
@@ -422,13 +448,29 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 				if !kready {
 					return false
 				}
+				// Node Ready may precede restarted static control-plane pods.
+				// Wait for component/quorum stabilization before advancing.
+				if verifier, ok := s.Kubernetes.(componentVerifier); ok {
+					if err := verifier.VerifyUpgradeComponents(c, plan.KubernetesVersion, false); err != nil {
+						return false
+					}
+				}
+				etcd, etcdErr := s.Talos.GetEtcdStatus(c)
+				if etcdErr != nil || etcd == nil || !etcd.Healthy || len(etcd.Alarms) > 0 || len(etcd.Errors) > 0 {
+					return false
+				}
+				for _, member := range etcd.Members {
+					if !member.Healthy || member.IsLearner {
+						return false
+					}
+				}
 				nodes, err := s.Talos.ListNodes(c)
 				if err != nil {
 					return false
 				}
 				for _, n := range nodes {
 					if n.IP == node.IP {
-						return n.Ready && (r.Kind == "rolling-reboot" || strings.TrimPrefix(n.Version, "v") == plan.Version)
+						return n.Ready && n.ServicesSummary != nil && n.ServicesSummary.Kubelet == "Healthy" && n.ServicesSummary.Containerd == "Healthy" && n.ServicesSummary.Apid == "Healthy" && (r.Kind == "rolling-reboot" || strings.TrimPrefix(n.Version, "v") == plan.Version)
 					}
 				}
 				return false

@@ -202,10 +202,14 @@ func publishBackup(tempPath, finalPath, checksum string, info *BackupInfo) error
 
 // SetMaxBackups configures the retention quota limit.
 func (m *BackupManager) SetMaxBackups(limit int) {
-	if limit > 0 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit >= 0 {
 		m.maxBackups = limit
 	}
 }
+
+func (m *BackupManager) retention() int { m.mu.RLock(); defer m.mu.RUnlock(); return m.maxBackups }
 
 // GetStorageDir returns the active backup storage directory.
 func (m *BackupManager) GetStorageDir() string {
@@ -347,7 +351,7 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 	}
 
 	// Rotate backups according to retention policy
-	m.rotateBackups(m.maxBackups)
+	m.rotateBackups(m.retention())
 
 	return info, nil
 }
@@ -623,7 +627,7 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	}
 
 	// Rotate backups according to retention policy
-	m.rotateBackups(m.maxBackups)
+	m.rotateBackups(m.retention())
 
 	return info, nil
 }

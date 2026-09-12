@@ -755,7 +755,7 @@ func (c *Client) StartVM(ctx context.Context, vmid int) error {
 		return fmt.Errorf("failed to start VM %d: %w", vmid, err)
 	}
 	if resp.Data != "" {
-		_ = c.WaitForTask(ctx, resp.Data, 30*time.Second)
+		return c.WaitForTask(ctx, resp.Data, 30*time.Second)
 	}
 	return nil
 }
@@ -771,7 +771,7 @@ func (c *Client) StopVM(ctx context.Context, vmid int) error {
 		return fmt.Errorf("failed to stop VM %d: %w", vmid, err)
 	}
 	if resp.Data != "" {
-		_ = c.WaitForTask(ctx, resp.Data, 30*time.Second)
+		return c.WaitForTask(ctx, resp.Data, 30*time.Second)
 	}
 	return nil
 }

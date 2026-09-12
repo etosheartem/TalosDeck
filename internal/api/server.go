@@ -52,6 +52,7 @@ type ServerConfig struct {
 func SetupServer(cfg ServerConfig) *fiber.App {
 	// API-08: Enforce server timeouts in fiber.Config to prevent Slowloris DoS attacks
 	app := fiber.New(fiber.Config{
+		Immutable:    true,
 		AppName:      "TalosDeck v0.1.0",
 		ServerHeader: "TalosDeck",
 		ReadTimeout:  15 * time.Second,
@@ -103,6 +104,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	if authMgr == nil {
 		authMgr = auth.NewAuthManagerFromEnv()
 	}
+	RegisterSecurityRoutes(app, authMgr, auditMgr)
 	if cfg.Fleet != nil {
 		cfg.Fleet.register(app)
 	}
@@ -113,6 +115,12 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	RegisterJobRoutes(api, cfg.Jobs, cfg.Operations, authMgr)
 	if cfg.Operations != nil && cfg.Operations.Config != nil {
 		RegisterConfigRoutes(api, cfg.Jobs, cfg.Operations.Config, authMgr)
+	}
+	if cfg.Operations != nil && cfg.Operations.Provision != nil {
+		RegisterProvisionRoutes(api, cfg.Jobs, cfg.Operations.Provision, authMgr)
+	}
+	if cfg.K8s != nil && cfg.Operations != nil {
+		RegisterInspectorRoutes(api, cfg.K8s, cfg.Operations.Diagnostics, cfg.Jobs, authMgr)
 	}
 
 	// OPS-08: Health and Readiness Probes (GET /healthz, GET /readyz, GET /api/health)
@@ -334,6 +342,9 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		}
 	}
 	if bm != nil {
+		if cfg.Operations != nil && cfg.Operations.BackupLifecycle != nil {
+			RegisterBackupLifecycleRoutes(api, cfg.Operations.BackupLifecycle, cfg.Jobs, authMgr, auditMgr)
+		}
 		RegisterBackupRoutes(api, bm, authMgr, auditMgr)
 	}
 
@@ -365,6 +376,12 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	if cfg.K8s != nil && proxmoxClient != nil {
 		proxmoxClient.SetDrainer(cfg.K8s)
 	}
+	api.Use("/proxmox/worker", func(c *fiber.Ctx) error {
+		if c.Method() != fiber.MethodGet && c.Method() != fiber.MethodHead && c.Method() != fiber.MethodOptions {
+			return fiber.NewError(410, "Use provisioning plans and background jobs; legacy VM mutations are disabled")
+		}
+		return c.Next()
+	})
 	RegisterProxmoxRoutes(api, proxmoxClient, authMgr, auditMgr)
 
 	// validateNodeIP checks that :ip parameter is a valid IPv4 or IPv6 address (API-11)
@@ -840,6 +857,11 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 					"error": "Invalid or expired token for WebSocket connection",
 				})
 			}
+			if !auth.Can(claims.Role, fiber.MethodGet, c.Path()) {
+				return fiber.ErrForbidden
+			}
+			c.Locals("authToken", token)
+			c.Locals("authPath", c.Path())
 		}
 
 		return c.Next()
@@ -858,6 +880,8 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		stopSessionWatch := watchWebSocketSession(ctx, c, authMgr, cancel)
+		defer stopSessionWatch()
 
 		logChan := make(chan string, 100)
 
@@ -915,6 +939,8 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		stopSessionWatch := watchWebSocketSession(ctx, c, authMgr, cancel)
+		defer stopSessionWatch()
 
 		logChan := make(chan string, 100)
 

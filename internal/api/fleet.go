@@ -45,12 +45,14 @@ type clusterRuntime struct {
 // Fleet owns a complete set of clients, caches and journals per cluster. Runtime
 // handlers are published atomically; Fiber's live route tables are never mutated.
 type Fleet struct {
-	options  FleetOptions
-	mu       sync.RWMutex
-	importMu sync.Mutex
-	runtimes map[string]*clusterRuntime
-	legacyID string
-	closed   bool
+	options          FleetOptions
+	mu               sync.RWMutex
+	importMu         sync.Mutex
+	runtimes         map[string]*clusterRuntime
+	legacyID         string
+	closed           bool
+	globalJobs       *jobs.Manager
+	globalOperations *operations.Service
 }
 
 func OpenFleet(opts FleetOptions) (*Fleet, error) {
@@ -67,8 +69,23 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 		opts.LegacyJobsDir = filepath.Join(opts.DataDir, "jobs")
 	}
 	f := &Fleet{options: opts, runtimes: make(map[string]*clusterRuntime)}
+	globalOps := &operations.Service{ClusterName: "TalosDeck fleet"}
+	globalOps.Provision = &operations.ProvisionService{ClusterID: operations.FleetScope, Store: opts.Store, RegisterCluster: func(ctx context.Context, name string, talosconfig, kubeconfig []byte, providerID string) (string, error) {
+		cluster, err := f.Import(ctx, ImportClusterRequest{Name: name, Talosconfig: string(talosconfig), Kubeconfig: string(kubeconfig), Provider: providerID})
+		return cluster.ID, err
+	}}
+	globalJobs, err := jobs.OpenCluster(filepath.Join(opts.DataDir, "fleet-jobs"), operations.FleetScope, globalOps.Run)
+	if err != nil {
+		return nil, err
+	}
+	f.globalJobs, f.globalOperations = globalJobs, globalOps
+	if err := globalOps.Provision.ReconcileInterrupted(context.Background()); err != nil {
+		f.Close()
+		return nil, err
+	}
 	list, err := opts.Store.List(context.Background())
 	if err != nil {
+		f.Close()
 		return nil, err
 	}
 	for _, cluster := range list {
@@ -159,7 +176,20 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	if len(creds.ProviderSecrets) > 0 && json.Unmarshal(creds.ProviderSecrets, &providers) != nil {
 		return nil, errors.New("invalid encrypted provider configuration")
 	}
+	if cluster.Legacy && (cluster.Provider == "" || cluster.Provider == "proxmox") && (providers.Proxmox.APIToken != "" || providers.Proxmox.Username != "") {
+		providerID, err := operations.ImportLegacyProvider(context.Background(), f.options.Store, providers.Proxmox)
+		if err != nil {
+			return nil, fmt.Errorf("cannot migrate encrypted Proxmox provider: %w", err)
+		}
+		cluster.Provider = providerID
+		if err := f.options.Store.Update(context.Background(), cluster); err != nil {
+			return nil, err
+		}
+	}
 	pc, err := proxmox.NewClient(providers.Proxmox)
+	if _, providerErr := uuid.Parse(cluster.Provider); providerErr == nil {
+		pc, err = operations.ProviderClient(context.Background(), f.options.Store, cluster.Provider)
+	}
 	if err != nil {
 		return nil, errors.New("invalid provider TLS configuration")
 	}
@@ -196,15 +226,39 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	ops.Config = &operations.ConfigService{ClusterID: cluster.ID, Store: f.options.Store, NodeClient: tm, Audit: func(action, user, node, status, revision string) {
 		am.Log(audit.AuditEvent{Action: action, User: user, Status: status, Details: map[string]any{"clusterId": cluster.ID, "node": node, "revision": revision}})
 	}}
+	ops.Provision = &operations.ProvisionService{ClusterID: cluster.ID, Store: f.options.Store, Talos: tm, Kubernetes: km, Audit: func(action, user, status, id string) {
+		am.Log(audit.AuditEvent{Action: action, User: user, Status: status, Details: map[string]any{"clusterId": cluster.ID, "provisionId": id}})
+	}}
+	ops.BackupLifecycle = &operations.BackupService{ClusterID: cluster.ID, Store: f.options.Store, Manager: bm, Operations: ops}
+	ops.Diagnostics = &operations.DiagnosticsService{ClusterID: cluster.ID, Store: f.options.Store, Talos: tm, Kubernetes: km, Backups: ops.BackupLifecycle}
+	bm.SetMaxBackups(0)
 	rt.config.Operations = ops
 	jm, err := jobs.OpenCluster(jobDir, cluster.ID, ops.Run)
 	if err != nil {
 		return nil, err
 	}
 	rt.config.Jobs = jm
+	if err := ops.Provision.ReconcileInterrupted(context.Background()); err != nil {
+		return nil, err
+	}
+	jm.SetCompletionHandler(func(job jobs.Job) {
+		am.Log(audit.AuditEvent{Action: "job." + job.Request.Kind, User: job.User, Status: job.Status, Details: map[string]any{"jobId": job.ID}})
+		if !svc.IsEnabled() {
+			return
+		}
+		level := alerts.LevelInfo
+		if job.Status != "succeeded" {
+			level = alerts.LevelWarning
+		}
+		notifyCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = svc.SendAlertWithContext(notifyCtx, level, "Operation "+job.Status, "Job "+job.ID+" ("+job.Request.Kind+")")
+	})
 	rt.config.Auth = f.options.Auth
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancel = cancel
+	rt.wg.Add(1)
+	go func() { defer rt.wg.Done(); ops.BackupLifecycle.Scheduler(ctx, jm) }()
 	watcher := alerts.NewWatcher(tm, svc, 30*time.Second)
 	rt.config.AlertWatcher = watcher
 	app := SetupServer(rt.config)
@@ -273,6 +327,11 @@ func (rt *clusterRuntime) close() {
 }
 
 func (f *Fleet) Close() {
+	// Cancel global provisioning before taking importMu: a finishing job may be
+	// importing its new cluster and must be allowed to leave the callback.
+	if f.globalJobs != nil {
+		_ = f.globalJobs.Close()
+	}
 	f.importMu.Lock()
 	defer f.importMu.Unlock()
 	f.mu.Lock()
@@ -453,6 +512,10 @@ func (f *Fleet) Import(ctx context.Context, req ImportClusterRequest) (clusters.
 func (f *Fleet) register(app *fiber.App) {
 	app.Get("/readyz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok", "registry": "available"}) })
 	app.Get("/api/health", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
+	global := app.Group("/api")
+	RegisterProviderRoutes(global, f.options.Store, f.options.Auth)
+	RegisterProvisionRoutes(global, f.globalJobs, f.globalOperations.Provision, f.options.Auth)
+	RegisterJobRoutes(app.Group("/api/provision"), f.globalJobs, f.globalOperations, f.options.Auth)
 	group := app.Group("/api/clusters")
 	group.Get("/", auth.RequireAuth(f.options.Auth), func(c *fiber.Ctx) error {
 		list, err := f.options.Store.List(c.UserContext())
@@ -468,6 +531,11 @@ func (f *Fleet) register(app *fiber.App) {
 		if c.Locals("role") != "admin" {
 			return fiber.ErrForbidden
 		}
+		release, err := f.globalJobs.ReserveManual()
+		if err != nil {
+			return jobError(err)
+		}
+		defer release()
 		var req ImportClusterRequest
 		if c.BodyParser(&req) != nil {
 			return fiber.NewError(400, "invalid import request")
@@ -550,8 +618,12 @@ func (f *Fleet) authenticate(c *fiber.Ctx) error {
 	if len(header) != 2 || !strings.EqualFold(header[0], "Bearer") {
 		return fiber.ErrUnauthorized
 	}
-	if _, err := f.options.Auth.ValidateToken(header[1]); err != nil {
+	claims, err := f.options.Auth.ValidateToken(header[1])
+	if err != nil {
 		return fiber.ErrUnauthorized
+	}
+	if !auth.Can(claims.Role, c.Method(), c.Path()) {
+		return fiber.ErrForbidden
 	}
 	return nil
 }

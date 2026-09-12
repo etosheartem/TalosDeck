@@ -381,6 +381,7 @@ func (m *TalosManager) ListServices(ctx context.Context, nodeIP string) ([]*Talo
 			uptime, restarts := serviceRuntimeFromEvents(s.GetEvents())
 
 			services = append(services, &TalosService{
+				HealthKnown: s.GetHealth() != nil && !s.GetHealth().GetUnknown(),
 				ID:          s.GetId(),
 				Name:        s.GetId(),
 				State:       s.GetState(),
