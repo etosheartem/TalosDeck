@@ -663,6 +663,7 @@ const protectedPage = computed(
       @click="mobile = false"
     />
     <div class="workspace">
+      <div class="console-chassis" :class="{'recovery-safe': recoveryState === 'safe'}">
       <header class="topline">
         <button
           class="mobile-menu icon-button"
@@ -707,15 +708,23 @@ const protectedPage = computed(
           </button>
         </div>
       </header>
+      <section class="management-mode" :aria-label="t('Режим TalosDeck')">
+        <div class="management-mode-status" role="status" aria-live="polite">
+          <span>TalosDeck</span>
+          <strong v-if="recoveryState === 'safe'">{{ t('Безопасный режим после восстановления') }}</strong>
+          <span v-if="recoveryAutomationPaused">{{ t('Автоматизация приостановлена после восстановления') }}</span>
+          <span v-if="recoveryState === 'normal' && !recoveryAutomationPaused">{{ t('Обычный режим') }}</span>
+        </div>
+        <details v-if="recoveryState === 'safe' || recoveryAutomationPaused" class="mode-details">
+          <summary>{{ t('Ограничения режима') }}</summary>
+          <div class="mode-explanation">
+            <p v-if="recoveryState === 'safe'">{{ t('TalosDeck восстановлен из резервной копии. Изменения инфраструктуры, фоновые задания и расписания заблокированы. Администратор должен проверить результаты незавершённых операций и отключение прежнего экземпляра перед возобновлением управления. Автоматического продолжения нет.') }}</p>
+            <p v-if="recoveryAutomationPaused && recoveryState !== 'safe'">{{ t('Ручное управление разрешено после проверки. Расписания и фоновая доставка уведомлений остаются приостановленными; старые задания автоматически не продолжаются.') }}</p>
+          </div>
+        </details>
+      </section>
+      </div>
       <main>
-        <div v-if="recoveryState === 'safe'" class="notice error recovery-banner" role="alert">
-          <AlertTriangle :size="20" aria-hidden="true" />
-          <div><strong>{{ t('Безопасный режим после восстановления') }}</strong><p>{{ t('TalosDeck восстановлен из резервной копии. Изменения инфраструктуры, фоновые задания и расписания заблокированы. Администратор должен проверить результаты незавершённых операций и отключение прежнего экземпляра перед возобновлением управления. Автоматического продолжения нет.') }}</p></div>
-        </div>
-        <div v-else-if="recoveryAutomationPaused" class="notice recovery-banner" role="status">
-          <strong>{{ t('Автоматизация приостановлена после восстановления') }}</strong>
-          <p>{{ t('Ручное управление разрешено после проверки. Расписания и фоновая доставка уведомлений остаются приостановленными; старые задания автоматически не продолжаются.') }}</p>
-        </div>
         <p v-if="logoutWarning" class="notice error" role="alert">{{ logoutWarning }}</p>
         <div v-if="registryError" class="notice error" role="alert">
           {{ registryError

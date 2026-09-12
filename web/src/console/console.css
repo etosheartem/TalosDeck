@@ -1303,3 +1303,14 @@ td .mono {
 .image-extension-list { max-height: 280px; overflow-y: auto; border: 1px solid var(--border, #343940); padding: 8px 12px; }
 .settings-form .image-extension-list label { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; padding: 8px 0; }
 .image-extension-list small { display: block; color: #9ca3ae; overflow-wrap: anywhere; }
+
+/* Persistent management state belongs to the console, independent of cluster health. */
+.console-chassis { position: sticky; top: 0; z-index: 20; background: #14161a; flex-shrink: 0; }
+.management-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 32px; border-bottom: 1px solid var(--c-border); font-size: 12px; }
+.management-mode-status { display: flex; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
+.management-mode-status > span:first-child { color: var(--c-dim); }
+.mode-details summary { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.mode-details[open] { flex-basis: 100%; }
+.mode-explanation { max-height: 25vh; overflow-y: auto; padding-top: 8px; line-height: 1.5; }
+.recovery-safe { border-bottom: 4px solid transparent; border-image: repeating-linear-gradient(135deg, #8a8e98 0 4px, #14161a 4px 8px) 4; }
+@media (max-width: 700px) { .management-mode { padding: 6px 14px; font-size: 11px; } }

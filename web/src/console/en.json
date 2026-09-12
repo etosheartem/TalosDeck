@@ -747,5 +747,8 @@
   "Инфраструктура": "Infrastructure",
   "Операции": "Operations",
   "Доступность кластера": "Cluster availability",
-  "Инфраструктурная консоль": "Infrastructure console"
+  "Инфраструктурная консоль": "Infrastructure console",
+  "Режим TalosDeck": "TalosDeck mode",
+  "Обычный режим": "Normal mode",
+  "Ограничения режима": "Mode restrictions"
 }

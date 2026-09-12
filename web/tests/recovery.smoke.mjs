@@ -5,10 +5,18 @@ const server=await createServer({server:{host:'127.0.0.1',port:5178,strictPort:t
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
 try{
  const context=await browser.newContext();let status='unavailable';const mutations=[];
- await context.route('**/api/**',route=>{const url=new URL(route.request().url());if(!url.pathname.startsWith('/api/'))return route.continue();if(route.request().method()!=='GET')mutations.push(url.pathname);if(url.pathname==='/api/recovery/status')return route.fulfill({status:status==='unavailable'?503:200,json:{safeMode:true,requiresReview:true,automaticResume:false}});return route.fulfill({json:url.pathname==='/api/auth/me'?{user:{username:'admin',role:'admin'}}:{clusters:[],oidc:{enabled:false}}});});
+ await context.route('**/api/**',route=>{const url=new URL(route.request().url());if(!url.pathname.startsWith('/api/'))return route.continue();if(route.request().method()!=='GET')mutations.push(url.pathname);if(url.pathname==='/api/recovery/status')return route.fulfill({status:status==='unavailable'?503:200,json:{safeMode:status==='safe',requiresReview:status==='safe',automationPaused:status==='paused',automaticResume:false}});return route.fulfill({json:url.pathname==='/api/auth/me'?{user:{username:'admin',role:'admin'}}:{clusters:[],oidc:{enabled:false}}});});
  const page=await context.newPage();page.on('pageerror',e=>console.log('PAGEERROR',e.message));await page.goto('http://127.0.0.1:5178/');await page.getByText('Не удалось проверить режим восстановления.',{exact:false}).waitFor();assert.equal(await page.locator('.console-app').count(),0);
  status='safe';await page.getByRole('button',{name:'Повторить',exact:true}).click();await page.getByText('Безопасный режим после восстановления',{exact:true}).waitFor();assert.equal(await page.locator('.recovery-banner button').count(),0);
- await page.evaluate(()=>localStorage.setItem('talosdeck.console.language','en'));await page.reload();await page.getByText('Recovery safe mode',{exact:true}).waitFor();await page.getByText('Nothing resumes automatically.',{exact:false}).waitFor();assert.deepEqual(mutations,[]);await context.close();
+ await page.evaluate(()=>localStorage.setItem('talosdeck.console.language','en'));await page.reload();await page.getByText('Recovery safe mode',{exact:true}).waitFor();await page.getByText('Mode restrictions',{exact:true}).click();await page.getByText('Nothing resumes automatically.',{exact:false}).waitFor();await page.getByText('Mode restrictions',{exact:true}).click();await page.evaluate(()=>{document.querySelector('main').style.minHeight='2500px';window.scrollTo(0,1200);});
+ assert((await page.locator('.management-mode').boundingBox()).y>=0);
+ await page.setViewportSize({width:390,height:844});
+ assert((await page.locator('.management-mode').boundingBox()).y>=0);
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ status='paused';await page.reload();await page.getByText('Automation paused after recovery',{exact:true}).waitFor();assert.equal(await page.locator('.recovery-safe').count(),0);
+ await page.getByText('Mode restrictions',{exact:true}).click();await page.getByText('Manual management',{exact:false}).waitFor();
+ status='normal';await page.reload();await page.getByText('Normal mode',{exact:true}).waitFor();assert.equal(await page.locator('.mode-details').count(),0);
+ assert.deepEqual(mutations,[]);await context.close();
  const jc=await browser.newContext();const id='e5a0d9ea-9b91-45c1-8f54-472eeb8c12d2';let calls=0;
  const job={id,request:{kind:'cluster-create'},user:'admin',status:'interrupted',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),step:'create-vm',reviewed:false,reconciliationOutcome:'UNKNOWN',intents:[{id:'create:machine',action:'create',executorEpoch:42,outcome:'UNKNOWN',identity:{providerId:'provider',resourceId:'pve/117',generation:'machine',ownerId:'cluster'}}]};
  await jc.route('**/fixture',r=>r.fulfill({contentType:'text/html',body:'<html><body><div id="fixture"></div></body></html>'}));
