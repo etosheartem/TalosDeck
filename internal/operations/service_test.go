@@ -57,7 +57,7 @@ func (f *fixture) SetNodeMaintenance(_ context.Context, node string, enable bool
 }
 
 func newFixture() *fixture {
-	f := &fixture{api: "v1.34.0", image: "factory.talos.dev/metal-installer/abc:v1.13.0"}
+	f := &fixture{api: "v1.34.0", image: "factory.talos.dev/metal-installer/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:v1.13.0"}
 	for i, ip := range []string{"10.0.0.10", "10.0.0.11", "10.0.0.12"} {
 		role := "worker"
 		if i == 0 {
@@ -193,7 +193,7 @@ func TestTalosWaitsForKubernetesBeforeNextNode(t *testing.T) {
 	t.Fatal("upgrade did not finish after Kubernetes recovered")
 }
 func service(f *fixture) *Service {
-	return &Service{Talos: f, Kubernetes: f, Backups: f, CLI: f, PollInterval: time.Millisecond}
+	return &Service{Images: &fakeFactoryImages{}, Talos: f, Kubernetes: f, Backups: f, CLI: f, PollInterval: time.Millisecond}
 }
 func runJob(t *testing.T, s *Service, r jobs.Request) jobs.Job {
 	t.Helper()
@@ -227,7 +227,7 @@ func TestTalosUpgradeIsSequentialAndPreservesSchematic(t *testing.T) {
 		t.Fatalf("commands: %v", f.commands)
 	}
 	for i, args := range f.commands {
-		if args[5] != f.nodes[i].IP || !strings.Contains(strings.Join(args, " "), "factory.talos.dev/metal-installer/abc:v1.14.0") {
+		if args[5] != f.nodes[i].IP || !strings.Contains(strings.Join(args, " "), "factory.talos.dev/metal-installer/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:v1.14.0") {
 			t.Fatalf("unexpected command: %v", args)
 		}
 	}

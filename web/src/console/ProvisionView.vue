@@ -3,6 +3,9 @@ import { ref, onMounted, onUnmounted, watch } from "vue";
 import { request, globalRequest, post, globalPost } from "./client";
 import { t } from "./i18n";
 import ResourceTable from "./ResourceTable.vue";
+import ImagePicker, {type ImageProfile} from "./ImagePicker.vue";
+const imageMode=ref('factory');
+const imageProfile=ref<ImageProfile|null>(null);
 const props = defineProps<{
   kind: "cluster-create" | "worker-create";
   clusterName?: string;
@@ -20,11 +23,14 @@ const spec = ref({
   talosVersion: "",
   kubernetesVersion: "",
   installerImage: "",
+  schematicId:"",architecture:"amd64",platform:"metal",isoStorage:"",
   endpoint: "",
   ...(props.kind === 'cluster-create' ? {cni:'flannel',storage:'none'} : {}),
   machines: [] as any[],
 });
 let live = true;
+function chooseImage(profile:ImageProfile|null){imageProfile.value=profile;spec.value.schematicId=profile?.id||'';spec.value.talosVersion=profile?.version||'';spec.value.installerImage=profile?.installerImage||'';plan.value=null;confirmation.value='';}
+watch(imageMode,()=>{chooseImage(null);spec.value.machines.forEach(m=>m.iso='');});
 function add(role = "worker") {
   spec.value.machines.push({
     name: `${role === "controlplane" ? "cp" : "worker"}-${String(spec.value.machines.length + 1).padStart(2, "0")}`,
@@ -65,7 +71,9 @@ const send = (path: string, body: any) =>
   props.kind === "cluster-create" ? globalPost(path, body) : post(path, body);
 async function preview() {
   await run(async () => {
-    const result = await send("/provision/plan", spec.value);
+    if(imageMode.value==='factory'&&!imageProfile.value)return;
+    const payload=imageMode.value==='factory'?spec.value:(({schematicId,architecture,platform,isoStorage,...legacy})=>legacy)(spec.value);
+    const result = await send("/provision/plan", payload);
     if (live) plan.value = result;
   });
 }
@@ -102,6 +110,10 @@ onUnmounted(() => {
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <form class="settings-form" @submit.prevent="preview">
       <fieldset :disabled="busy">
+        <label>{{ t('Источник образа') }}<select v-model="imageMode" :aria-label="t('Источник образа')"><option value="factory">Image Factory</option><option value="manual">{{ t('Ручной ISO и installer') }}</option></select></label>
+        <ImagePicker v-if="imageMode==='factory'" :require-qemu="true" @selected="chooseImage" />
+        <label v-if="imageMode==='factory'">{{ t('Хранилище ISO в Proxmox') }}<input v-model="spec.isoStorage" placeholder="local" required /></label>
+        <p v-if="imageMode==='factory'" class="footnote">{{ t('Согласованный ISO будет скачан заданием. Выберите файловое хранилище Proxmox с поддержкой ISO.') }}</p>
         <div class="form-grid">
           <label
             >{{ t("Имя кластера")
@@ -123,7 +135,7 @@ onUnmounted(() => {
                 {{ provider.name }}
               </option>
             </select></label
-          ><label
+          ><label v-if="imageMode==='manual'"
             >Talos<input
               v-model="spec.talosVersion"
               placeholder="1.x.y"
@@ -133,7 +145,7 @@ onUnmounted(() => {
               v-model="spec.kubernetesVersion"
               placeholder="1.x.y"
               required /></label
-          ><label class="full-width"
+          ><label v-if="imageMode==='manual'" class="full-width"
             >Installer image<input
               v-model="spec.installerImage"
               placeholder="factory.talos.dev/installer/SCHEMATIC:v1.x.y"
@@ -241,7 +253,7 @@ onUnmounted(() => {
                 }}<input
                   v-model="machine.bridge"
                   :placeholder="t('По умолчанию')" /></label
-              ><label
+              ><label v-if="imageMode==='manual'"
                 >ISO<input
                   v-model="machine.iso"
                   :placeholder="t('По умолчанию')" /></label
@@ -258,7 +270,7 @@ onUnmounted(() => {
         <div class="toolbar">
           <button type="button" @click="add()">
             {{ t("Добавить машину") }}</button
-          ><button type="submit" class="primary" :disabled="!spec.providerId">
+          ><button type="submit" class="primary" :disabled="!spec.providerId||(imageMode==='factory'&&!imageProfile)">
             {{ t("Проверить план") }}
           </button>
         </div>
@@ -268,6 +280,7 @@ onUnmounted(() => {
       <header>
         <h2>{{ t("План создания") }}</h2>
       </header>
+      <dl v-if="plan.imageProfile" class="detail-grid"><dt>Schematic ID</dt><dd class="mono">{{ plan.imageProfile.id }}</dd><dt>Installer</dt><dd class="mono">{{ plan.imageProfile.installerImage }}</dd><dt>{{ t('Хранилище ISO в Proxmox') }}</dt><dd>{{ plan.spec?.isoStorage }}</dd></dl>
       <ResourceTable
         :rows="plan.spec?.machines || []"
         :search="false"

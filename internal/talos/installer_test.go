@@ -87,3 +87,51 @@ func TestInstallerMatchesRuntimeSchematic(t *testing.T) {
 		})
 	}
 }
+
+func TestLiveNodeImageInventory(t *testing.T) {
+	path := os.Getenv("TALOSDECK_TEST_TALOSCONFIG")
+	if path == "" {
+		t.Skip("opt-in read-only Talos inventory")
+	}
+	mgr, err := NewTalosManager(path)
+	if err != nil {
+		t.Fatal("cannot create Talos client")
+	}
+	defer mgr.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	nodes, err := mgr.ListNodes(ctx)
+	if err != nil || len(nodes) == 0 {
+		t.Fatal("node inventory unavailable")
+	}
+	for _, node := range nodes {
+		report, err := mgr.GetNodeImageStatus(ctx, node.IP)
+		if err != nil {
+			t.Fatalf("%s: %v", node.IP, err)
+		}
+		t.Logf("node=%s schematic=%s consistent=%t extensions=%v", node.IP, report.SchematicID, report.Consistent, report.Extensions)
+		if report.CheckedAt.IsZero() || report.Node != node.IP || report.RequiresReboot != nil {
+			t.Fatalf("invalid running image observation for %s", node.IP)
+		}
+		t.Logf("node=%s extensions=%d schematic=%s consistent=%t", node.IP, len(report.Extensions), report.SchematicID, report.Consistent)
+	}
+}
+
+func TestVanillaSchematicPlainInstallerCompatibility(t *testing.T) {
+	const vanilla = "376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba"
+	for _, tc := range []struct {
+		image, id  string
+		extensions []string
+		allowed    bool
+	}{
+		{"ghcr.io/siderolabs/installer:v1.14.0", vanilla, nil, true},
+		{"ghcr.io/siderolabs/installer-amd64:v1.14.0", vanilla, nil, true},
+		{"ghcr.io/siderolabs/installer:v1.14.0", strings.Repeat("a", 64), nil, false},
+		{"ghcr.io/siderolabs/installer:v1.14.0", vanilla, []string{"qemu-guest-agent"}, false},
+		{"factory.talos.dev/metal-installer/" + strings.Repeat("a", 64) + ":v1.14.0", vanilla, nil, false},
+	} {
+		if got := validateInstallerRuntime(tc.image, tc.id, tc.extensions) == nil; got != tc.allowed {
+			t.Fatalf("image=%s allowed=%v want=%v", tc.image, got, tc.allowed)
+		}
+	}
+}

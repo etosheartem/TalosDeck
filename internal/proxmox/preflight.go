@@ -10,6 +10,10 @@ import (
 // PreflightMachines is a bounded read-only capacity snapshot. Run it again just
 // before allocation because external Proxmox administrators can consume capacity.
 func (c *Client) PreflightMachines(ctx context.Context, machines []MachineSpec) error {
+	return c.preflightMachines(ctx, machines, false)
+}
+
+func (c *Client) preflightMachines(ctx context.Context, machines []MachineSpec, skipISO bool) error {
 	var ram uint64
 	disks := map[string]uint64{}
 	isos := map[string]bool{}
@@ -62,6 +66,9 @@ func (c *Client) PreflightMachines(ctx context.Context, machines []MachineSpec) 
 		if response.Data.Avail < required {
 			return fmt.Errorf("insufficient storage %s: need %d GiB, available %d GiB", storage, required>>30, response.Data.Avail>>30)
 		}
+	}
+	if skipISO {
+		return nil
 	}
 	for iso := range isos {
 		storage, _, ok := strings.Cut(iso, ":")

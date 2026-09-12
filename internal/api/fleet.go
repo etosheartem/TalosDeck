@@ -23,6 +23,7 @@ import (
 	"talosdeck/internal/backup"
 	"talosdeck/internal/certificates"
 	"talosdeck/internal/clusters"
+	"talosdeck/internal/imagefactory"
 	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
 	"talosdeck/internal/operations"
@@ -57,6 +58,7 @@ type Fleet struct {
 	globalJobs       *jobs.Manager
 	globalOperations *operations.Service
 	downloadTickets  *DownloadTickets
+	images           *imagefactory.Client
 }
 
 func OpenFleet(opts FleetOptions) (*Fleet, error) {
@@ -74,8 +76,9 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 	}
 	f := &Fleet{options: opts, runtimes: make(map[string]*clusterRuntime)}
 	f.downloadTickets = NewDownloadTickets(opts.Auth)
-	globalOps := &operations.Service{ClusterName: "TalosDeck fleet"}
-	globalOps.Provision = &operations.ProvisionService{ClusterID: operations.FleetScope, Store: opts.Store, RegisterCluster: func(ctx context.Context, name string, talosconfig, kubeconfig []byte, providerID string) (string, error) {
+	f.images = imagefactory.NewClient()
+	globalOps := &operations.Service{ClusterName: "TalosDeck fleet", Images: f.images}
+	globalOps.Provision = &operations.ProvisionService{ClusterID: operations.FleetScope, Store: opts.Store, Images: f.images, RegisterCluster: func(ctx context.Context, name string, talosconfig, kubeconfig []byte, providerID string) (string, error) {
 		cluster, err := f.Import(ctx, ImportClusterRequest{Name: name, Talosconfig: string(talosconfig), Kubeconfig: string(kubeconfig), Provider: providerID})
 		return cluster.ID, err
 	}}
@@ -272,11 +275,12 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	rt.config.AlertCenter = center
 
 	ops := &operations.Service{Talos: tm, Kubernetes: km, Backups: bm, CLI: operations.CLI{Path: os.Getenv("TALOSDECK_TALOSCTL")}}
+	ops.Images = f.images
 	ops.ClusterName = cluster.Name
 	ops.Config = &operations.ConfigService{ClusterID: cluster.ID, Store: f.options.Store, NodeClient: tm, Audit: func(action, user, node, status, revision string) {
 		am.Log(audit.AuditEvent{Action: action, User: user, Status: status, Details: map[string]any{"clusterId": cluster.ID, "node": node, "revision": revision}})
 	}}
-	ops.Provision = &operations.ProvisionService{ClusterID: cluster.ID, Store: f.options.Store, Talos: tm, Kubernetes: km, Audit: func(action, user, status, id string) {
+	ops.Provision = &operations.ProvisionService{ClusterID: cluster.ID, Store: f.options.Store, Images: f.images, Talos: tm, Kubernetes: km, Audit: func(action, user, status, id string) {
 		am.Log(audit.AuditEvent{Action: action, User: user, Status: status, Details: map[string]any{"clusterId": cluster.ID, "provisionId": id}})
 	}}
 	ops.BackupLifecycle = &operations.BackupService{ClusterID: cluster.ID, Store: f.options.Store, Manager: bm, Operations: ops}
@@ -564,6 +568,8 @@ func (f *Fleet) register(app *fiber.App) {
 			action = "clusters"
 		} else if path == "/api/providers" || strings.HasPrefix(path, "/api/providers/") {
 			action = "providers"
+		} else if path == "/api/images" || strings.HasPrefix(path, "/api/images/") {
+			action = "images"
 		} else if path == "/api/provision" || strings.HasPrefix(path, "/api/provision/") {
 			action = "provision"
 		}
@@ -594,6 +600,7 @@ func (f *Fleet) register(app *fiber.App) {
 			return c.JSON(fiber.Map{"events": f.options.Audit.GetEvents(limit, c.Query("action"), c.Query("search")), "total": f.options.Audit.TotalCount()})
 		})
 	}
+	RegisterImageRoutes(global, f.images, f.options.Auth)
 	RegisterProviderRoutes(global, f.options.Store, f.options.Auth)
 	RegisterProvisionRoutes(global, f.globalJobs, f.globalOperations.Provision, f.options.Auth)
 	RegisterJobRoutes(app.Group("/api/provision"), f.globalJobs, f.globalOperations, f.options.Auth)

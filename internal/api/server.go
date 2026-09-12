@@ -136,6 +136,9 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	api.Use(jobMutationGuard(cfg.Jobs))
 	RegisterJobRoutes(api, cfg.Jobs, cfg.Operations, authMgr)
 	RegisterCertificateRoutes(api, cfg.Certificates, authMgr)
+	if manager != nil {
+		RegisterNodeImageRoutes(api, manager, authMgr)
+	}
 	if cfg.Operations != nil && cfg.Operations.Config != nil {
 		RegisterConfigRoutes(api, cfg.Jobs, cfg.Operations.Config, authMgr)
 	}

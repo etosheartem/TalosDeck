@@ -6,7 +6,7 @@ import type { NodeOverview } from "../types";
 import { getAuthToken } from "../api";
 import { canOperate } from "./permissions";
 import { clusterWebSocket } from "../clusterScope";
-import { request, post, download, list } from "./client";
+import { request, globalRequest, post, download, list } from "./client";
 import ResourceTable from "./ResourceTable.vue";
 const props = defineProps<{
   node: NodeOverview;
@@ -15,6 +15,12 @@ const props = defineProps<{
 const emit = defineEmits<{ changed: []; workloads: []; storage: [] }>();
 const tab = ref<string>(props.initialTab || "services");
 const rows = ref<any[]>([]);
+const extensionInfo=ref<any>(null);
+const targetVersions=ref<string[]>([]),targetVersion=ref(''),compatibility=ref<any>(null),compatibilityError=ref(''),compatibilityBusy=ref(false),catalogStale=ref(false);
+watch(targetVersion,()=>{compatibility.value=null;compatibilityError.value='';});
+async function loadTargetVersions(id:number){compatibilityBusy.value=false;targetVersions.value=[];targetVersion.value='';compatibility.value=null;compatibilityError.value='';catalogStale.value=false;try{const r=await globalRequest('/images/versions');if(id===generation){targetVersions.value=r.versions||[];catalogStale.value=!!r.stale;targetVersion.value=targetVersions.value[0]||'';}}catch(e){if(id===generation)compatibilityError.value=String(e);}}
+async function checkCompatibility(){if(!extensionInfo.value?.schematicId||!targetVersion.value||catalogStale.value||compatibilityBusy.value)return;const id=generation;compatibility.value=null;compatibilityError.value='';compatibilityBusy.value=true;try{const r=await globalRequest('/images/schematics/'+encodeURIComponent(extensionInfo.value.schematicId)+'?version='+encodeURIComponent(targetVersion.value));if(id===generation)compatibility.value=r;}catch(e){if(id===generation)compatibilityError.value=String(e);}finally{if(id===generation)compatibilityBusy.value=false;}}
+
 const error = ref("");
 const loading = ref(false);
 const logs = ref<string[]>([]);
@@ -77,6 +83,7 @@ function connect() {
 async function load() {
   const id = ++generation;
   error.value = "";
+  if(tab.value==='extensions')extensionInfo.value=null;
   closeSocket();
   if (tab.value === "logs") {
     connect();
@@ -87,7 +94,8 @@ async function load() {
     const data = await request(
       `/nodes/${encodeURIComponent(props.node.ip)}/${tab.value}`,
     );
-    if (id === generation) rows.value = list(data).map(row=>tab.value==='services' && row.healthKnown===false ? {...row,healthy:t('Неизвестно')} : row);
+    if (id === generation && tab.value==='extensions'){extensionInfo.value=data;rows.value=data.extensions||[];loadTargetVersions(id);}
+    else if (id === generation) rows.value = list(data).map(row=>tab.value==='services' && row.healthKnown===false ? {...row,healthy:t('Неизвестно')} : row);
   } catch (e) {
     if (id === generation) error.value = String(e);
   } finally {
@@ -131,6 +139,7 @@ async function restart() {
         ['services', t('Сервисы')],
         ['containers', t('Контейнеры')],
         ['logs', t('Живые логи')],
+        ['extensions',t('Расширения')],
       ]"
       :key="item[0]"
       :class="{ selected: tab === item[0] }"
@@ -173,6 +182,7 @@ async function restart() {
         .join("\n") || t("Ожидание сообщений…")
     }}</pre>
   </template>
+  <template v-else-if="tab==='extensions'"><div class="toolbar"><button :disabled="loading" @click="load">{{ t('Обновить') }}</button></div><p class="footnote">{{ t('Изменение набора расширений требует обновления образа и перезагрузки. Текущее наблюдение не определяет наличие отложенных изменений.') }}</p><p v-if="!extensionInfo" class="notice warning">{{ t('Состояние расширений неизвестно') }}</p><template v-else><p v-if="extensionInfo.consistent===false" class="notice warning">{{ t('Настроенный installer не соответствует наблюдаемому образу или расширениям. Проверьте конфигурацию перед обновлением.') }}</p><dl class="detail-grid"><dt>Schematic ID</dt><dd class="mono">{{ extensionInfo.schematicId||t('Неизвестно') }}</dd><dt>Installer</dt><dd class="mono">{{ extensionInfo.installerImage||t('Неизвестно') }}</dd><dt>{{ t('Последняя проверка') }}</dt><dd>{{ extensionInfo.checkedAt||'—' }}</dd></dl><ResourceTable :rows="rows" :empty="t('Установленных расширений нет')" :columns="[{key:'name',title:t('Расширение')},{key:'version',title:t('Версия')}]" /><section class="surface"><h3>{{ t('Совместимость текущего schematic') }}</h3><label>{{ t('Целевая версия Talos') }}<select v-model="targetVersion" :aria-label="t('Целевая версия Talos')" :disabled="compatibilityBusy||catalogStale"><option v-for="version in targetVersions" :key="version">{{ version }}</option></select></label><button :disabled="compatibilityBusy||catalogStale||!targetVersion||!extensionInfo.schematicId||extensionInfo.consistent===false" @click="checkCompatibility">{{ t('Проверить доступность образа') }}</button><p v-if="catalogStale" class="notice warning">{{ t('Каталог устарел. Создание профиля заблокировано до успешного обновления.') }}</p><p v-if="compatibilityError" class="notice error">{{ compatibilityError }}</p><p v-if="compatibility" class="notice">{{ t('Image Factory подтвердил образ текущего schematic для версии {0}. План обновления всё равно должен проверить здоровье и совместимость кластера.',[compatibility.version]) }}</p></section></template></template>
   <template v-else
     ><ResourceTable
       :rows="rows"

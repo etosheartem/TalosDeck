@@ -51,6 +51,7 @@ export function navigation() {
     },
     {id:'global-audit',title:t('Аудит платформы'),icon:ScrollText,group:t('ПЛАТФОРМА'),description:t('Подключения, провайдеры, пользователи и операции платформы.'),global:true},
     {id:'fleet-machines',title:t('Ресурсы провайдеров'),icon:Boxes,group:t('ПЛАТФОРМА'),description:t('Машины TalosDeck и ресурсы незавершённых операций.'),global:true},
+    {id:'images',title:t('Образы Talos'),icon:Archive,group:t('ПЛАТФОРМА'),description:t('Image Factory: версии, расширения и воспроизводимые образы.'),global:true},
     {id:'platform-settings',title:t('Настройки платформы'),icon:Settings,group:t('ПЛАТФОРМА'),description:t('Подключения, пользователи и доступ к платформе.'),global:true},
     {
       id: "overview",

@@ -44,6 +44,7 @@ type Backups interface {
 	VerifyBackup(string) (bool, string, error)
 }
 type Service struct {
+	Images          FactoryImages
 	Diagnostics     *DiagnosticsService
 	BackupLifecycle *BackupService
 	Talos           Talos
@@ -264,6 +265,9 @@ func (s *Service) Preflight(ctx context.Context, r jobs.Request) (*Plan, error) 
 				image, err := s.Talos.GetInstallerImage(ctx, n.IP)
 				if err != nil {
 					return nil, err
+				}
+				if err := validateUpgradeFactory(ctx, s.Images, image, r.Version); err != nil {
+					return nil, fmt.Errorf("%s: %w", n.IP, err)
 				}
 				nt.Image, err = installerFor(image, r.Version)
 				if err != nil {

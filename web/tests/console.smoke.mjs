@@ -422,6 +422,7 @@ try {
     .getByRole("button", { name: "Добавить worker", exact: true })
     .click();
   await page.getByLabel("Имя", { exact: true }).fill("worker-test");
+  await page.getByLabel("Источник образа",{exact:true}).selectOption("manual");
   await page.getByLabel("Talos", { exact: true }).fill("1.14.0");
   await page.getByLabel("Kubernetes", { exact: true }).fill("1.37.0");
   await page

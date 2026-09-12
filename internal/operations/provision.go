@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/compatibility"
+	"talosdeck/internal/imagefactory"
 	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
 	"talosdeck/internal/proxmox"
@@ -20,6 +21,10 @@ import (
 )
 
 type ProvisionSpec struct {
+	SchematicID       string                `json:"schematicId,omitempty"`
+	Architecture      string                `json:"architecture,omitempty"`
+	Platform          string                `json:"platform,omitempty"`
+	ISOStorage        string                `json:"isoStorage,omitempty"`
 	CNI               string                `json:"cni,omitempty"`
 	Storage           string                `json:"storage,omitempty"`
 	Kind              string                `json:"kind"`
@@ -33,11 +38,12 @@ type ProvisionSpec struct {
 	MachineID         string                `json:"machineId,omitempty"`
 }
 type ProvisionPlan struct {
-	ID          string        `json:"id"`
-	Spec        ProvisionSpec `json:"spec"`
-	Status      string        `json:"status"`
-	CreatedAt   time.Time     `json:"createdAt"`
-	SafetyNotes []string      `json:"safetyNotes"`
+	ImageProfile *imagefactory.Profile `json:"imageProfile,omitempty"`
+	ID           string                `json:"id"`
+	Spec         ProvisionSpec         `json:"spec"`
+	Status       string                `json:"status"`
+	CreatedAt    time.Time             `json:"createdAt"`
+	SafetyNotes  []string              `json:"safetyNotes"`
 }
 type provisionState struct {
 	ProvisionPlan
@@ -48,9 +54,13 @@ type provisionState struct {
 	Configs       [][]byte       `json:"configs,omitempty"`
 	Talosconfig   []byte         `json:"talosconfig,omitempty"`
 	Kubeconfig    []byte         `json:"kubeconfig,omitempty"`
+	ImageFilename string         `json:"imageFilename,omitempty"`
+	ImageTask     string         `json:"imageTask,omitempty"`
+	ImageChecksum string         `json:"imageChecksum,omitempty"`
 	ImportStarted bool           `json:"importStarted,omitempty"`
 }
 type ProvisionService struct {
+	Images          FactoryImages
 	ClusterID       string
 	Store           ProvisionStore
 	Talos           *talos.TalosManager
@@ -194,6 +204,10 @@ func (s *ProvisionService) Plan(ctx context.Context, spec ProvisionSpec, user st
 	if unavailable(s.Store) {
 		return nil, errors.New("provisioning store unavailable")
 	}
+	profile, err := s.resolveProvisionImage(ctx, &spec)
+	if err != nil {
+		return nil, err
+	}
 	if err := ValidateProvision(spec, s.ClusterID); err != nil {
 		return nil, err
 	}
@@ -244,9 +258,12 @@ func (s *ProvisionService) Plan(ctx context.Context, spec ProvisionSpec, user st
 			}
 		}
 	}
-	state := &provisionState{ProvisionPlan: ProvisionPlan{ID: uuid.NewString(), Spec: spec, Status: "planned", CreatedAt: time.Now().UTC(), SafetyNotes: []string{"Only newly allocated VMs are created. Failures retain ownership records and never replay automatically.", "The boot ISO must include qemu-guest-agent. Initial boot requires DHCP; static addresses are applied in MachineConfig.", "New clusters use Talos-managed Flannel and no storage add-on. The configured ISO and installer must support the selected Talos release."}}, ClusterID: s.ClusterID, Author: user, Provider: provider}
+	state := &provisionState{ProvisionPlan: ProvisionPlan{ImageProfile: profile, ID: uuid.NewString(), Spec: spec, Status: "planned", CreatedAt: time.Now().UTC(), SafetyNotes: []string{"Only newly allocated VMs are created. Failures retain ownership records and never replay automatically.", "The boot ISO must include qemu-guest-agent. Initial boot requires DHCP; static addresses are applied in MachineConfig.", "The selected CNI and storage add-on are installed before readiness verification. Manual ISO and installer versions must match."}}, ClusterID: s.ClusterID, Author: user, Provider: provider}
+	if profile != nil {
+		state.SafetyNotes = append(state.SafetyNotes, "The confirmed Factory schematic is used for both the boot ISO and installer. A unique checksum-verified ISO is retained on the provider for inspection after completion or failure.")
+	}
 	if spec.Kind != "worker-delete" && spec.Kind != "machine-cleanup" {
-		if err := providerPreflight(ctx, p, spec.Machines); err != nil {
+		if err := s.imagePreflight(ctx, p, spec); err != nil {
 			return nil, err
 		}
 		// Validate generated Talos configuration before allocating any VM. DHCP
@@ -325,6 +342,9 @@ func (s *ProvisionService) Run(ctx context.Context, e *jobs.Execution, r jobs.Re
 	}
 	if r.Kind == "machine-cleanup" {
 		return s.cleanupMachine(ctx, e, plan, provider)
+	}
+	if err := s.prepareImage(ctx, e, plan, provider); err != nil {
+		return err
 	}
 	if err := providerPreflight(ctx, provider, plan.Spec.Machines); err != nil {
 		return err

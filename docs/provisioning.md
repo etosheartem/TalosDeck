@@ -5,10 +5,11 @@ TalosDeck can create a new Talos cluster, add workers to an imported cluster, an
 ## Prerequisites
 
 - A Proxmox API token with permission to inspect the selected host/storage and create, configure, start and remove QEMU VMs. Use a trusted Proxmox CA certificate; TLS verification is enabled by default.
-- A Talos ISO already available in Proxmox storage, such as `local:iso/talos-qemu-agent.iso`. The ISO must contain `qemu-guest-agent`, because TalosDeck discovers each new VM's address through its registered virtual NIC and guest agent.
+- In Image Factory mode: an active ISO-capable storage with at least 2 GiB free, outbound verified HTTPS access to Factory, and permission to download ISO images through the Proxmox API. TalosDeck selects a profile with `qemu-guest-agent` and prepares its matching ISO inside the provisioning job.
+- In manual image mode: a matching Talos ISO already available in Proxmox storage, such as `local:iso/talos-qemu-agent.iso`. Include `qemu-guest-agent`: TalosDeck discovers new VM addresses through their registered virtual NIC and guest agent.
 - A bridge with DHCP for the initial maintenance boot. A requested static IPv4 configuration takes effect when MachineConfig is applied. Reserve DHCP addresses when using DHCP for control-plane endpoints.
 - Connectivity from TalosDeck to Proxmox, Talos TCP 50000 and Kubernetes TCP 6443. Nodes need access to their installer and Kubernetes/CNI image registries.
-- Enough host memory and storage for the selected machines. Planning and execution check total requested RAM, free space on each selected storage and the boot ISO's presence. These are capacity snapshots: other Proxmox administrators can allocate resources concurrently. TalosDeck does not delete existing VMs to make room.
+- Enough host memory and storage for the selected machines. Planning and execution check total requested RAM, free space on each selected storage and the boot ISO's presence (after preparation in Factory mode). These are capacity snapshots: other Proxmox administrators can allocate resources concurrently. TalosDeck does not delete existing VMs to make room.
 
 Keep TalosDeck outside the cluster being created or modified.
 
@@ -20,7 +21,7 @@ Providers are independent of process environment variables. Imported clusters an
 
 ## Create a cluster
 
-Open **Clusters → Create cluster** and choose the provider, stable Talos/Kubernetes versions, matching installer image and machine specifications. Supported control-plane sizes are one or three. Specify a unique DNS-label name for every machine, CPU, RAM, disk, storage, ISO, bridge and optional VLAN. Networking supports DHCP or static IPv4 with gateway and nameservers.
+Open **Clusters → Create cluster** and choose the provider, Talos Image Factory profile, stable Kubernetes version and machine specifications. Factory mode derives the installer from the selected schematic and version; choose ISO storage instead of a per-machine ISO. Manual image mode retains explicitly supplied installer/ISO settings. Supported control-plane sizes are one or three. Specify a unique DNS-label name for every machine, CPU, RAM, disk, storage, ISO, bridge and optional VLAN. Networking supports DHCP or static IPv4 with gateway and nameservers.
 
 Choose Talos-managed Flannel or bundled Cilium 1.20.1. Cilium is limited to Kubernetes 1.33–1.36 according to its stable compatibility matrix; use Flannel for Kubernetes 1.37. Cilium uses Kubernetes IPAM and retains kube-proxy. Storage choices are none or local-path-provisioner 0.0.34. Local-path is a single-node storage provider, not replicated storage: losing the node loses its volumes. Its data directory is `/var/lib/kubelet/talosdeck-volumes`, on the node's persistent kubelet filesystem. The provisioner creates a default `local-path` StorageClass and uses a privileged helper namespace.
 
@@ -60,3 +61,21 @@ Provider removal is refused while retained machines or active plans still refere
 Global routes: `GET/POST /api/providers`, `DELETE /api/providers/:id`, `POST /api/provision/plan`, `POST /api/provision`, `GET /api/provision/jobs`, `GET /api/machines`.
 
 For workers, use `POST /api/clusters/:id/provision/plan`, `POST /api/clusters/:id/provision` and `GET /api/clusters/:id/machines`. Submission accepts `{ "planId": "…", "confirmedName": "…" }`; configuration and provider credentials are never copied into job requests. Plans expire after 30 minutes and cannot be replayed after execution starts.
+
+## Factory image preparation
+
+The reviewed plan pins the schematic, version and extension refs/digests. Before
+creating any VM, execution resolves the profile again and rejects changed or
+unavailable image metadata. It streams the canonical ISO to calculate SHA256,
+then asks Proxmox to download that same URL with checksum validation and TLS
+certificate verification. This downloads the ISO twice; the backend does not
+hold the whole file in RAM. The filename is unique to the plan and an existing
+file is never overwritten.
+
+The provider task must finish successfully and the expected ISO must exist
+before VM allocation begins. The job records the filename and task for inspection.
+After installation, the running schematic and extensions are checked against
+the pinned profile. An unconfirmed download is interrupted; review its provider
+task before creating another plan. ISO files can remain after failed or completed
+jobs. Remove only the recorded `talosdeck-<plan UUID>.iso` after confirming no VM
+still uses it; automatic shared image garbage collection is not implemented.

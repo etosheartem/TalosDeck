@@ -28,6 +28,7 @@ import (
 	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
 	"talosdeck/internal/proxmox"
+	"talosdeck/internal/talos"
 )
 
 func (s *ProvisionService) generateConfigs(ctx context.Context, plan *provisionState, records []proxmox.OwnedMachineRecord) error {
@@ -369,6 +370,23 @@ func (s *ProvisionService) configureMachines(ctx context.Context, e *jobs.Execut
 		return true
 	}); err != nil {
 		return errors.New("created machines did not reach the expected Talos/Kubernetes versions and Ready state")
+	}
+
+	if plan.ImageProfile != nil {
+		if err := e.Checkpoint(ctx, "verify-image", "Verifying installed schematic and extensions on every created machine"); err != nil {
+			return err
+		}
+		for _, record := range records {
+			check, cancel := context.WithTimeout(ctx, 15*time.Second)
+			status, err := talos.GetNodeImageStatusWithClient(check, talosClient, record.Address)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("cannot verify installed Factory profile on %s", record.Name)
+			}
+			if err := validateInstalledProfile(*plan.ImageProfile, status); err != nil {
+				return fmt.Errorf("%s: %w", record.Name, err)
+			}
+		}
 	}
 	clusterID := s.ClusterID
 	if plan.Spec.Kind == "cluster-create" {
