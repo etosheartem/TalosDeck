@@ -109,3 +109,35 @@ The timer defaults to daily; change OnCalendar for your policy. Persistent catch
 safe here because the drill is isolated and never executes infrastructure operations.
 Forward the journal and failed-unit status to independent monitoring. Updating
 `latest-receipt.json` is a backup publication step, never a restore-drill step.
+
+## Independent execution authority (opt-in foundation)
+
+Install the same binary on an independent trusted SSH host. Its local POSIX filesystem
+holds an exclusive process lease and a monotonic epoch, outside DATA and outside the
+management VM backup. Do not use NFS, restore an old epoch, replace the lock file, or
+force lease takeover. Restrict the SSH account/authorized command and state directory.
+
+```sh
+talosdeck --data /srv/talosdeck/data --encryption-key /secure/master.key \
+  --authority-host execution-host \
+  --authority-binary /usr/local/bin/talosdeck \
+  --authority-state /var/lib/talosdeck-authority
+```
+
+The client starts `talosdeck authority serve --state-dir ...` through strict host-key
+SSH verification. The helper holds its lock for the transport lifetime. A second
+executor is refused while the first holds the lease. Each API mutation admission,
+job checkpoint and persisted provider intent validates that lease. Disconnect poisons
+the client permanently; it cannot silently reconnect and reuse the old epoch.
+A new successful acquisition increments and fsyncs the authority's epoch.
+
+This is opt-in for compatibility with existing installations. **An old binary or a
+process started without this configuration is not fenced by it.** All executors must
+use the same authority, and superseded legacy hosts/credentials must be fenced separately.
+A validation round trip also cannot retract a provider request already sent before
+lease loss. Reconcile those outcomes; never treat lease loss as proof an operation failed.
+
+Restored safe mode does not acquire execution authority and does not resume jobs.
+Unavailable authority fails mutation admission closed. A live but partitioned old
+session can delay takeover until its SSH session terminates; availability is sacrificed
+rather than forcibly granting a second lease.

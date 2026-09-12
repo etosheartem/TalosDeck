@@ -28,11 +28,15 @@ import (
 	"talosdeck/internal/k8s"
 	"talosdeck/internal/operations"
 	"talosdeck/internal/proxmox"
+	"talosdeck/internal/reconcile"
 	"talosdeck/internal/talos"
 	"talosdeck/internal/templates"
 )
 
 type FleetOptions struct {
+	ExecutionAuthority                      reconcile.Authority
+	ManagementInstanceID                    string
+	ExecutionEpoch                          uint64
 	Audit                                   *audit.AuditManager
 	Store                                   *clusters.Store
 	Auth                                    *auth.AuthManager
@@ -99,6 +103,12 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 		return nil, err
 	}
 	f.globalJobs, f.globalOperations = globalJobs, globalOps
+	if opts.ExecutionAuthority != nil && !safeMode {
+		if err := globalJobs.SetExecutionAuthority(opts.ExecutionAuthority, opts.ManagementInstanceID, opts.ExecutionEpoch); err != nil {
+			f.Close()
+			return nil, err
+		}
+	}
 	if opts.Audit != nil {
 		globalJobs.SetCompletionHandler(func(j jobs.Job) {
 			opts.Audit.Log(audit.AuditEvent{Action: "job." + j.Request.Kind, User: j.User, Status: j.Status, Details: map[string]any{"jobId": j.ID, "scope": "fleet"}})
@@ -310,6 +320,11 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 		return nil, err
 	}
 	rt.config.Jobs = jm
+	if f.options.ExecutionAuthority != nil && !f.recoverySafeMode {
+		if err := jm.SetExecutionAuthority(f.options.ExecutionAuthority, f.options.ManagementInstanceID, f.options.ExecutionEpoch); err != nil {
+			return nil, err
+		}
+	}
 	if !f.recoverySafeMode {
 		if err := ops.Provision.ReconcileInterrupted(context.Background()); err != nil {
 			return nil, err
@@ -590,6 +605,23 @@ func (f *Fleet) Import(ctx context.Context, req ImportClusterRequest) (clusters.
 }
 
 func (f *Fleet) register(app *fiber.App) {
+	app.Use(func(c *fiber.Ctx) error {
+		if f.options.ExecutionAuthority == nil || f.recoverySafeMode {
+			return c.Next()
+		}
+		if c.Method() == fiber.MethodGet || c.Method() == fiber.MethodHead || c.Method() == fiber.MethodOptions {
+			return c.Next()
+		}
+		if c.Path() == "/api/auth/login" || c.Path() == "/api/auth/logout" || c.Path() == "/api/auth/oidc/exchange" {
+			return c.Next()
+		}
+		ctx, cancel := context.WithTimeout(c.UserContext(), 5*time.Second)
+		defer cancel()
+		if err := f.options.ExecutionAuthority.Validate(ctx, f.options.ManagementInstanceID, f.options.ExecutionEpoch); err != nil {
+			return fiber.NewError(423, "execution authority unavailable or superseded; mutation blocked")
+		}
+		return c.Next()
+	})
 	app.Use(func(c *fiber.Ctx) error {
 		path := c.Path()
 		action := ""

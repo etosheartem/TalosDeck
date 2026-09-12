@@ -149,6 +149,9 @@ func OpenCluster(dir, clusterID string, runner Runner) (*Manager, error) {
 		default:
 			return fail(errors.New("invalid persisted job status"))
 		}
+		if j.WorkflowVersion != reconcile.Version || j.PlanVersion != reconcile.Version || j.StepSchemaVersion != reconcile.Version {
+			j.ReconciliationOutcome = reconcile.RequiresReview
+		}
 		m.jobs[j.ID] = &j
 		if err = m.save(&j); err != nil {
 			return fail(err)
