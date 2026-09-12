@@ -32,6 +32,10 @@ type Kubernetes interface {
 type componentVerifier interface {
 	VerifyUpgradeComponents(context.Context, string, bool) error
 }
+type nodeMaintenance interface {
+	CordonAndDrainNode(context.Context, string) error
+	SetNodeMaintenance(context.Context, string, bool) (string, error)
+}
 type diskVerifier interface {
 	CheckUpgradeDisk(context.Context, string) error
 }
@@ -128,6 +132,11 @@ func (s *Service) Preflight(ctx context.Context, r jobs.Request) (*Plan, error) 
 	}
 	if unavailable(s.Talos) || unavailable(s.Kubernetes) || unavailable(s.Backups) || unavailable(s.CLI) {
 		return nil, fmt.Errorf("Talos, Kubernetes, backup manager and talosctl are required")
+	}
+	if r.Kind != "kubernetes-upgrade" {
+		if _, ok := s.Kubernetes.(nodeMaintenance); !ok {
+			return nil, fmt.Errorf("Kubernetes node drain support is required")
+		}
 	}
 	if err := s.CLI.Check(ctx); err != nil {
 		return nil, err
@@ -409,6 +418,10 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 			return err
 		}
 	} else {
+		maintenance, ok := s.Kubernetes.(nodeMaintenance)
+		if !ok {
+			return fmt.Errorf("Kubernetes node drain support is required")
+		}
 		for _, node := range plan.Nodes {
 			if node.Skip {
 				if err = e.Log("skip", node.Name+" already has the target version"); err != nil {
@@ -423,13 +436,22 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 			if err = e.Checkpoint(ctx, "node", fmt.Sprintf("%s: %s", r.Kind, node.Name)); err != nil {
 				return err
 			}
+			if err = e.Log("drain", "Cordoning and draining "+node.Name+" through the selected cluster Kubernetes API"); err != nil {
+				return err
+			}
+			drainCtx, cancelDrain := context.WithTimeout(ctx, 5*time.Minute)
+			err = maintenance.CordonAndDrainNode(drainCtx, node.Name)
+			cancelDrain()
+			if err != nil {
+				return fmt.Errorf("%w: %s drain did not complete; node may remain cordoned: %v", jobs.ErrUncertain, node.Name, err)
+			}
 			// Observe reboot/upgrade events directly from the target. A proxy
 			// control plane can lose the remote event stream during reboot.
 			args := append(s.args(node.IP), "--endpoints", node.IP)
 			if r.Kind == "talos-upgrade" {
-				args = append(args, "upgrade", "--image", node.Image, "--drain", "--wait", "--timeout", "20m", "--progress", "plain")
+				args = append(args, "upgrade", "--image", node.Image, "--drain=false", "--wait", "--timeout", "20m", "--progress", "plain")
 			} else {
-				args = append(args, "reboot", "--drain", "--wait", "--timeout", "20m", "--progress", "plain")
+				args = append(args, "reboot", "--drain=false", "--wait", "--timeout", "20m", "--progress", "plain")
 			}
 			if err = s.CLI.Run(ctx, args, log); err != nil {
 				return fmt.Errorf("%s: %w: %v", node.Name, jobs.ErrUncertain, err)
@@ -442,7 +464,7 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 				kready := false
 				for _, n := range knodes {
 					if n.Name == node.Name {
-						kready = n.Ready && !n.Unschedulable && !n.Pressure
+						kready = n.Ready && !n.Pressure
 					}
 				}
 				if !kready {
@@ -476,6 +498,17 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 				return false
 			}); err != nil {
 				return fmt.Errorf("%s did not become ready at the target version: %w", node.Name, err)
+			}
+			// The current node is one critical step: a stop requested during
+			// drain must not strand it cordoned after verified recovery.
+			if err = e.Log("uncordon", "Restoring scheduling on verified node "+node.Name); err != nil {
+				return err
+			}
+			uncordonCtx, cancelUncordon := context.WithTimeout(ctx, 30*time.Second)
+			_, err = maintenance.SetNodeMaintenance(uncordonCtx, node.Name, false)
+			cancelUncordon()
+			if err != nil {
+				return fmt.Errorf("%w: %s is healthy but uncordon failed: %v", jobs.ErrUncertain, node.Name, err)
 			}
 			if err = e.Log("verified", node.Name+" is ready"); err != nil {
 				return err

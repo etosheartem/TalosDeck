@@ -26,6 +26,34 @@ type fixture struct {
 	image          string
 	holdReady      bool
 	commandStarted chan struct{}
+	maintenance    []string
+	failDrain      bool
+}
+
+func (f *fixture) CordonAndDrainNode(_ context.Context, node string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.maintenance = append(f.maintenance, "drain:"+node)
+	for i := range f.knodes {
+		if f.knodes[i].Name == node {
+			f.knodes[i].Unschedulable = true
+		}
+	}
+	if f.failDrain {
+		return errors.New("PDB prevents eviction")
+	}
+	return nil
+}
+func (f *fixture) SetNodeMaintenance(_ context.Context, node string, enable bool) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.maintenance = append(f.maintenance, "uncordon:"+node)
+	for i := range f.knodes {
+		if f.knodes[i].Name == node {
+			f.knodes[i].Unschedulable = enable
+		}
+	}
+	return node, nil
 }
 
 func newFixture() *fixture {
@@ -282,7 +310,19 @@ func TestRollingRebootRunsWorkersFirstWithDrain(t *testing.T) {
 	if j.Status != "succeeded" {
 		t.Fatal(j.Error)
 	}
-	if f.commands[0][5] != "10.0.0.11" || f.commands[2][5] != "10.0.0.10" || !strings.Contains(strings.Join(f.commands[0], " "), "--drain") {
+	if f.commands[0][5] != "10.0.0.11" || f.commands[2][5] != "10.0.0.10" || !strings.Contains(strings.Join(f.commands[0], " "), "--drain=false") {
 		t.Fatalf("%v", f.commands)
+	}
+	if !reflect.DeepEqual(f.maintenance, []string{"drain:10.0.0.11", "uncordon:10.0.0.11", "drain:10.0.0.12", "uncordon:10.0.0.12", "drain:10.0.0.10", "uncordon:10.0.0.10"}) {
+		t.Fatalf("unsafe maintenance order: %v", f.maintenance)
+	}
+}
+
+func TestFailedPDBDrainNeverRebootsOrUncordons(t *testing.T) {
+	f := newFixture()
+	f.failDrain = true
+	j := runJob(t, service(f), jobs.Request{Kind: "rolling-reboot", AllowDowntime: true})
+	if j.Status != "interrupted" || len(f.commands) != 0 || !reflect.DeepEqual(f.maintenance, []string{"drain:10.0.0.11"}) {
+		t.Fatalf("unsafe failed drain: %+v, %v", j, f.maintenance)
 	}
 }

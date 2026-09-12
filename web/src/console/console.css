@@ -1289,7 +1289,9 @@ td .mono {
 .detail-grid { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 3fr); gap: 12px 24px; }
 .detail-grid dt { color: var(--c-dim); }.detail-grid dd { margin: 0; overflow-wrap: anywhere; }
 .section-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
-.section-tabs button[aria-selected=true] { color: var(--c-accent); background: #322b22; border-color: #725736; }
+.section-tabs button { padding: 9px 12px; border-bottom: 2px solid transparent; }
+.panel > header .section-tabs { margin: 0; }
+.section-tabs button[aria-selected=true] { color: var(--c-accent); background: #322b22; border-bottom-color: var(--c-accent); }
 .rail nav .group-toggle { width: 100%; min-height: 30px; margin: 12px 0 3px; padding: 4px 10px; justify-content: space-between; color: var(--c-dim); font-size: 10px; letter-spacing: 1px; background: transparent; border: 0; }
 .group-toggle[aria-expanded=true] svg { transform: rotate(90deg); }
 .breadcrumb-link { border: 0; background: transparent; color: var(--c-dim); padding: 0; font-size: 12px; }

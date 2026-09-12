@@ -190,18 +190,23 @@ func (s *BackupService) Scheduler(ctx context.Context, jm *jobs.Manager) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.mu.Lock()
-			q, err := s.Schedule(ctx)
-			if err == nil && q.Enabled && !q.NextRun.IsZero() && !time.Now().Before(q.NextRun) {
-				_, err = jm.Submit(jobs.Request{Kind: "backup-create", BackupType: "full", TargetID: q.TargetID, DedupeKey: "backup:" + q.NextRun.UTC().Format(time.RFC3339Nano)}, "scheduler")
-				if err == nil {
-					q.NextRun = time.Now().UTC().Add(time.Duration(q.IntervalHours) * time.Hour)
-					_ = s.put(ctx, "backup-schedule", "schedule", q)
-				}
-			}
-			s.mu.Unlock()
+			_ = s.scheduleDue(ctx, jm, time.Now())
 		}
 	}
+}
+
+func (s *BackupService) scheduleDue(ctx context.Context, jm *jobs.Manager, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	q, err := s.Schedule(ctx)
+	if err != nil || !q.Enabled || q.NextRun.IsZero() || now.Before(q.NextRun) {
+		return err
+	}
+	if _, err = jm.Submit(jobs.Request{Kind: "backup-create", BackupType: "full", TargetID: q.TargetID, DedupeKey: "backup:" + q.NextRun.UTC().Format(time.RFC3339Nano)}, "scheduler"); err != nil {
+		return err
+	}
+	q.NextRun = now.UTC().Add(time.Duration(q.IntervalHours) * time.Hour)
+	return s.put(ctx, "backup-schedule", "schedule", q)
 }
 func (s *BackupService) List(ctx context.Context) ([]*backup.BackupInfo, error) {
 	local, err := s.Manager.ListBackups()
@@ -349,15 +354,62 @@ func (s *BackupService) Delete(ctx context.Context, id string) error {
 	}
 }
 func (s *BackupService) prune(ctx context.Context, limit int) error {
-	all, err := s.List(ctx)
-	if err != nil {
-		return err
-	}
 	if limit < 1 {
 		return fmt.Errorf("invalid retention")
 	}
-	for i := limit; i < len(all); i++ {
-		if err = s.Delete(ctx, all[i].ID); err != nil {
+	// A failed upload leaves a useful local copy, but must never evict a
+	// successful remote restore point. Apply independent quotas per location.
+	ids, err := s.Store.ListSecretKeys(ctx, s.ClusterID, "remote-backup")
+	if err != nil {
+		return err
+	}
+	byTarget := map[string][]RemoteBackup{}
+	for _, id := range ids {
+		var r RemoteBackup
+		if err = s.get(ctx, "remote-backup", id, &r); err != nil {
+			return err
+		}
+		if !r.Info.Partial {
+			byTarget[r.TargetID] = append(byTarget[r.TargetID], r)
+		}
+	}
+	for targetID, records := range byTarget {
+		sort.Slice(records, func(i, j int) bool { return records[i].Info.Timestamp.After(records[j].Info.Timestamp) })
+		if len(records) <= limit {
+			continue
+		}
+		t, err := s.target(ctx, targetID)
+		if err != nil {
+			return err
+		}
+		client, err := backupS3(t)
+		if err != nil {
+			return err
+		}
+		for _, r := range records[limit:] {
+			if err = client.RemoveObject(ctx, t.Bucket, r.Object, minio.RemoveObjectOptions{}); err != nil {
+				return errors.New("remote retention failed; local backups retained")
+			}
+			if err = s.Store.DeleteSecret(ctx, s.ClusterID, "remote-backup", r.Info.ID); err != nil {
+				return err
+			}
+		}
+	}
+	local, err := s.Manager.ListBackups()
+	if err != nil {
+		return err
+	}
+	sort.Slice(local, func(i, j int) bool { return local[i].Timestamp.After(local[j].Timestamp) })
+	complete := 0
+	for _, info := range local {
+		if info.Partial {
+			continue // Partial archives neither evict nor replace complete copies.
+		}
+		complete++
+		if complete <= limit {
+			continue
+		}
+		if err = s.Manager.DeleteBackup(info.ID); err != nil {
 			return err
 		}
 	}

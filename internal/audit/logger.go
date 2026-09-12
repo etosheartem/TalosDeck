@@ -3,7 +3,10 @@ package audit
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +37,10 @@ type AuditManager struct {
 	maxEntries int
 	events     []AuditEvent
 	logFile    *os.File
+	healthErr  error
 }
+
+const maxAuditLineBytes = 10 * 1024 * 1024
 
 // NewAuditManager creates an AuditManager writing to filePath, retaining maxEntries in memory.
 func NewAuditManager(filePath string, maxEntries int) (*AuditManager, error) {
@@ -50,29 +56,47 @@ func NewAuditManager(filePath string, maxEntries int) (*AuditManager, error) {
 		return nil, fmt.Errorf("failed to create audit log directory: %w", err)
 	}
 
-	var loadedEvents []AuditEvent
+	loadedEvents := make([]AuditEvent, 0, maxEntries)
+	next := 0
 
 	// Load existing entries if the file exists with extended buffer (SEC-10)
 	if f, err := os.Open(filePath); err == nil {
 		scanner := bufio.NewScanner(f)
-		const maxScanBuffer = 10 * 1024 * 1024 // 10MB max line buffer
-		scanner.Buffer(make([]byte, 64*1024), maxScanBuffer)
+		scanner.Buffer(make([]byte, 64*1024), maxAuditLineBytes)
+		lineNumber := 0
 		for scanner.Scan() {
+			lineNumber++
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
 				continue
 			}
 			var ev AuditEvent
-			if err := json.Unmarshal([]byte(line), &ev); err == nil {
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				_ = f.Close()
+				return nil, fmt.Errorf("invalid audit record at line %d", lineNumber)
+			}
+			if len(loadedEvents) < maxEntries {
 				loadedEvents = append(loadedEvents, ev)
+			} else {
+				loadedEvents[next] = ev
+				next = (next + 1) % maxEntries
 			}
 		}
-		_ = f.Close()
-
-		// Keep only the latest maxEntries
-		if len(loadedEvents) > maxEntries {
-			loadedEvents = loadedEvents[len(loadedEvents)-maxEntries:]
+		readErr, closeErr := scanner.Err(), f.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("cannot read audit journal: %w", readErr)
 		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("cannot close audit journal reader: %w", closeErr)
+		}
+		if next > 0 {
+			ordered := make([]AuditEvent, 0, len(loadedEvents))
+			ordered = append(ordered, loadedEvents[next:]...)
+			ordered = append(ordered, loadedEvents[:next]...)
+			loadedEvents = ordered
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("cannot read audit journal: %w", err)
 	}
 
 	// Open for appending with 0600 permissions (SEC-11)
@@ -80,7 +104,25 @@ func NewAuditManager(filePath string, maxEntries int) (*AuditManager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit log file: %w", err)
 	}
-	_ = os.Chmod(filePath, 0600)
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("cannot protect audit journal: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("cannot sync audit journal: %w", err)
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("cannot open audit directory: %w", err)
+	}
+	dirErr := directory.Sync()
+	closeDirErr := directory.Close()
+	if err := errors.Join(dirErr, closeDirErr); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("cannot sync audit directory: %w", err)
+	}
 
 	return &AuditManager{
 		filePath:   filePath,
@@ -90,8 +132,28 @@ func NewAuditManager(filePath string, maxEntries int) (*AuditManager, error) {
 	}, nil
 }
 
-// Log records an audit event safely into memory and the persistent file.
+// Log preserves the legacy call signature while surfacing durable write errors.
 func (m *AuditManager) Log(event AuditEvent) {
+	if err := m.Record(event); err != nil {
+		log.Printf("[AUDIT] record failed: %v", err)
+	}
+}
+
+// Record durably appends before publishing in memory. Any failure is sticky:
+// callers must stop mutations and repair/reopen the journal, never hide loss.
+func (m *AuditManager) Record(event AuditEvent) error {
+	if m == nil {
+		return errors.New("audit journal unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.healthErr != nil {
+		return m.healthErr
+	}
+	if m.logFile == nil {
+		m.healthErr = errors.New("audit journal is closed")
+		return m.healthErr
+	}
 	if event.ID == "" {
 		event.ID = uuid.New().String()
 	}
@@ -105,27 +167,64 @@ func (m *AuditManager) Log(event AuditEvent) {
 		event.Status = "success"
 	}
 
-	// Defensive copy & sanitize Details (SEC-04, SEC-12)
-	event.Details = copyAndSanitizeDetails(event.Details)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.clusterID != "" {
 		event.ClusterID = m.clusterID
 	}
-
-	// Append to in-memory ring buffer
-	m.events = append(m.events, event)
-	if len(m.events) > m.maxEntries {
-		m.events = m.events[len(m.events)-m.maxEntries:]
+	// JSON normalization validates unsupported/cyclic values before recursive
+	// sanitization and deep-copies typed maps/slices too. Errors never include data.
+	raw, err := json.Marshal(event)
+	if err != nil {
+		m.healthErr = errors.New("cannot encode audit event")
+		return m.healthErr
 	}
-
-	// Write JSON line to disk without synchronous fsync under lock (SEC-05)
-	if m.logFile != nil {
-		if data, err := json.Marshal(event); err == nil {
-			_, _ = m.logFile.Write(append(data, '\n'))
-		}
+	if len(raw)+1 > maxAuditLineBytes {
+		m.healthErr = errors.New("audit event exceeds journal record limit")
+		return m.healthErr
 	}
+	if err = json.Unmarshal(raw, &event); err != nil {
+		m.healthErr = errors.New("cannot normalize audit event")
+		return m.healthErr
+	}
+	event.Details = copyAndSanitizeDetails(event.Details)
+	data, err := json.Marshal(event)
+	if err != nil || len(data)+1 > maxAuditLineBytes {
+		m.healthErr = errors.New("cannot encode sanitized audit event")
+		return m.healthErr
+	}
+	data = append(data, '\n')
+	n, err := m.logFile.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		err = m.logFile.Sync()
+	}
+	if err != nil {
+		m.healthErr = fmt.Errorf("cannot persist audit event: %w", err)
+		return m.healthErr
+	}
+	if len(m.events) == m.maxEntries {
+		copy(m.events, m.events[1:])
+		m.events[len(m.events)-1] = event
+	} else {
+		m.events = append(m.events, event)
+	}
+	return nil
+}
+
+func (m *AuditManager) Health() error {
+	if m == nil {
+		return errors.New("audit journal unavailable")
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.healthErr != nil {
+		return m.healthErr
+	}
+	if m.logFile == nil {
+		return errors.New("audit journal is closed")
+	}
+	return nil
 }
 
 // BindCluster labels new records and historical entries returned from the
@@ -204,10 +303,13 @@ func (m *AuditManager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.logFile != nil {
-		_ = m.logFile.Sync()
-		err := m.logFile.Close()
+		syncErr := m.logFile.Sync()
+		closeErr := m.logFile.Close()
 		m.logFile = nil
-		return err
+		if err := errors.Join(syncErr, closeErr); err != nil {
+			m.healthErr = errors.Join(m.healthErr, err)
+		}
+		return m.healthErr
 	}
 	return nil
 }

@@ -104,6 +104,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	if authMgr == nil {
 		authMgr = auth.NewAuthManagerFromEnv()
 	}
+	app.Use(auditMutationGuard(auditMgr, authMgr, cfg.Fleet != nil))
 	RegisterSecurityRoutes(app, authMgr, auditMgr)
 	if cfg.Fleet != nil {
 		cfg.Fleet.register(app)

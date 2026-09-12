@@ -45,6 +45,7 @@ TalosDeck на отдельной машине или в management-класте
 - [Пользователи, роли и OIDC](docs/authentication.md).
 - [Proxmox и создание кластеров](docs/provisioning.md).
 - [Резервные копии и восстановление](docs/backups.md).
+- [Объём поставки и ограничения](docs/release-notes.md).
 
 ## Разработка
 
@@ -102,7 +103,7 @@ bun run test:ui
 cmd/talosdeck/       Точка входа приложения
 internal/           API, клиенты инфраструктуры и подсистемы backend
 web/                Vue SPA, frontend-тесты и go:embed
-deploy/             Базовые Kubernetes-манифесты
+deploy/             Docker Compose, Helm и Kubernetes-манифесты
 gitops/talosdeck/    Kustomize-манифесты для Argo CD
 docs/               Пользовательская документация
 Dockerfile          Сборка контейнера
@@ -113,3 +114,6 @@ Makefile            Локальная сборка и запуск
 в Git. Данные подключения и секреты храните вне checkout.
 
 Исходный код: [github.com/etosheartem/TalosDeck](https://github.com/etosheartem/TalosDeck).
+
+Лицензия: [Apache-2.0](LICENSE). Лицензии встроенных сторонних манифестов
+сохранены в `internal/k8s/addons/`.
