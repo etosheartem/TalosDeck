@@ -2,12 +2,84 @@ package talos
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
+	"github.com/siderolabs/talos/pkg/machinery/client"
+	talosk8s "github.com/siderolabs/talos/pkg/machinery/resources/k8s"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func TestLiveNodeIdentity(t *testing.T) {
+	path := os.Getenv("TALOSDECK_TEST_TALOSCONFIG")
+	if path == "" {
+		t.Skip("set TALOSDECK_TEST_TALOSCONFIG for read-only integration")
+	}
+	mgr, err := NewTalosManager(path)
+	if err != nil {
+		t.Fatal("cannot create Talos client")
+	}
+	defer mgr.Close()
+	targets := mgr.GetConfiguredNodes()
+	if len(targets) == 0 {
+		t.Fatal("no configured nodes")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	nodeCtx := client.WithNode(ctx, targets[0])
+	started := time.Now()
+	list, err := safe.StateListAll[*talosk8s.KubeletStatus](nodeCtx, mgr.GetClient().COSI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedVersion := ""
+	for status := range list.All() {
+		expectedVersion = kubernetesVersionFromImage(status.TypedSpec().Image)
+	}
+	t.Logf("direct kubelet status in %s: version=%s", time.Since(started), expectedVersion)
+	names, err := safe.StateListAll[*talosk8s.NodeStatus](nodeCtx, mgr.GetClient().COSI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedName := ""
+	for status := range names.All() {
+		expectedName = status.TypedSpec().Nodename
+	}
+	started = time.Now()
+	status, err := mgr.GetNodeStatus(ctx, targets[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("node status in %s: hostname=%s version=%s uptime=%s", time.Since(started), status.Hostname, status.KubernetesVersion, status.Uptime)
+	if expectedVersion != "" && status.KubernetesVersion != expectedVersion {
+		t.Fatalf("Kubernetes version missing/wrong: expected %s", expectedVersion)
+	}
+	if expectedName != "" && status.Hostname != expectedName {
+		t.Fatalf("hostname missing/wrong: expected %s", expectedName)
+	}
+	cold, err := NewTalosManager(path)
+	if err != nil {
+		t.Fatal("cannot create fresh Talos client")
+	}
+	defer cold.Close()
+	listCtx, listCancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer listCancel()
+	started = time.Now()
+	nodes, err := cold.ListNodes(listCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("cold complete ListNodes: %d nodes in %s", len(nodes), time.Since(started))
+	for _, node := range nodes {
+		t.Logf("node=%s hostname=%s kubernetes=%s ready=%v", node.IP, node.Hostname, node.KubernetesVersion, node.Ready)
+		if node.Ready && (node.KubernetesVersion == "" || node.Hostname == node.IP) {
+			t.Fatal("ready node has incomplete identity")
+		}
+	}
+}
 
 // TALOS-28: a line split across gRPC chunks must arrive as one line.
 func TestStreamLines_ReassemblesAcrossChunks(t *testing.T) {

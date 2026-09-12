@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,6 +29,12 @@ type Talos interface {
 type Kubernetes interface {
 	UpgradeInventory(context.Context) (string, []k8s.UpgradeNode, error)
 }
+type componentVerifier interface {
+	VerifyUpgradeComponents(context.Context, string, bool) error
+}
+type diskVerifier interface {
+	CheckUpgradeDisk(context.Context, string) error
+}
 type Backups interface {
 	CreateEtcdSnapshot(context.Context, string) (*backup.BackupInfo, error)
 	VerifyBackup(string) (bool, string, error)
@@ -38,7 +45,20 @@ type Service struct {
 	Backups      Backups
 	CLI          CommandRunner
 	PollInterval time.Duration
+	Config       *ConfigService
+	ClusterName  string
 }
+
+func (s *Service) ConfirmationName() string {
+	if s.ClusterName != "" {
+		return s.ClusterName
+	}
+	if unavailable(s.Talos) {
+		return ""
+	}
+	return s.Talos.GetClusterName()
+}
+
 type Node struct {
 	IP      string `json:"ip"`
 	Name    string `json:"name"`
@@ -64,6 +84,9 @@ func parseVersion(s string) (semver.Version, error) {
 	return semver.Parse(strings.TrimPrefix(s, "v"))
 }
 func Validate(r jobs.Request) error {
+	if r.Node != "" || r.ConfigRevisionID != "" {
+		return fmt.Errorf("configuration references are not accepted by upgrade endpoints")
+	}
 	switch r.Kind {
 	case "talos-upgrade", "kubernetes-upgrade":
 		_, err := parseVersion(r.Version)
@@ -97,7 +120,7 @@ func (s *Service) Preflight(ctx context.Context, r jobs.Request) (*Plan, error) 
 	if err := Validate(r); err != nil {
 		return nil, err
 	}
-	if s.Talos == nil || s.Kubernetes == nil || s.Backups == nil || s.CLI == nil {
+	if unavailable(s.Talos) || unavailable(s.Kubernetes) || unavailable(s.Backups) || unavailable(s.CLI) {
 		return nil, fmt.Errorf("Talos, Kubernetes, backup manager and talosctl are required")
 	}
 	if err := s.CLI.Check(ctx); err != nil {
@@ -120,6 +143,11 @@ func (s *Service) Preflight(ctx context.Context, r jobs.Request) (*Plan, error) 
 	apiSem, err := parseVersion(apiVersion)
 	if err != nil {
 		return nil, err
+	}
+	if verifier, ok := s.Kubernetes.(componentVerifier); ok {
+		if err := verifier.VerifyUpgradeComponents(ctx, apiVersion, false); err != nil {
+			return nil, fmt.Errorf("Kubernetes component preflight: %w", err)
+		}
 	}
 	plan := &Plan{Kind: r.Kind, Version: strings.TrimPrefix(r.Version, "v"), KubernetesVersion: apiVersion, Nodes: []Node{}, Warnings: []string{"An etcd snapshot will be created and verified before changes. This does not back up application volumes.", "If TalosDeck runs on a node being drained, the job may be interrupted. Run from an external management host for an uninterrupted upgrade."}}
 	cp := 0
@@ -155,8 +183,15 @@ func (s *Service) Preflight(ctx context.Context, r jobs.Request) (*Plan, error) 
 			return nil, fmt.Errorf("Talos node %s does not uniquely match this Kubernetes cluster", n.IP)
 		}
 		seen[match.Name] = true
-		if !match.Ready || match.Unschedulable {
+		if !match.Ready || match.Unschedulable || match.Pressure {
 			return nil, fmt.Errorf("Kubernetes node %s must be Ready and schedulable", match.Name)
+		}
+		if r.Kind != "rolling-reboot" {
+			if verifier, ok := s.Talos.(diskVerifier); ok {
+				if err := verifier.CheckUpgradeDisk(ctx, n.IP); err != nil {
+					return nil, err
+				}
+			}
 		}
 		tv, err := parseVersion(n.Version)
 		if err != nil {
@@ -272,6 +307,12 @@ func (s *Service) args(node string) []string {
 	return []string{"--talosconfig", s.Talos.GetConfigPath(), "--context", s.Talos.GetClusterName(), "--nodes", node}
 }
 func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) error {
+	if r.Kind == "config-apply" || r.Kind == "config-restore" {
+		if s.Config == nil {
+			return fmt.Errorf("configuration operations unavailable")
+		}
+		return s.Config.Run(ctx, e, r)
+	}
 	if err := e.Checkpoint(ctx, "preflight", "Checking cluster health, inventory and version compatibility"); err != nil {
 		return err
 	}
@@ -322,7 +363,7 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 			return err
 		}
 		if err = s.CLI.Run(ctx, append(s.args(cp), "upgrade-k8s", "--to", plan.Version), log); err != nil {
-			return err
+			return fmt.Errorf("%w: %v", jobs.ErrUncertain, err)
 		}
 		if err = s.wait(ctx, func(c context.Context) bool {
 			v, nodes, err := s.Kubernetes.UpgradeInventory(c)
@@ -330,7 +371,12 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 				return false
 			}
 			for _, n := range nodes {
-				if !n.Ready || strings.TrimPrefix(n.Version, "v") != plan.Version {
+				if !n.Ready || n.Unschedulable || n.Pressure || strings.TrimPrefix(n.Version, "v") != plan.Version {
+					return false
+				}
+			}
+			if verifier, ok := s.Kubernetes.(componentVerifier); ok {
+				if verifier.VerifyUpgradeComponents(c, plan.Version, true) != nil {
 					return false
 				}
 			}
@@ -355,14 +401,27 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 			}
 			args := s.args(node.IP)
 			if r.Kind == "talos-upgrade" {
-				args = append(args, "upgrade", "--image", node.Image, "--wait", "--timeout", "20m", "--progress", "plain")
+				args = append(args, "upgrade", "--image", node.Image, "--drain", "--wait", "--timeout", "20m", "--progress", "plain")
 			} else {
 				args = append(args, "reboot", "--drain", "--wait", "--timeout", "20m", "--progress", "plain")
 			}
 			if err = s.CLI.Run(ctx, args, log); err != nil {
-				return fmt.Errorf("%s: %w", node.Name, err)
+				return fmt.Errorf("%s: %w: %v", node.Name, jobs.ErrUncertain, err)
 			}
 			if err = s.wait(ctx, func(c context.Context) bool {
+				_, knodes, kerr := s.Kubernetes.UpgradeInventory(c)
+				if kerr != nil {
+					return false
+				}
+				kready := false
+				for _, n := range knodes {
+					if n.Name == node.Name {
+						kready = n.Ready && !n.Unschedulable && !n.Pressure
+					}
+				}
+				if !kready {
+					return false
+				}
 				nodes, err := s.Talos.ListNodes(c)
 				if err != nil {
 					return false
@@ -386,10 +445,67 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 	if err != nil {
 		return err
 	}
-	if etcd == nil || !etcd.Healthy {
+	if etcd == nil || !etcd.Healthy || len(etcd.Alarms) != 0 || len(etcd.Errors) != 0 {
 		return fmt.Errorf("post-operation etcd health check failed")
 	}
+	controlPlanes := 0
+	for _, node := range plan.Nodes {
+		if node.Role == "controlplane" {
+			controlPlanes++
+		}
+	}
+	if len(etcd.Members) != controlPlanes {
+		return fmt.Errorf("post-operation etcd member count changed")
+	}
+	for _, member := range etcd.Members {
+		if !member.Healthy || member.IsLearner {
+			return fmt.Errorf("post-operation etcd member health check failed")
+		}
+	}
+	_, finalNodes, err := s.Kubernetes.UpgradeInventory(ctx)
+	if err != nil || len(finalNodes) != len(plan.Nodes) {
+		return fmt.Errorf("post-operation Kubernetes inventory check failed")
+	}
+	expected := map[string]bool{}
+	for _, node := range plan.Nodes {
+		expected[node.Name] = true
+	}
+	for _, node := range finalNodes {
+		if !expected[node.Name] || !node.Ready || node.Unschedulable || node.Pressure {
+			return fmt.Errorf("post-operation Kubernetes readiness check failed")
+		}
+		delete(expected, node.Name)
+	}
+	finalTalos, err := s.Talos.ListNodes(ctx)
+	if err != nil || len(finalTalos) != len(plan.Nodes) {
+		return fmt.Errorf("post-operation Talos inventory check failed")
+	}
+	byIP := map[string]bool{}
+	for _, node := range plan.Nodes {
+		byIP[node.IP] = true
+	}
+	for _, node := range finalTalos {
+		if node == nil || !byIP[node.IP] || !node.Ready || node.ServicesSummary == nil || node.ServicesSummary.Kubelet != "Healthy" || node.ServicesSummary.Containerd != "Healthy" || node.ServicesSummary.Apid != "Healthy" {
+			return fmt.Errorf("post-operation Talos health check failed")
+		}
+		if r.Kind == "talos-upgrade" && strings.TrimPrefix(node.Version, "v") != plan.Version {
+			return fmt.Errorf("post-operation Talos version check failed")
+		}
+		delete(byIP, node.IP)
+	}
 	return e.Log("complete", "Operation completed and cluster health verified")
+}
+
+func unavailable(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func:
+		return v.IsNil()
+	}
+	return false
 }
 func (s *Service) wait(ctx context.Context, ready func(context.Context) bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)

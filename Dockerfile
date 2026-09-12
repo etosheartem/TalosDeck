@@ -6,7 +6,7 @@ WORKDIR /app/web
 
 # Install frontend dependencies with lockfile caching
 COPY web/package.json web/bun.lock* ./
-RUN bun install --frozen-lockfile || bun install
+RUN bun install --frozen-lockfile
 
 # Copy frontend source code and compile production assets
 COPY web/ ./
@@ -21,6 +21,9 @@ WORKDIR /app
 ARG TARGETARCH
 ARG TALOSCTL_VERSION=v1.14.0
 RUN apk add --no-cache ca-certificates git wget \
+    && if [ -z "${TARGETARCH}" ]; then \
+         case "$(uname -m)" in x86_64) TARGETARCH=amd64 ;; aarch64) TARGETARCH=arm64 ;; esac; \
+       fi \
     && case "${TARGETARCH}" in \
          amd64) TALOSCTL_SHA256=2c147c4a99d124c95bd5c190fe054e0b3c93495f2243fd652ebd423adb8377c7 ;; \
          arm64) TALOSCTL_SHA256=19615e1d0eb222de86ec2f1487e7d6e74f5171a9038e73aeacde8cc647e3d9e0 ;; \
@@ -58,7 +61,7 @@ RUN apk --no-cache add ca-certificates tzdata && \
     adduser -S talosdeck -u 1000 -G talosdeck && \
     mkdir -p /app/data/backups && \
     chown -R talosdeck:talosdeck /app && \
-    chmod -R 755 /app/data
+    chmod -R 700 /app/data
 
 WORKDIR /app
 

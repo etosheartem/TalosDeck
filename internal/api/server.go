@@ -33,6 +33,8 @@ import (
 
 // ServerConfig configures the HTTP & WebSocket server.
 type ServerConfig struct {
+	Fleet        *Fleet
+	ClusterName  string
 	Manager      *talos.TalosManager
 	K8s          *k8s.K8sManager
 	Backup       *backup.BackupManager
@@ -101,11 +103,17 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	if authMgr == nil {
 		authMgr = auth.NewAuthManagerFromEnv()
 	}
+	if cfg.Fleet != nil {
+		cfg.Fleet.register(app)
+	}
 
 	// REST API Routes Group
 	api := app.Group("/api")
 	api.Use(jobMutationGuard(cfg.Jobs))
 	RegisterJobRoutes(api, cfg.Jobs, cfg.Operations, authMgr)
+	if cfg.Operations != nil && cfg.Operations.Config != nil {
+		RegisterConfigRoutes(api, cfg.Jobs, cfg.Operations.Config, authMgr)
+	}
 
 	// OPS-08: Health and Readiness Probes (GET /healthz, GET /readyz, GET /api/health)
 	healthzHandler := func(c *fiber.Ctx) error {
@@ -318,7 +326,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	api.Get("/audit", auditHandlers...)
 
 	bm := cfg.Backup
-	if bm == nil {
+	if bm == nil && manager != nil {
 		var err error
 		bm, err = backup.NewBackupManager("./data/backups", manager)
 		if err != nil {
@@ -378,6 +386,21 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": fmt.Sprintf("failed to get cluster info: %v", err),
 			})
+		}
+		if cfg.ClusterName != "" {
+			info.Name = cfg.ClusterName
+		}
+		if cfg.K8s != nil {
+			version, nodes, kerr := cfg.K8s.UpgradeInventory(ctx)
+			if kerr == nil {
+				info.KubernetesVersion = version
+				info.Healthy = info.Healthy && len(nodes) == info.TotalNodes
+				for _, node := range nodes {
+					info.Healthy = info.Healthy && node.Ready
+				}
+			} else {
+				info.Healthy = false
+			}
 		}
 		return c.JSON(info)
 	})
@@ -600,13 +623,18 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 					User:    user,
 					IP:      clientIP,
 					Status:  "failed",
-					Details: map[string]any{"node": ip, "format": format, "error": err.Error()},
+					Details: map[string]any{"node": ip, "format": format, "error": "configuration unavailable"},
 				})
 			}
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": fmt.Sprintf("failed to get machine config for %s: %v", ip, err),
+				"error": "failed to get machine configuration",
 			})
 		}
+		redacted, err := operations.RedactedConfig(cfgBytes)
+		if err != nil {
+			return fiber.NewError(502, "cannot safely redact machine configuration")
+		}
+		cfgBytes = []byte(redacted)
 
 		if auditMgr != nil {
 			auditMgr.Log(audit.AuditEvent{

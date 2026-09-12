@@ -38,7 +38,7 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		if err != nil {
 			return fiber.NewError(422, err.Error())
 		}
-		return c.JSON(fiber.Map{"plan": plan, "cluster": service.Talos.GetClusterName()})
+		return c.JSON(fiber.Map{"plan": plan, "cluster": service.ConfirmationName()})
 	})
 	group.Post("/", func(c *fiber.Ctx) error {
 		var body struct {
@@ -51,7 +51,7 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		if err := operations.Validate(body.Request); err != nil {
 			return fiber.NewError(400, err.Error())
 		}
-		if service.Talos == nil || body.ConfirmedCluster == "" || body.ConfirmedCluster != service.Talos.GetClusterName() {
+		if service.Talos == nil || body.ConfirmedCluster == "" || body.ConfirmedCluster != service.ConfirmationName() {
 			return fiber.NewError(400, "Type the cluster name to confirm the operation")
 		}
 		job, err := manager.Submit(body.Request, auth.GetContextUser(c, authMgr))
@@ -65,6 +65,14 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		if err != nil {
 			return jobError(err)
 		}
+		return c.JSON(job)
+	})
+	group.Get("/:id/export", func(c *fiber.Ctx) error {
+		job, err := manager.Get(c.Params("id"))
+		if err != nil {
+			return jobError(err)
+		}
+		c.Set("Content-Disposition", `attachment; filename="job-`+job.ID+`.json"`)
 		return c.JSON(job)
 	})
 	group.Post("/:id/stop", func(c *fiber.Ctx) error {

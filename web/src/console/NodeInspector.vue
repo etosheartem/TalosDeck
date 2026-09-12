@@ -4,6 +4,7 @@ import { t } from "./i18n";
 import { ref, watch, onUnmounted, nextTick } from "vue";
 import type { NodeOverview } from "../types";
 import { getAuthToken, isAuthenticated } from "../api";
+import { clusterWebSocket } from "../clusterScope";
 import { request, post, download, list } from "./client";
 import ResourceTable from "./ResourceTable.vue";
 const props = defineProps<{ node: NodeOverview }>();
@@ -47,7 +48,7 @@ function connect() {
       ? "dmesg"
       : `logs/${encodeURIComponent(service.value)}`;
   socket = new WebSocket(
-    `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws/nodes/${encodeURIComponent(props.node.ip)}/${path}`,
+    `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}${clusterWebSocket(`/nodes/${encodeURIComponent(props.node.ip)}/${path}`)}`,
     [token],
   );
   socket.onopen = () => (status.value = "Подключено");

@@ -1,4 +1,5 @@
 import { t } from "./i18n";
+import { scopeURL, trackRequest, clusterEpoch } from "../clusterScope";
 import {
   getAuthHeaders,
   isAuthenticated,
@@ -11,12 +12,14 @@ export async function request<T = any>(
   init: RequestInit = {},
 ): Promise<T> {
   const controller = new AbortController();
+  const release = trackRequest(controller);
+  const epoch = clusterEpoch();
   const timer = setTimeout(
     () => controller.abort(),
     init.method ? 190000 : 30000,
   );
   try {
-    const response = await fetch(`/api${path}`, {
+    const response = await fetch(scopeURL(`/api${path}`), {
       ...init,
       headers: {
         ...getAuthHeaders(),
@@ -26,6 +29,8 @@ export async function request<T = any>(
       signal: controller.signal,
     });
     const data = await response.json().catch(() => null);
+    if (epoch !== clusterEpoch())
+      throw new DOMException("Cluster changed", "AbortError");
     if (response.status === 401) {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       isAuthenticated.value = false;
@@ -41,6 +46,7 @@ export async function request<T = any>(
     return data as T;
   } finally {
     clearTimeout(timer);
+    release();
   }
 }
 export const post = (path: string, body: unknown = {}) =>

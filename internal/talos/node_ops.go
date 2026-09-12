@@ -149,6 +149,9 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 			if ns == nil || ns.TypedSpec() == nil {
 				continue
 			}
+			if ns.TypedSpec().Nodename != "" {
+				overview.Hostname = ns.TypedSpec().Nodename
+			}
 			overview.Ready = overview.Ready && ns.TypedSpec().NodeReady
 			break
 		}

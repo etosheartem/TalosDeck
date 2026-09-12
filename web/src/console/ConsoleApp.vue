@@ -45,11 +45,43 @@ import type {
   EtcdClusterHealth,
   ProxmoxStatusResponse,
 } from "../types";
-import { request, post, list, bytes, download, normalizeDisk } from "./client";
+import { request, post, list, bytes, normalizeDisk } from "./client";
 import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
 import NodeInspector from "./NodeInspector.vue";
 import JobsView from "./JobsView.vue";
+import ConfigView from "./ConfigView.vue";
+import { selectedCluster, selectCluster, clusterEpoch } from "../clusterScope";
+const clusters = ref<any[]>([]);
+const registryError = ref("");
+const importing = ref(false);
+const importForm = ref({ name: "", talosconfig: "", kubeconfig: "" });
+async function loadClusters() {
+  if (!isAuthenticated.value) return;
+  try {
+    const result = await request("/clusters");
+    clusters.value = result.clusters || [];
+    registryError.value = "";
+    if (!clusters.value.some((c) => c.id === selectedCluster.value))
+      selectCluster(clusters.value[0]?.id || "");
+  } catch (e) {
+    registryError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+async function importCluster() {
+  importing.value = true;
+  try {
+    const result = await post("/clusters", importForm.value);
+    importForm.value = { name: "", talosconfig: "", kubeconfig: "" };
+    dialog.value = "";
+    await loadClusters();
+    selectCluster(result.cluster.id);
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    importing.value = false;
+  }
+}
 
 const pages = computed(() => [
   {
@@ -87,9 +119,7 @@ const pages = computed(() => [
     title: t("Конфигурация"),
     icon: FileCode2,
     group: t("УПРАВЛЕНИЕ"),
-    description: t(
-      "Просмотр и экспорт MachineConfig. Доступ только для чтения.",
-    ),
+    description: t("MachineConfig: изменения, сравнение и история ревизий."),
   },
   {
     id: "etcd",
@@ -114,8 +144,20 @@ const pages = computed(() => [
       "Диагностика, обслуживание машин и последовательная перезагрузка.",
     ),
   },
-  { id: "updates", title: t("Обновления"), icon: RefreshCw, group: t("УПРАВЛЕНИЕ"), description: t("Проверка и обновление Talos Linux и Kubernetes.") },
-  { id: "jobs", title: t("Задания"), icon: ScrollText, group: t("СИСТЕМА"), description: t("Фоновые операции, состояние шагов и журнал выполнения.") },
+  {
+    id: "updates",
+    title: t("Обновления"),
+    icon: RefreshCw,
+    group: t("УПРАВЛЕНИЕ"),
+    description: t("Проверка и обновление Talos Linux и Kubernetes."),
+  },
+  {
+    id: "jobs",
+    title: t("Задания"),
+    icon: ScrollText,
+    group: t("СИСТЕМА"),
+    description: t("Фоновые операции, состояние шагов и журнал выполнения."),
+  },
   {
     id: "audit",
     title: t("Аудит"),
@@ -154,7 +196,6 @@ const nodeIP = ref("");
 const namespace = ref("all");
 const role = ref("all");
 const config = ref("");
-const configQuery = ref("");
 const detail = ref<any>(null);
 const inspected = ref<NodeOverview | null>(null);
 const dialog = ref("");
@@ -188,7 +229,9 @@ const worker = ref({
   iso: "",
   start: true,
 });
-const operationKind = ref<"talos-upgrade" | "kubernetes-upgrade" | "rolling-reboot">("talos-upgrade");
+const operationKind = ref<
+  "talos-upgrade" | "kubernetes-upgrade" | "rolling-reboot"
+>("talos-upgrade");
 const backupType = ref<"full" | "etcd">("etcd");
 const ready = computed(() => nodes.value.filter((n) => n.ready).length);
 const troubled = computed(() =>
@@ -258,7 +301,6 @@ const nodeColumns = computed(() => [
   { key: "version", title: "Talos", mono: true },
   { key: "uptime", title: t("Время работы"), mono: true },
 ]);
-const copyConfig = () => navigator.clipboard.writeText(config.value);
 function notify(message: string) {
   toast.value = message;
   clearTimeout(toastTimer);
@@ -269,14 +311,17 @@ async function perform(
   message = t("Операция выполнена"),
 ) {
   if (busy.value) return;
+  const epoch = clusterEpoch();
   busy.value = true;
   actionError.value = "";
   try {
     await run();
+    if (epoch !== clusterEpoch()) return false;
     notify(message);
     return true;
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : String(e);
+    if (epoch === clusterEpoch())
+      actionError.value = e instanceof Error ? e.message : String(e);
     return false;
   } finally {
     busy.value = false;
@@ -294,19 +339,21 @@ async function confirm() {
   }
 }
 async function probe(key: string, path: string, set: (data: any) => void) {
+  const epoch = clusterEpoch();
   try {
     const result = await request(path);
-    if (!disposed) {
+    if (!disposed && epoch === clusterEpoch()) {
       set(result);
       delete errors.value[key];
     }
   } catch (e) {
-    if (!disposed)
+    if (!disposed && epoch === clusterEpoch())
       errors.value[key] = e instanceof Error ? e.message : String(e);
   }
 }
 async function refresh() {
-  if (loading.value) return;
+  if (loading.value || !selectedCluster.value || !isAuthenticated.value) return;
+  const epoch = clusterEpoch();
   loading.value = true;
   await Promise.allSettled([
     probe("nodes", "/nodes", (v) => {
@@ -331,7 +378,7 @@ async function refresh() {
     ),
     probe("proxmox", "/proxmox/status", (v) => (pve.value = v)),
   ]);
-  if (!disposed) {
+  if (!disposed && epoch === clusterEpoch()) {
     refreshed.value = new Date().toLocaleTimeString("ru-RU");
     loading.value = false;
   }
@@ -341,12 +388,13 @@ function schedule() {
   if (interval.value && !disposed)
     timer = setTimeout(async () => {
       await refresh();
-      if (["storage", "config", "backups", "audit"].includes(active.value))
+      if (["storage", "backups", "audit"].includes(active.value))
         await loadSection();
       schedule();
     }, interval.value * 1000);
 }
 async function loadSection() {
+  if (!selectedCluster.value || !isAuthenticated.value) return;
   const id = ++generation;
   const section = active.value;
   data.value = [];
@@ -411,6 +459,37 @@ watch(nodeIP, () => {
   if (["storage", "config"].includes(active.value)) loadSection();
 });
 watch(interval, schedule);
+watch(selectedCluster, async () => {
+  generation++;
+  nodes.value = [];
+  cluster.value = null;
+  pods.value = [];
+  etcd.value = null;
+  pve.value = null;
+  nodeIP.value = "";
+  data.value = [];
+  config.value = "";
+  detail.value = null;
+  inspected.value = null;
+  confirmation.value = null;
+  dialog.value = "";
+  checks.value = [];
+  alerts.value = null;
+  token.value = "";
+  chat.value = "";
+  enabled.value = false;
+  importForm.value = {name: "", talosconfig: "", kubeconfig: ""};
+  worker.value = {name: "", vmid: undefined, cores: 2, memoryMB: 4096, diskGB: 30, storage: "local-lvm", bridge: "vmbr0", iso: "", start: true};
+  namespace.value = "all";
+  role.value = "all";
+  actionError.value = "";
+  errors.value = {};
+  refreshed.value = "";
+  loading.value = false;
+  sectionLoading.value = false;
+  await refresh();
+  await loadSection();
+});
 watch(isAuthenticated, (authorized) => {
   if (!authorized) {
     generation++;
@@ -420,11 +499,15 @@ watch(isAuthenticated, (authorized) => {
     detail.value = null;
     inspected.value = null;
     sectionLoading.value = false;
+    selectCluster("");
+    clusters.value = [];
   }
 });
 onMounted(async () => {
   window.addEventListener("hashchange", hash);
   await getMe();
+  if (!isAuthenticated.value) selectCluster("");
+  await loadClusters();
   await refresh();
   await loadSection();
   schedule();
@@ -445,6 +528,8 @@ async function signIn() {
   ) {
     dialog.value = "";
     password.value = "";
+    await loadClusters();
+    await refresh();
     await loadSection();
   }
 }
@@ -484,13 +569,14 @@ async function saveAlerts() {
   token.value = "";
 }
 function rollingReboot() {
- operationKind.value = "rolling-reboot";
- navigate("updates");
+  operationKind.value = "rolling-reboot";
+  navigate("updates");
 }
 const protectedPage = computed(
   () =>
-    ["config", "backups", "audit", "settings", "updates", "jobs"].includes(active.value) &&
-    !isAuthenticated.value,
+    ["config", "backups", "audit", "settings", "updates", "jobs"].includes(
+      active.value,
+    ) && !isAuthenticated.value,
 );
 </script>
 
@@ -507,6 +593,33 @@ const protectedPage = computed(
       >
         <X :size="20" />
       </button>
+      <div class="cluster-picker">
+        <label
+          >{{ t("Кластер")
+          }}<select
+            :value="selectedCluster"
+            :disabled="busy || importing"
+            :aria-label="t('Кластер')"
+            @change="selectCluster(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-if="!clusters.length" value="">
+              {{ t("Нет кластеров") }}
+            </option>
+            <option v-for="item in clusters" :key="item.id" :value="item.id">
+              {{ item.name }}
+            </option>
+          </select></label
+        >
+        <button
+          v-if="isAuthenticated"
+          @click="
+            dialog = 'import';
+            actionError = '';
+          "
+        >
+          <Plus :size="14" />{{ t("Добавить кластер") }}
+        </button>
+      </div>
       <label class="nav-search"
         ><Search :size="15" /><input
           v-model="navSearch"
@@ -609,665 +722,659 @@ const protectedPage = computed(
         </div>
       </header>
       <main>
-        <div class="page-heading">
-          <div>
-            <div class="eyebrow">{{ page.group }} / TALOS LINUX</div>
-            <h1>{{ page.title }}</h1>
-            <p>{{ page.description }}</p>
-          </div>
-          <div class="refresh-tools">
-            <span v-if="refreshed"> {{ t("Опрос") }} {{ refreshed }}</span
-            ><select v-model="interval" :aria-label="t('Интервал обновления')">
-              <option :value="0">{{ t("Вручную") }}</option>
-              <option :value="10">{{ t("10 сек") }}</option>
-              <option :value="30">{{ t("30 сек") }}</option>
-              <option :value="60">{{ t("1 мин") }}</option></select
-            ><button
-              :disabled="loading || sectionLoading"
-              @click="refresh().then(loadSection)"
-            >
-              <RefreshCw :size="15" :class="{ spin: loading }" />
-              {{ t("Обновить") }}
-            </button>
-          </div>
+        <div v-if="registryError" class="notice error" role="alert">
+          {{ registryError
+          }}<button @click="loadClusters">{{ t("Повторить") }}</button>
         </div>
-        <div
-          v-if="Object.keys(errors).filter((k) => k !== 'section').length"
-          class="notice warning"
-          role="status"
-        >
-          <AlertTriangle :size="18" />
-          <div>
-            <strong> {{ t("Часть данных недоступна") }} </strong>
-            <p>
-              {{ t("Последние полученные значения могут быть устаревшими.") }}
-            </p>
-            <details>
-              <summary>{{ t("Подробности") }}</summary>
-              <p v-for="(message, key) in errors" :key="key">
-                {{ key }}: {{ message }}
-              </p>
-            </details>
-          </div>
-        </div>
-        <div v-if="loading && !refreshed" class="loading-state">
-          <RefreshCw :size="22" class="spin" />
-          {{ t("Подключение к кластеру…") }}
-        </div>
-        <template v-if="active === 'overview'">
-          <div class="overview-grid">
-            <section class="availability">
-              <div class="section-label">{{ t("ДОСТУПНОСТЬ КЛАСТЕРА") }}</div>
-              <div class="availability-value">
-                <span>{{ refreshed && !errors.nodes ? ready : "—" }}</span
-                ><small>/ {{ nodes.length || "—" }} {{ t("нод") }} </small>
-              </div>
-              <p>
-                <span
-                  :class="[
-                    'state',
-                    errors.nodes
-                      ? 'muted'
-                      : ready === nodes.length && ready > 0
-                        ? 'good'
-                        : 'bad',
-                  ]"
-                  ><i />{{
-                    errors.nodes
-                      ? t("Нет актуальных данных")
-                      : nodes.length
-                        ? ready === nodes.length
-                          ? t("Все ноды готовы")
-                          : t("Требует внимания")
-                        : t("Ожидание данных")
-                  }}</span
-                >
-              </p>
-              <div class="fleet-bars">
-                <span
-                  v-for="n in nodes"
-                  :key="n.ip"
-                  :class="{ healthy: n.ready }"
-                  :title="n.hostname"
-                />
-              </div>
-              <button class="text-link" @click="navigate('nodes')">
-                {{ t("Открыть список нод") }} <ArrowUpRight :size="16" />
-              </button>
-            </section>
-            <section class="overview-metrics">
-              <div>
-                <span>Control plane</span
-                ><strong>{{
-                  nodes.filter((n) => n.role === "controlplane").length
-                }}</strong
-                ><small> {{ t("Управление кластером") }} </small>
-              </div>
-              <div>
-                <span>Workers</span
-                ><strong>{{
-                  nodes.filter((n) => n.role === "worker").length
-                }}</strong
-                ><small> {{ t("Вычислительные ноды") }} </small>
-              </div>
-              <div>
-                <span> {{ t("Поды") }} </span
-                ><strong>{{ errors.pods ? "—" : pods.length }}</strong
-                ><small
-                  >{{ troubled.length }} {{ t("требуют внимания") }}
-                </small>
-              </div>
-              <div>
-                <span>etcd</span
-                ><strong :class="etcd?.healthy ? 'text-good' : ''">{{
-                  errors.etcd
-                    ? "—"
-                    : etcd?.healthy
-                      ? "Healthy"
-                      : etcd
-                        ? "Degraded"
-                        : "—"
-                }}</strong
-                ><small>
-                  {{ t("Участники:") }}
-                  {{ etcd?.members?.length ?? "—" }}</small
-                >
-              </div>
-            </section>
-          </div>
-          <div class="two-columns">
-            <section class="surface">
-              <header class="surface-heading">
-                <h2>{{ t("Ресурсы машин") }}</h2>
-                <span> {{ t("Текущий срез") }} </span>
-              </header>
-              <div v-for="n in nodes" :key="n.ip" class="resource-meter">
-                <button class="resource-link" @click="inspected = n">
-                  {{ n.hostname }}
-                </button>
-                <div>
-                  <span>CPU</span>
-                  <div class="bar">
-                    <i
-                      :style="{ width: `${Math.min(100, n.cpuUsage || 0)}%` }"
-                    />
-                  </div>
-                  <code>{{ n.cpuUsage?.toFixed(1) ?? "—" }}%</code>
-                </div>
-                <small class="mono">RAM {{ n.memoryUsage || "—" }}</small>
-              </div>
-              <div v-if="!nodes.length" class="empty-state">
-                {{ t("Нет данных о машинах") }}
-              </div>
-            </section>
-            <section class="surface">
-              <header class="surface-heading">
-                <h2>{{ t("Требует внимания") }}</h2>
-                <span>{{ issueRows.length }}</span>
-              </header>
-              <div v-if="!issueRows.length" class="quiet-state">
-                <CheckCircle2 :size="28" /><strong>{{
-                  Object.keys(errors).length
-                    ? t("Проверка неполная")
-                    : t("Активных проблем не обнаружено")
-                }}</strong>
-                <p>
-                  {{
-                    Object.keys(errors).length
-                      ? t("Часть источников не ответила.")
-                      : t("По последним ответам Talos и Kubernetes.")
-                  }}
-                </p>
-              </div>
-              <button
-                v-for="issue in issueRows.slice(0, 8)"
-                :key="issue.name"
-                class="issue-row"
-                @click="navigate(issue.kind)"
-              >
-                <AlertTriangle :size="16" /><span
-                  >{{ issue.name }}<small>{{ issue.reason }}</small></span
-                ><ChevronRight :size="16" />
-              </button>
-            </section>
-          </div>
-          <section class="surface cluster-facts">
-            <div>
-              <span>API endpoint</span
-              ><code>{{ cluster?.endpoint || "—" }}</code>
-            </div>
-            <div>
-              <span>Talos Linux</span
-              ><code>{{ cluster?.talosVersion || "—" }}</code>
-            </div>
-            <div>
-              <span>Kubernetes</span
-              ><code>{{ cluster?.kubernetesVersion || "—" }}</code>
-            </div>
-            <div>
-              <span>Proxmox VE</span
-              ><code>{{ pve?.configured ? pve.node : t("Не настроен") }}</code>
-            </div>
-          </section>
-        </template>
-        <template v-else-if="active === 'nodes'"
-          ><div class="toolbar">
-            <label>
-              {{ t("Роль") }}
-              <select v-model="role">
-                <option value="all">{{ t("Все роли") }}</option>
-                <option value="controlplane">Control plane</option>
-                <option value="worker">Worker</option>
-              </select></label
-            ><span class="spacer" /><button
-              class="primary"
-              :disabled="!isAuthenticated || !pve?.configured"
-              @click="showWorker"
-            >
-              <Plus :size="16" /> {{ t("Добавить worker") }}
-            </button>
-          </div>
-          <ResourceTable
-            :rows="nodeRows"
-            :columns="nodeColumns"
-            @select="inspected = $event"
-        /></template>
-        <template v-else-if="active === 'workloads'"
-          ><div class="toolbar">
-            <label
-              >Namespace
-              <select v-model="namespace">
-                <option value="all">{{ t("Все пространства имён") }}</option>
-                <option v-for="ns in namespaces" :key="ns">{{ ns }}</option>
-              </select></label
-            ><span class="spacer" /><span class="state muted"
-              >{{ troubled.length }} {{ t("требуют внимания") }}
-            </span>
-          </div>
-          <ResourceTable
-            :rows="podRows"
-            :columns="[
-              { key: 'name', title: t('Под'), mono: true },
-              { key: 'namespace', title: 'Namespace' },
-              { key: 'status', title: t('Состояние') },
-              { key: 'readyContainers', title: t('Готовность') },
-              { key: 'restarts', title: t('Рестарты') },
-              { key: 'nodeName', title: t('Нода') },
-              { key: 'ip', title: 'IP', mono: true },
-              { key: 'age', title: t('Возраст') },
-            ]"
-            @select="detail = $event"
-        /></template>
-        <template v-else-if="active === 'etcd'"
-          ><div class="cluster-facts surface">
-            <div>
-              <span> {{ t("Лидер") }} </span
-              ><code>{{ etcd?.leaderName || "—" }}</code>
-            </div>
-            <div>
-              <span> {{ t("Размер базы") }} </span
-              ><code>{{ etcd?.totalDbSize || "—" }}</code>
-            </div>
-            <div>
-              <span>Raft term / index</span
-              ><code
-                >{{ etcd?.raftTerm ?? "—" }} /
-                {{ etcd?.raftIndex ?? "—" }}</code
-              >
-            </div>
-          </div>
-          <div v-if="etcd?.alarms?.length" class="notice error">
-            {{ etcd.alarms }}
-          </div>
-          <ResourceTable
-            :rows="
-              (etcd?.members || []).map((m) => ({
-                ...m,
-                status: m.healthy ? 'Healthy' : 'Degraded',
-                role: m.leader ? 'Leader' : 'Follower',
-              }))
-            "
-            :columns="[
-              { key: 'name', title: t('Участник') },
-              { key: 'status', title: t('Состояние') },
-              { key: 'role', title: t('Роль') },
-              { key: 'dbSize', title: t('Размер БД') },
-              { key: 'peerURLs', title: 'Peer URLs', mono: true },
-            ]"
-            @select="detail = $event"
-        /></template>
-        <div v-else-if="protectedPage" class="access-state">
-          <LogIn :size="28" />
-          <h2>{{ t("Требуется вход") }}</h2>
-          <p>{{ t("Раздел «{0}» доступен администратору.", [page.title]) }}</p>
+        <div v-if="!selectedCluster" class="access-state">
+          <h1>{{ t("Кластеры") }}</h1>
+          <p>
+            {{
+              t(
+                "Подключите Talos и Kubernetes, чтобы начать управление инфраструктурой.",
+              )
+            }}
+          </p>
           <button
             class="primary"
             @click="
-              dialog = 'login';
+              dialog = isAuthenticated ? 'import' : 'login';
               actionError = '';
             "
           >
-            {{ t("Войти") }}
+            {{ isAuthenticated ? t("Добавить кластер") : t("Войти") }}
           </button>
         </div>
-        <JobsView v-else-if="active === 'updates' || active === 'jobs'" :key="active" :mode="active" :initial-kind="operationKind" @submitted="navigate('jobs')" />
         <template v-else>
-          <div
-            v-if="['storage', 'config', 'maintenance'].includes(active)"
-            class="toolbar"
-          >
-            <label>
-              {{ t("Машина") }}
-              <select v-model="nodeIP">
-                <option v-if="!nodes.length" value="">
-                  {{ t("Нет доступных нод") }}
-                </option>
-                <option v-for="n in nodes" :key="n.ip" :value="n.ip">
-                  {{ n.hostname }} · {{ n.ip }}
-                </option>
-              </select></label
-            >
-          </div>
-          <div v-if="errors.section" class="notice error" role="alert">
-            {{ errors.section
-            }}<button @click="loadSection">{{ t("Повторить") }}</button>
-          </div>
-          <div v-if="sectionLoading" class="loading-state">
-            <RefreshCw :size="20" class="spin" /> {{ t("Загрузка раздела…") }}
-          </div>
-          <template v-else-if="active === 'storage'"
-            ><ResourceTable
-              :rows="data"
-              :columns="[
-                { key: 'name', title: t('Устройство'), mono: true },
-                { key: 'node', title: t('Нода') },
-                { key: 'model', title: t('Модель') },
-                { key: 'size', title: t('Размер') },
-                { key: 'type', title: t('Тип') },
-                { key: 'status', title: t('Здоровье') },
-                { key: 'bus', title: t('Шина') },
-              ]"
-              @select="detail = $event"
-            />
-            <p class="footnote">
-              {{
-                t(
-                  "Выберите диск, чтобы увидеть разделы, файловые системы и точки монтирования.",
-                )
-              }}
-            </p></template
-          >
-          <template v-else-if="active === 'config'"
-            ><section class="code-surface">
-              <header class="surface-heading">
-                <h2>
-                  machineconfig.yaml <span class="state muted">Read only</span>
-                </h2>
-                <div class="toolbar">
-                  <button
-                    :disabled="!config"
-                    @click="perform(() => copyConfig(), t('Скопировано'))"
-                  >
-                    {{ t("Копировать") }}</button
-                  ><button
-                    :disabled="!config"
-                    @click="download(config, `${nodeIP}-machineconfig.yaml`)"
-                  >
-                    {{ t("Скачать YAML") }}
-                  </button>
-                </div>
-              </header>
-              <label class="search-field"
-                ><Search :size="16" /><input
-                  v-model="configQuery"
-                  :placeholder="t('Найти в конфигурации')"
-              /></label>
-              <div class="code-lines">
-                <div
-                  v-for="(line, i) in config.split('\n')"
-                  :key="i"
-                  :class="{
-                    match:
-                      configQuery &&
-                      line.toLowerCase().includes(configQuery.toLowerCase()),
-                  }"
-                >
-                  <span>{{ i + 1 }}</span
-                  ><code>{{ line }}</code>
-                </div>
-                <p v-if="!config">
-                  {{
-                    errors.section
-                      ? t("Конфигурация недоступна.")
-                      : t("Выберите ноду для просмотра конфигурации.")
-                  }}
-                </p>
-              </div>
-              <footer>{{ t("Закрытые ключи маскируются сервером.") }}</footer>
-            </section></template
-          >
-          <template v-else-if="active === 'backups'"
-            ><div class="toolbar">
-              <select
-                v-model="backupType"
-                :aria-label="t('Тип резервной копии')"
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">{{ page.group }} / TALOS LINUX</div>
+              <h1>{{ page.title }}</h1>
+              <p>{{ page.description }}</p>
+            </div>
+            <div class="refresh-tools">
+              <span v-if="refreshed"> {{ t("Опрос") }} {{ refreshed }}</span
+              ><select
+                v-model="interval"
+                :aria-label="t('Интервал обновления')"
               >
-                <option value="etcd">{{ t("Снимок etcd") }}</option>
-                <option value="full">{{ t("Полная копия") }}</option></select
+                <option :value="0">{{ t("Вручную") }}</option>
+                <option :value="10">{{ t("10 сек") }}</option>
+                <option :value="30">{{ t("30 сек") }}</option>
+                <option :value="60">{{ t("1 мин") }}</option></select
               ><button
-                class="primary"
-                :disabled="busy"
-                @click="
-                  perform(
-                    () => createBackup(backupType),
-                    t('Резервная копия создана'),
-                  ).then(loadSection)
-                "
+                :disabled="loading || sectionLoading"
+                @click="refresh().then(loadSection)"
               >
-                <Plus :size="16" /> {{ t("Создать копию") }}
+                <RefreshCw :size="15" :class="{ spin: loading }" />
+                {{ t("Обновить") }}
+              </button>
+            </div>
+          </div>
+          <div
+            v-if="Object.keys(errors).filter((k) => k !== 'section').length"
+            class="notice warning"
+            role="status"
+          >
+            <AlertTriangle :size="18" />
+            <div>
+              <strong> {{ t("Часть данных недоступна") }} </strong>
+              <p>
+                {{ t("Последние полученные значения могут быть устаревшими.") }}
+              </p>
+              <details>
+                <summary>{{ t("Подробности") }}</summary>
+                <p v-for="(message, key) in errors" :key="key">
+                  {{ key }}: {{ message }}
+                </p>
+              </details>
+            </div>
+          </div>
+          <div v-if="loading && !refreshed" class="loading-state">
+            <RefreshCw :size="22" class="spin" />
+            {{ t("Подключение к кластеру…") }}
+          </div>
+          <template v-if="active === 'overview'">
+            <div class="overview-grid">
+              <section class="availability">
+                <div class="section-label">{{ t("ДОСТУПНОСТЬ КЛАСТЕРА") }}</div>
+                <div class="availability-value">
+                  <span>{{ refreshed && !errors.nodes ? ready : "—" }}</span
+                  ><small>/ {{ nodes.length || "—" }} {{ t("нод") }} </small>
+                </div>
+                <p>
+                  <span
+                    :class="[
+                      'state',
+                      errors.nodes
+                        ? 'muted'
+                        : ready === nodes.length && ready > 0
+                          ? 'good'
+                          : 'bad',
+                    ]"
+                    ><i />{{
+                      errors.nodes
+                        ? t("Нет актуальных данных")
+                        : nodes.length
+                          ? ready === nodes.length
+                            ? t("Все ноды готовы")
+                            : t("Требует внимания")
+                          : t("Ожидание данных")
+                    }}</span
+                  >
+                </p>
+                <div class="fleet-bars">
+                  <span
+                    v-for="n in nodes"
+                    :key="n.ip"
+                    :class="{ healthy: n.ready }"
+                    :title="n.hostname"
+                  />
+                </div>
+                <button class="text-link" @click="navigate('nodes')">
+                  {{ t("Открыть список нод") }} <ArrowUpRight :size="16" />
+                </button>
+              </section>
+              <section class="overview-metrics">
+                <div>
+                  <span>Control plane</span
+                  ><strong>{{
+                    nodes.filter((n) => n.role === "controlplane").length
+                  }}</strong
+                  ><small> {{ t("Управление кластером") }} </small>
+                </div>
+                <div>
+                  <span>Workers</span
+                  ><strong>{{
+                    nodes.filter((n) => n.role === "worker").length
+                  }}</strong
+                  ><small> {{ t("Вычислительные ноды") }} </small>
+                </div>
+                <div>
+                  <span> {{ t("Поды") }} </span
+                  ><strong>{{ errors.pods ? "—" : pods.length }}</strong
+                  ><small
+                    >{{ troubled.length }} {{ t("требуют внимания") }}
+                  </small>
+                </div>
+                <div>
+                  <span>etcd</span
+                  ><strong :class="etcd?.healthy ? 'text-good' : ''">{{
+                    errors.etcd
+                      ? "—"
+                      : etcd?.healthy
+                        ? "Healthy"
+                        : etcd
+                          ? "Degraded"
+                          : "—"
+                  }}</strong
+                  ><small>
+                    {{ t("Участники:") }}
+                    {{ etcd?.members?.length ?? "—" }}</small
+                  >
+                </div>
+              </section>
+            </div>
+            <div class="two-columns">
+              <section class="surface">
+                <header class="surface-heading">
+                  <h2>{{ t("Ресурсы машин") }}</h2>
+                  <span> {{ t("Текущий срез") }} </span>
+                </header>
+                <div v-for="n in nodes" :key="n.ip" class="resource-meter">
+                  <button class="resource-link" @click="inspected = n">
+                    {{ n.hostname }}
+                  </button>
+                  <div>
+                    <span>CPU</span>
+                    <div class="bar">
+                      <i
+                        :style="{ width: `${Math.min(100, n.cpuUsage || 0)}%` }"
+                      />
+                    </div>
+                    <code>{{ n.cpuUsage?.toFixed(1) ?? "—" }}%</code>
+                  </div>
+                  <small class="mono">RAM {{ n.memoryUsage || "—" }}</small>
+                </div>
+                <div v-if="!nodes.length" class="empty-state">
+                  {{ t("Нет данных о машинах") }}
+                </div>
+              </section>
+              <section class="surface">
+                <header class="surface-heading">
+                  <h2>{{ t("Требует внимания") }}</h2>
+                  <span>{{ issueRows.length }}</span>
+                </header>
+                <div v-if="!issueRows.length" class="quiet-state">
+                  <CheckCircle2 :size="28" /><strong>{{
+                    Object.keys(errors).length
+                      ? t("Проверка неполная")
+                      : t("Активных проблем не обнаружено")
+                  }}</strong>
+                  <p>
+                    {{
+                      Object.keys(errors).length
+                        ? t("Часть источников не ответила.")
+                        : t("По последним ответам Talos и Kubernetes.")
+                    }}
+                  </p>
+                </div>
+                <button
+                  v-for="issue in issueRows.slice(0, 8)"
+                  :key="issue.name"
+                  class="issue-row"
+                  @click="navigate(issue.kind)"
+                >
+                  <AlertTriangle :size="16" /><span
+                    >{{ issue.name }}<small>{{ issue.reason }}</small></span
+                  ><ChevronRight :size="16" />
+                </button>
+              </section>
+            </div>
+            <section class="surface cluster-facts">
+              <div>
+                <span>API endpoint</span
+                ><code>{{ cluster?.endpoint || "—" }}</code>
+              </div>
+              <div>
+                <span>Talos Linux</span
+                ><code>{{ cluster?.talosVersion || "—" }}</code>
+              </div>
+              <div>
+                <span>Kubernetes</span
+                ><code>{{ cluster?.kubernetesVersion || "—" }}</code>
+              </div>
+              <div>
+                <span>Proxmox VE</span
+                ><code>{{
+                  pve?.configured ? pve.node : t("Не настроен")
+                }}</code>
+              </div>
+            </section>
+          </template>
+          <template v-else-if="active === 'nodes'"
+            ><div class="toolbar">
+              <label>
+                {{ t("Роль") }}
+                <select v-model="role">
+                  <option value="all">{{ t("Все роли") }}</option>
+                  <option value="controlplane">Control plane</option>
+                  <option value="worker">Worker</option>
+                </select></label
+              ><span class="spacer" /><button
+                class="primary"
+                :disabled="!isAuthenticated || !pve?.configured"
+                @click="showWorker"
+              >
+                <Plus :size="16" /> {{ t("Добавить worker") }}
               </button>
             </div>
             <ResourceTable
-              :rows="data"
+              :rows="nodeRows"
+              :columns="nodeColumns"
+              @select="inspected = $event"
+          /></template>
+          <template v-else-if="active === 'workloads'"
+            ><div class="toolbar">
+              <label
+                >Namespace
+                <select v-model="namespace">
+                  <option value="all">{{ t("Все пространства имён") }}</option>
+                  <option v-for="ns in namespaces" :key="ns">{{ ns }}</option>
+                </select></label
+              ><span class="spacer" /><span class="state muted"
+                >{{ troubled.length }} {{ t("требуют внимания") }}
+              </span>
+            </div>
+            <ResourceTable
+              :rows="podRows"
               :columns="[
-                { key: 'filename', title: t('Файл'), mono: true },
-                { key: 'type', title: t('Тип') },
-                { key: 'humanSize', title: t('Размер') },
-                { key: 'timestamp', title: t('Создано') },
-                { key: 'node', title: t('Нода') },
+                { key: 'name', title: t('Под'), mono: true },
+                { key: 'namespace', title: 'Namespace' },
+                { key: 'status', title: t('Состояние') },
+                { key: 'readyContainers', title: t('Готовность') },
+                { key: 'restarts', title: t('Рестарты') },
+                { key: 'nodeName', title: t('Нода') },
+                { key: 'ip', title: 'IP', mono: true },
+                { key: 'age', title: t('Возраст') },
               ]"
               @select="detail = $event"
           /></template>
-          <template v-else-if="active === 'audit'"
-            ><ResourceTable
-              :rows="data"
+          <template v-else-if="active === 'etcd'"
+            ><div class="cluster-facts surface">
+              <div>
+                <span> {{ t("Лидер") }} </span
+                ><code>{{ etcd?.leaderName || "—" }}</code>
+              </div>
+              <div>
+                <span> {{ t("Размер базы") }} </span
+                ><code>{{ etcd?.totalDbSize || "—" }}</code>
+              </div>
+              <div>
+                <span>Raft term / index</span
+                ><code
+                  >{{ etcd?.raftTerm ?? "—" }} /
+                  {{ etcd?.raftIndex ?? "—" }}</code
+                >
+              </div>
+            </div>
+            <div v-if="etcd?.alarms?.length" class="notice error">
+              {{ etcd.alarms }}
+            </div>
+            <ResourceTable
+              :rows="
+                (etcd?.members || []).map((m) => ({
+                  ...m,
+                  status: m.healthy ? 'Healthy' : 'Degraded',
+                  role: m.leader ? 'Leader' : 'Follower',
+                }))
+              "
               :columns="[
-                { key: 'action', title: t('Действие') },
-                { key: 'user', title: t('Пользователь') },
-                { key: 'status', title: t('Результат') },
-                { key: 'ip', title: t('Адрес'), mono: true },
-                { key: 'timestamp', title: t('Время') },
+                { key: 'name', title: t('Участник') },
+                { key: 'status', title: t('Состояние') },
+                { key: 'role', title: t('Роль') },
+                { key: 'dbSize', title: t('Размер БД') },
+                { key: 'peerURLs', title: 'Peer URLs', mono: true },
               ]"
               @select="detail = $event"
           /></template>
-          <template v-else-if="active === 'maintenance'"
-            ><section class="surface operation-list">
-              <article>
-                <div>
-                  <h2>{{ t("Проверка кластера") }}</h2>
-                  <p>
-                    {{
-                      t(
-                        "Проверить доступность API, системные компоненты и рабочие нагрузки.",
-                      )
-                    }}
-                  </p>
-                </div>
-                <button
+          <div v-else-if="protectedPage" class="access-state">
+            <LogIn :size="28" />
+            <h2>{{ t("Требуется вход") }}</h2>
+            <p>
+              {{ t("Раздел «{0}» доступен администратору.", [page.title]) }}
+            </p>
+            <button
+              class="primary"
+              @click="
+                dialog = 'login';
+                actionError = '';
+              "
+            >
+              {{ t("Войти") }}
+            </button>
+          </div>
+          <JobsView
+            v-else-if="active === 'updates' || active === 'jobs'"
+            :key="selectedCluster + active"
+            :mode="active"
+            :initial-kind="operationKind"
+            @submitted="navigate('jobs')"
+          />
+          <template v-else>
+            <div
+              v-if="['storage', 'config', 'maintenance'].includes(active)"
+              class="toolbar"
+            >
+              <label>
+                {{ t("Машина") }}
+                <select v-model="nodeIP">
+                  <option v-if="!nodes.length" value="">
+                    {{ t("Нет доступных нод") }}
+                  </option>
+                  <option v-for="n in nodes" :key="n.ip" :value="n.ip">
+                    {{ n.hostname }} · {{ n.ip }}
+                  </option>
+                </select></label
+              >
+            </div>
+            <div v-if="errors.section" class="notice error" role="alert">
+              {{ errors.section
+              }}<button @click="loadSection">{{ t("Повторить") }}</button>
+            </div>
+            <div v-if="sectionLoading" class="loading-state">
+              <RefreshCw :size="20" class="spin" /> {{ t("Загрузка раздела…") }}
+            </div>
+            <template v-else-if="active === 'storage'"
+              ><ResourceTable
+                :rows="data"
+                :columns="[
+                  { key: 'name', title: t('Устройство'), mono: true },
+                  { key: 'node', title: t('Нода') },
+                  { key: 'model', title: t('Модель') },
+                  { key: 'size', title: t('Размер') },
+                  { key: 'type', title: t('Тип') },
+                  { key: 'status', title: t('Здоровье') },
+                  { key: 'bus', title: t('Шина') },
+                ]"
+                @select="detail = $event"
+              />
+              <p class="footnote">
+                {{
+                  t(
+                    "Выберите диск, чтобы увидеть разделы, файловые системы и точки монтирования.",
+                  )
+                }}
+              </p></template
+            >
+            <ConfigView
+              v-else-if="active === 'config'"
+              :key="selectedCluster + nodeIP"
+              :node="nodeIP"
+              :config="config"
+              @submitted="navigate('jobs')"
+            />
+            <template v-else-if="active === 'backups'"
+              ><div class="toolbar">
+                <select
+                  v-model="backupType"
+                  :aria-label="t('Тип резервной копии')"
+                >
+                  <option value="etcd">{{ t("Снимок etcd") }}</option>
+                  <option value="full">{{ t("Полная копия") }}</option></select
+                ><button
+                  class="primary"
                   :disabled="busy"
                   @click="
-                    perform(async () => {
-                      checks = await runBootstrapCheck();
-                    }, t('Проверка завершена'))
+                    perform(
+                      () => createBackup(backupType),
+                      t('Резервная копия создана'),
+                    ).then(loadSection)
                   "
                 >
-                  {{ t("Запустить проверку") }}
+                  <Plus :size="16" /> {{ t("Создать копию") }}
                 </button>
-              </article>
-              <article>
-                <div>
-                  <h2>{{ t("Режим обслуживания") }}</h2>
-                  <p>
-                    {{ t("Управление режимом обслуживания выбранной ноды.") }}
-                  </p>
-                </div>
-                <div class="toolbar">
+              </div>
+              <ResourceTable
+                :rows="data"
+                :columns="[
+                  { key: 'filename', title: t('Файл'), mono: true },
+                  { key: 'type', title: t('Тип') },
+                  { key: 'humanSize', title: t('Размер') },
+                  { key: 'timestamp', title: t('Создано') },
+                  { key: 'node', title: t('Нода') },
+                ]"
+                @select="detail = $event"
+            /></template>
+            <template v-else-if="active === 'audit'"
+              ><ResourceTable
+                :rows="data"
+                :columns="[
+                  { key: 'action', title: t('Действие') },
+                  { key: 'user', title: t('Пользователь') },
+                  { key: 'status', title: t('Результат') },
+                  { key: 'ip', title: t('Адрес'), mono: true },
+                  { key: 'timestamp', title: t('Время') },
+                ]"
+                @select="detail = $event"
+            /></template>
+            <template v-else-if="active === 'maintenance'"
+              ><section class="surface operation-list">
+                <article>
+                  <div>
+                    <h2>{{ t("Проверка кластера") }}</h2>
+                    <p>
+                      {{
+                        t(
+                          "Проверить доступность API, системные компоненты и рабочие нагрузки.",
+                        )
+                      }}
+                    </p>
+                  </div>
                   <button
-                    :disabled="!isAuthenticated || !nodeIP || busy"
+                    :disabled="busy"
                     @click="
-                      ask(
-                        t('Включить обслуживание'),
-                        t('Нода {0} будет переведена в режим обслуживания.', [
-                          nodeIP,
-                        ]),
-                        () =>
-                          post(`/nodes/${nodeIP}/maintenance`, {
-                            enable: true,
-                          }),
-                      )
+                      perform(async () => {
+                        checks = await runBootstrapCheck();
+                      }, t('Проверка завершена'))
                     "
                   >
-                    {{ t("Включить") }}</button
-                  ><button
-                    :disabled="!isAuthenticated || !nodeIP || busy"
-                    @click="
-                      ask(
-                        t('Выключить обслуживание'),
-                        t('Выйти из режима обслуживания на {0}.', [nodeIP]),
-                        () =>
-                          post(`/nodes/${nodeIP}/maintenance`, {
-                            enable: false,
-                          }),
-                      )
-                    "
-                  >
-                    {{ t("Выключить") }}
+                    {{ t("Запустить проверку") }}
                   </button>
-                </div>
-              </article>
-              <article>
-                <div>
-                  <h2>{{ t("Перезагрузить ноду") }}</h2>
-                  <p>
-                    {{
-                      t("Рабочие нагрузки на {0} будут прерваны.", [
-                        nodeIP || t("выбранной ноде"),
-                      ])
-                    }}
-                  </p>
-                </div>
-                <button
-                  class="danger"
-                  :disabled="!isAuthenticated || !nodeIP || busy"
-                  @click="
-                    ask(
-                      t('Перезагрузить ноду'),
-                      t('Подтвердите перезагрузку {0}.', [nodeIP]),
-                      () => rebootNode(nodeIP),
-                    )
-                  "
-                >
-                  {{ t("Перезагрузить") }}
-                </button>
-              </article>
-              <article>
-                <div>
-                  <h2>{{ t("Последовательная перезагрузка") }}</h2>
-                  <p>
-                    {{
-                      t(
-                        "Сначала workers, затем control plane. Ожидание готовности каждой ноды.",
-                      )
-                    }}
-                  </p>
-                </div>
-                <button
-                  class="danger"
-                  :disabled="!isAuthenticated || !nodes.length || busy"
-                  @click="
-                    rollingReboot()
-                  "
-                >
-                  {{ t("Перезагрузить все") }}
-                </button>
-              </article>
-            </section>
-            <ResourceTable
-              v-if="checks.length"
-              :rows="checks"
-              :columns="[
-                { key: 'title', title: t('Проверка') },
-                { key: 'status', title: t('Результат') },
-                { key: 'detail', title: t('Подробности') },
-              ]"
-              @select="detail = $event"
-          /></template>
-          <template v-else-if="active === 'settings'"
-            ><div class="settings-grid">
-              <section class="surface">
-                <header class="surface-heading">
-                  <h2>Telegram</h2>
-                  <span class="state muted">{{
-                    alerts?.bot_configured ? t("Настроен") : t("Не настроен")
-                  }}</span>
-                </header>
-                <form class="settings-form" @submit.prevent="saveAlerts">
-                  <label class="check-label"
-                    ><input v-model="enabled" type="checkbox" />
-                    {{ t("Отправлять уведомления") }} </label
-                  ><label
-                    >Bot token<input
-                      v-model="token"
-                      type="password"
-                      autocomplete="new-password"
-                      :placeholder="
-                        t('Оставьте пустым, чтобы сохранить текущий')
-                      " /></label
-                  ><label
-                    >Chat ID<input
-                      v-model="chat"
-                      :placeholder="t('Например, -1001234567890')" /></label
-                  ><label>
-                    {{ t("Минимальный уровень") }}
-                    <select v-model="level">
-                      <option>INFO</option>
-                      <option>WARNING</option>
-                      <option>CRITICAL</option>
-                    </select></label
-                  >
+                </article>
+                <article>
+                  <div>
+                    <h2>{{ t("Режим обслуживания") }}</h2>
+                    <p>
+                      {{ t("Управление режимом обслуживания выбранной ноды.") }}
+                    </p>
+                  </div>
                   <div class="toolbar">
                     <button
-                      class="primary"
-                      :disabled="busy || !!errors.section"
-                    >
-                      {{ t("Сохранить") }}</button
-                    ><button
-                      type="button"
-                      :disabled="busy"
+                      :disabled="!isAuthenticated || !nodeIP || busy"
                       @click="
-                        perform(
-                          () => post('/alerts/test', {}),
-                          t('Тестовое уведомление отправлено'),
+                        ask(
+                          t('Включить обслуживание'),
+                          t('Нода {0} будет переведена в режим обслуживания.', [
+                            nodeIP,
+                          ]),
+                          () =>
+                            post(`/nodes/${nodeIP}/maintenance`, {
+                              enable: true,
+                            }),
                         )
                       "
                     >
-                      {{ t("Отправить тест") }}
+                      {{ t("Включить") }}</button
+                    ><button
+                      :disabled="!isAuthenticated || !nodeIP || busy"
+                      @click="
+                        ask(
+                          t('Выключить обслуживание'),
+                          t('Выйти из режима обслуживания на {0}.', [nodeIP]),
+                          () =>
+                            post(`/nodes/${nodeIP}/maintenance`, {
+                              enable: false,
+                            }),
+                        )
+                      "
+                    >
+                      {{ t("Выключить") }}
                     </button>
                   </div>
-                </form>
+                </article>
+                <article>
+                  <div>
+                    <h2>{{ t("Перезагрузить ноду") }}</h2>
+                    <p>
+                      {{
+                        t("Рабочие нагрузки на {0} будут прерваны.", [
+                          nodeIP || t("выбранной ноде"),
+                        ])
+                      }}
+                    </p>
+                  </div>
+                  <button
+                    class="danger"
+                    :disabled="!isAuthenticated || !nodeIP || busy"
+                    @click="
+                      ask(
+                        t('Перезагрузить ноду'),
+                        t('Подтвердите перезагрузку {0}.', [nodeIP]),
+                        () => rebootNode(nodeIP),
+                      )
+                    "
+                  >
+                    {{ t("Перезагрузить") }}
+                  </button>
+                </article>
+                <article>
+                  <div>
+                    <h2>{{ t("Последовательная перезагрузка") }}</h2>
+                    <p>
+                      {{
+                        t(
+                          "Сначала workers, затем control plane. Ожидание готовности каждой ноды.",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <button
+                    class="danger"
+                    :disabled="!isAuthenticated || !nodes.length || busy"
+                    @click="rollingReboot()"
+                  >
+                    {{ t("Перезагрузить все") }}
+                  </button>
+                </article>
               </section>
-              <section class="surface">
-                <header class="surface-heading">
-                  <h2>Proxmox VE</h2>
-                  <span class="state muted">{{
-                    pve?.configured ? t("Настроен") : t("Не настроен")
-                  }}</span>
-                </header>
-                <dl class="definition-list">
-                  <dt>{{ t("Хост") }}</dt>
-                  <dd>{{ pve?.node || "—" }}</dd>
-                  <dt>CPU</dt>
-                  <dd>
-                    {{ pve?.status?.cpuUsagePercent?.toFixed(1) ?? "—" }}%
-                  </dd>
-                  <dt>{{ t("Свободная RAM") }}</dt>
-                  <dd>{{ bytes(pve?.status?.memory?.available) }}</dd>
-                  <dt>{{ t("Свободный диск") }}</dt>
-                  <dd>{{ bytes(pve?.status?.storage?.free) }}</dd>
-                </dl>
-                <p class="footnote">
-                  {{
-                    t("Подключение Proxmox задаётся в конфигурации сервера.")
-                  }}
-                </p>
-                <button
-                  class="settings-action"
-                  :disabled="!pve?.configured"
-                  @click="showWorker"
-                >
-                  {{ t("Добавить рабочую машину") }}
-                </button>
-              </section>
-            </div></template
+              <ResourceTable
+                v-if="checks.length"
+                :rows="checks"
+                :columns="[
+                  { key: 'title', title: t('Проверка') },
+                  { key: 'status', title: t('Результат') },
+                  { key: 'detail', title: t('Подробности') },
+                ]"
+                @select="detail = $event"
+            /></template>
+            <template v-else-if="active === 'settings'"
+              ><div class="settings-grid">
+                <section class="surface">
+                  <header class="surface-heading">
+                    <h2>Telegram</h2>
+                    <span class="state muted">{{
+                      alerts?.bot_configured ? t("Настроен") : t("Не настроен")
+                    }}</span>
+                  </header>
+                  <form class="settings-form" @submit.prevent="saveAlerts">
+                    <label class="check-label"
+                      ><input v-model="enabled" type="checkbox" />
+                      {{ t("Отправлять уведомления") }} </label
+                    ><label
+                      >Bot token<input
+                        v-model="token"
+                        type="password"
+                        autocomplete="new-password"
+                        :placeholder="
+                          t('Оставьте пустым, чтобы сохранить текущий')
+                        " /></label
+                    ><label
+                      >Chat ID<input
+                        v-model="chat"
+                        :placeholder="t('Например, -1001234567890')" /></label
+                    ><label>
+                      {{ t("Минимальный уровень") }}
+                      <select v-model="level">
+                        <option>INFO</option>
+                        <option>WARNING</option>
+                        <option>CRITICAL</option>
+                      </select></label
+                    >
+                    <div class="toolbar">
+                      <button
+                        class="primary"
+                        :disabled="busy || !!errors.section"
+                      >
+                        {{ t("Сохранить") }}</button
+                      ><button
+                        type="button"
+                        :disabled="busy"
+                        @click="
+                          perform(
+                            () => post('/alerts/test', {}),
+                            t('Тестовое уведомление отправлено'),
+                          )
+                        "
+                      >
+                        {{ t("Отправить тест") }}
+                      </button>
+                    </div>
+                  </form>
+                </section>
+                <section class="surface">
+                  <header class="surface-heading">
+                    <h2>Proxmox VE</h2>
+                    <span class="state muted">{{
+                      pve?.configured ? t("Настроен") : t("Не настроен")
+                    }}</span>
+                  </header>
+                  <dl class="definition-list">
+                    <dt>{{ t("Хост") }}</dt>
+                    <dd>{{ pve?.node || "—" }}</dd>
+                    <dt>CPU</dt>
+                    <dd>
+                      {{ pve?.status?.cpuUsagePercent?.toFixed(1) ?? "—" }}%
+                    </dd>
+                    <dt>{{ t("Свободная RAM") }}</dt>
+                    <dd>{{ bytes(pve?.status?.memory?.available) }}</dd>
+                    <dt>{{ t("Свободный диск") }}</dt>
+                    <dd>{{ bytes(pve?.status?.storage?.free) }}</dd>
+                  </dl>
+                  <p class="footnote">
+                    {{
+                      t("Подключение Proxmox задаётся в конфигурации сервера.")
+                    }}
+                  </p>
+                  <button
+                    class="settings-action"
+                    :disabled="!pve?.configured"
+                    @click="showWorker"
+                  >
+                    {{ t("Добавить рабочую машину") }}
+                  </button>
+                </section>
+              </div></template
+            >
+          </template>
+          <div
+            v-if="actionError && !dialog && !confirmation && !detail"
+            class="notice error"
+            role="alert"
           >
+            {{ actionError }}
+          </div>
         </template>
-        <div
-          v-if="actionError && !dialog && !confirmation && !detail"
-          class="notice error"
-          role="alert"
-        >
-          {{ actionError }}
-        </div>
       </main>
       <footer class="workspace-footer">
         <span>TalosDeck <strong>Console UI 2</strong></span
@@ -1284,6 +1391,61 @@ const protectedPage = computed(
         <X :size="16" />
       </button>
     </div>
+    <Modal
+      v-if="dialog === 'import'"
+      :title="t('Добавить кластер')"
+      wide
+      @close="
+        () => {
+          if (!importing) {
+            dialog = '';
+            importForm = { name: '', talosconfig: '', kubeconfig: '' };
+          }
+        }
+      "
+    >
+      <form class="settings-form" @submit.prevent="importCluster">
+        <label
+          >{{ t("Имя")
+          }}<input
+            v-model="importForm.name"
+            required
+            maxlength="100"
+            autocomplete="off"
+        /></label>
+        <label
+          >talosconfig<textarea
+            v-model="importForm.talosconfig"
+            required
+            rows="8"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </label>
+        <label
+          >kubeconfig<textarea
+            v-model="importForm.kubeconfig"
+            required
+            rows="8"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </label>
+        <p>
+          {{
+            t(
+              "Сервер проверит оба API. Данные доступа хранятся в зашифрованном виде.",
+            )
+          }}
+        </p>
+        <p v-if="actionError" class="notice error" role="alert">
+          {{ actionError }}
+        </p>
+        <button class="primary" :disabled="importing">
+          {{ importing ? t("Проверка подключения…") : t("Подключить") }}
+        </button>
+      </form>
+    </Modal>
     <Modal
       v-if="dialog === 'login'"
       :title="t('Вход администратора')"
@@ -1386,7 +1548,10 @@ const protectedPage = computed(
       :title="inspected.hostname"
       wide
       @close="inspected = null"
-      ><NodeInspector :node="inspected" @changed="refresh"
+      ><NodeInspector
+        :key="selectedCluster + inspected.ip"
+        :node="inspected"
+        @changed="refresh"
     /></Modal>
     <Modal
       v-if="detail"

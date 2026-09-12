@@ -15,6 +15,7 @@ import (
 
 // AuditEvent represents a logged security, administrative, or operational action.
 type AuditEvent struct {
+	ClusterID string         `json:"clusterId,omitempty"`
 	ID        string         `json:"id"`
 	Timestamp time.Time      `json:"timestamp"`
 	Action    string         `json:"action"` // e.g. "node.reboot", "backup.create", "worker.create", "auth.login"
@@ -27,6 +28,7 @@ type AuditEvent struct {
 // AuditManager is a thread-safe manager for recording and querying audit events.
 // It maintains the latest N events in memory and writes all events to an append-only log file.
 type AuditManager struct {
+	clusterID  string
 	mu         sync.RWMutex
 	filePath   string
 	maxEntries int
@@ -108,6 +110,9 @@ func (m *AuditManager) Log(event AuditEvent) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.clusterID != "" {
+		event.ClusterID = m.clusterID
+	}
 
 	// Append to in-memory ring buffer
 	m.events = append(m.events, event)
@@ -120,6 +125,17 @@ func (m *AuditManager) Log(event AuditEvent) {
 		if data, err := json.Marshal(event); err == nil {
 			_, _ = m.logFile.Write(append(data, '\n'))
 		}
+	}
+}
+
+// BindCluster labels new records and historical entries returned from the
+// cluster's dedicated journal. It does not rewrite the legacy journal on disk.
+func (m *AuditManager) BindCluster(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clusterID = id
+	for i := range m.events {
+		m.events[i].ClusterID = id
 	}
 }
 

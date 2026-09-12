@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { scopeURL, trackRequest, clusterEpoch, clusterWebSocket } from '../clusterScope'
 import type {
   ClusterInfo,
   NodeOverview,
@@ -31,12 +32,17 @@ const fetchWithTimeout = async (
   timeoutMs = 15000,
 ): Promise<Response> => {
   const controller = new AbortController()
+  const release = trackRequest(controller)
+  const epoch = clusterEpoch()
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    return await fetch(input, { ...init, signal: controller.signal })
+    const response = await fetch(typeof input === 'string' ? scopeURL(input) : input, { ...init, signal: controller.signal })
+    if (epoch !== clusterEpoch()) throw new DOMException('Cluster changed', 'AbortError')
+    return response
   } finally {
     clearTimeout(timeoutId)
+    release()
   }
 }
 
@@ -309,7 +315,7 @@ export const waitForNodeReboot = async (ip: string, timeoutMs = 180000): Promise
 
 export const getDmesgWsUrl = (ip: string): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}/ws/nodes/${encodeURIComponent(ip)}/dmesg`
+  return `${protocol}//${window.location.host}${clusterWebSocket(`/nodes/${encodeURIComponent(ip)}/dmesg`)}`
 }
 
 // ----------------------------------------------------

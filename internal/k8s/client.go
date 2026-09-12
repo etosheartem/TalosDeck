@@ -40,9 +40,10 @@ const podListPageSize = 500
 
 // K8sManager manages interaction with the Kubernetes cluster workloads.
 type K8sManager struct {
-	clientset kubernetes.Interface
-	cache     podCache
-	inflight  singleflight.Group
+	clientset        kubernetes.Interface
+	credentialConfig *rest.Config
+	cache            podCache
+	inflight         singleflight.Group
 
 	// allowEmptyDirDeletion permits draining pods whose emptyDir data will be
 	// destroyed. Off by default: losing data needs an explicit decision.
@@ -242,7 +243,8 @@ func NewK8sManager(kubeconfigPath string, kubeconfigBytesProvider func(ctx conte
 	}
 
 	return &K8sManager{
-		clientset: cs,
+		clientset:        cs,
+		credentialConfig: rest.CopyConfig(restConfig),
 		cache: podCache{
 			entries: make(map[string]podCacheEntry),
 			ttl:     2 * time.Second,

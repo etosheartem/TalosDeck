@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -21,14 +22,17 @@ import (
 var ErrBusy = errors.New("another operation is running or requires review")
 var ErrStopped = errors.New("stop requested; no further steps will be started")
 var ErrNotFound = errors.New("job not found")
+var ErrUncertain = errors.New("operation outcome is uncertain; inspect cluster state")
 
 const MaxEvents = 2000
 const MaxJobs = 100
 
 type Request struct {
-	Kind          string `json:"kind"`
-	Version       string `json:"version,omitempty"`
-	AllowDowntime bool   `json:"allowDowntime,omitempty"`
+	Kind             string `json:"kind"`
+	Version          string `json:"version,omitempty"`
+	AllowDowntime    bool   `json:"allowDowntime,omitempty"`
+	ConfigRevisionID string `json:"configRevisionId,omitempty"`
+	Node             string `json:"node,omitempty"`
 }
 type Event struct {
 	Time    time.Time `json:"time"`
@@ -37,6 +41,7 @@ type Event struct {
 }
 type Job struct {
 	ID            string    `json:"id"`
+	ClusterID     string    `json:"clusterId,omitempty"`
 	Request       Request   `json:"request"`
 	User          string    `json:"user"`
 	Status        string    `json:"status"`
@@ -63,9 +68,18 @@ type Manager struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	runner     Runner
+	clusterID  string
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 func Open(dir string, runner Runner) (*Manager, error) {
+	return OpenCluster(dir, "", runner)
+}
+
+// OpenCluster binds the durable journal to one cluster. Legacy records are
+// migrated in place; a journal already belonging to another cluster is rejected.
+func OpenCluster(dir, clusterID string, runner Runner) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -78,7 +92,7 @@ func Open(dir string, runner Runner) (*Manager, error) {
 		return nil, fmt.Errorf("job store already in use: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{dir: dir, lock: lock, jobs: map[string]*Job{}, ctx: ctx, cancel: cancel, runner: runner}
+	m := &Manager{dir: dir, clusterID: clusterID, lock: lock, jobs: map[string]*Job{}, ctx: ctx, cancel: cancel, runner: runner}
 	fail := func(err error) (*Manager, error) { cancel(); lock.Close(); return nil, err }
 	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
@@ -96,6 +110,10 @@ func Open(dir string, runner Runner) (*Manager, error) {
 		if _, err = uuid.Parse(j.ID); err != nil || filepath.Base(path) != j.ID+".json" {
 			return fail(errors.New("invalid job ID in store"))
 		}
+		if j.ClusterID != "" && j.ClusterID != clusterID {
+			return fail(errors.New("job journal belongs to a different cluster"))
+		}
+		j.ClusterID = clusterID
 		switch j.Status {
 		case "queued", "running":
 			j.Status = "interrupted"
@@ -200,7 +218,7 @@ func (m *Manager) Submit(r Request, user string) (Job, error) {
 		delete(m.jobs, oldest.ID)
 	}
 	now := time.Now().UTC()
-	j := &Job{ID: uuid.NewString(), Request: r, User: user, Status: "queued", CreatedAt: now, UpdatedAt: now, Events: []Event{{Time: now, Step: "queued", Message: "Job accepted"}}}
+	j := &Job{ID: uuid.NewString(), ClusterID: m.clusterID, Request: r, User: user, Status: "queued", CreatedAt: now, UpdatedAt: now, Events: []Event{{Time: now, Step: "queued", Message: "Job accepted"}}}
 	if err := m.save(j); err != nil {
 		return Job{}, err
 	}
@@ -214,15 +232,17 @@ func (m *Manager) run(id string) {
 	defer m.wg.Done()
 	e := &Execution{manager: m, id: id}
 	var runErr error
+	panicked := false
 	defer func() {
 		if p := recover(); p != nil {
-			runErr = fmt.Errorf("runner panic: %v", p)
+			panicked = true
+			runErr = errors.New("operation interrupted unexpectedly; inspect cluster state")
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		j := m.jobs[id]
 		switch {
-		case m.ctx.Err() != nil || m.storageErr != nil:
+		case m.ctx.Err() != nil || m.storageErr != nil || panicked || errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) || errors.Is(runErr, ErrUncertain):
 			j.Status = "interrupted"
 		case errors.Is(runErr, ErrStopped):
 			j.Status = "stopped"
@@ -320,12 +340,15 @@ func (m *Manager) Acknowledge(id, user string) error {
 	return nil
 }
 func (m *Manager) Close() error {
-	m.mu.Lock()
-	m.closed = true
-	m.cancel()
-	m.mu.Unlock()
-	m.wg.Wait()
-	return m.lock.Close()
+	m.closeOnce.Do(func() {
+		m.mu.Lock()
+		m.closed = true
+		m.cancel()
+		m.mu.Unlock()
+		m.wg.Wait()
+		m.closeErr = m.lock.Close()
+	})
+	return m.closeErr
 }
 
 type Execution struct {
@@ -333,7 +356,12 @@ type Execution struct {
 	id      string
 }
 
+var sensitiveOutput = regexp.MustCompile(`(?i)(authorization|bearer\s|password|private[ _-]?key|client[ _-]?key|client-certificate-data|\btoken\b|\bsecret\b)`)
+
 func bounded(s string) string {
+	if sensitiveOutput.MatchString(s) {
+		return "[redacted sensitive operation output]"
+	}
 	s = strings.Map(func(r rune) rune {
 		if r < ' ' && r != '\t' {
 			return ' '

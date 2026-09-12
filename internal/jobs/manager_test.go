@@ -5,10 +5,103 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestClusterJournalIdentityAndLegacyMigration(t *testing.T) {
+	dir := t.TempDir()
+	m, err := Open(dir, func(context.Context, *Execution, Request) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := m.Submit(Request{Kind: "test"}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJob(t, m, j.ID, "succeeded")
+	m.Close()
+	bound, err := OpenCluster(dir, "cluster-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err = bound.Get(j.ID)
+	if err != nil || j.ClusterID != "cluster-a" {
+		t.Fatalf("%+v %v", j, err)
+	}
+	bound.Close()
+	if foreign, err := OpenCluster(dir, "cluster-b", nil); err == nil {
+		foreign.Close()
+		t.Fatal("foreign cluster accepted journal")
+	}
+}
+
+func TestAmbiguousRunnerOutcomesRequireReview(t *testing.T) {
+	for _, outcome := range []string{"panic", "timeout", "uncertain"} {
+		t.Run(outcome, func(t *testing.T) {
+			m, err := Open(t.TempDir(), func(context.Context, *Execution, Request) error {
+				switch outcome {
+				case "panic":
+					panic("private-key-never-log-this")
+				case "timeout":
+					return context.DeadlineExceeded
+				default:
+					return ErrUncertain
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Close()
+			j, err := m.Submit(Request{Kind: "test"}, "admin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := waitJob(t, m, j.ID, "interrupted")
+			if strings.Contains(done.Error, "private-key") {
+				t.Fatal("panic leaked private data")
+			}
+			if _, err := m.ReserveManual(); !errors.Is(err, ErrBusy) {
+				t.Fatal("manual operation allowed before review")
+			}
+			if err := m.Acknowledge(j.ID, "reviewer"); err != nil {
+				t.Fatal(err)
+			}
+			release, err := m.ReserveManual()
+			if err != nil {
+				t.Fatal(err)
+			}
+			release()
+		})
+	}
+}
+
+func TestJournalRedactsSensitiveRunnerOutputAndErrors(t *testing.T) {
+	m, err := Open(t.TempDir(), func(_ context.Context, e *Execution, _ Request) error {
+		if err := e.Log("command", "authorization: Bearer top-private-value"); err != nil {
+			return err
+		}
+		return errors.New("password=top-private-value")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	j, err := m.Submit(Request{Kind: "test"}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitJob(t, m, j.ID, "failed")
+	data, err := os.ReadFile(filepath.Join(m.dir, j.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "top-private-value") || !strings.Contains(done.Error, "redacted") {
+		t.Fatal("sensitive output persisted")
+	}
+}
 
 func waitJob(t *testing.T, m *Manager, id string, status string) Job {
 	t.Helper()

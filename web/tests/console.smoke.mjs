@@ -22,6 +22,9 @@ try {
   });
   const errors = [];
   const mutations = [];
+  await context.addInitScript(() =>
+    localStorage.setItem("talosdeck_token", "fixture-token"),
+  );
   const nodes = [
     {
       hostname: "talos-cp-01",
@@ -152,10 +155,14 @@ try {
   };
   await context.route("**/api/**", async (route) => {
     const req = route.request();
-    const p = new URL(req.url()).pathname;
+    const raw = new URL(req.url()).pathname;
+    const p = raw.replace(/^\/api\/clusters\/[^/]+\//, "/api/");
     if (!p.startsWith("/api/")) return route.continue();
     if (req.method() !== "GET") mutations.push(p);
     let body = fixtures[p] || { success: true };
+    if (p === "/api/clusters")
+      body = { clusters: [{ id: "cluster-a", name: "production-eu-01" }] };
+    if (p.endsWith("/history")) body = [];
     if (p.endsWith("/disks"))
       body = [
         {
@@ -181,7 +188,7 @@ try {
     if (p.endsWith("/config") && p.includes("/nodes/"))
       body = {
         configYaml:
-          "version: v1alpha1\nmachine:\n  type: controlplane\n  network:\n    hostname: talos-cp-01\ncluster:\n  clusterName: production-eu-01",
+          "version: v1alpha1\nmachine:\n  type: controlplane\ncluster:\n  clusterName: production-eu-01\n---\napiVersion: v1alpha1\nkind: KubeNodeConfig\nlabels:\n  environment: production",
       };
     if (p.endsWith("/services"))
       body = [
@@ -233,14 +240,21 @@ try {
   await page.reload();
   await page.getByRole("button", { name: "View nodes", exact: true }).waitFor();
   assert.equal(await page.getByLabel("Interface language").inputValue(), "en");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Sign in", exact: true })
+    .first()
+    .click();
   await page
     .getByRole("dialog")
     .getByLabel("Password", { exact: true })
     .waitFor();
   await page.keyboard.press("Escape");
   await page.getByLabel("Interface language").selectOption("ru");
-  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Войти", exact: true })
+    .first()
+    .click();
   await page.getByLabel("Пароль", { exact: true }).fill("test");
   await page
     .getByRole("dialog")
@@ -370,6 +384,211 @@ try {
     .getByRole("button", { name: "Аудит", exact: true })
     .click();
   assert.equal(new URL(page.url()).hash, "#audit");
+  // Separate authenticated registry: identical node identifiers must not leak
+  // data, confirmations, streams or configuration between cluster selections.
+  const fleet = await browser.newContext({
+    viewport: { width: 1440, height: 1050 },
+  });
+  await fleet.addInitScript(() =>
+    localStorage.setItem("talosdeck_token", "fixture-token"),
+  );
+  const registry = [
+    { id: "alpha", name: "Alpha" },
+    { id: "beta", name: "Beta" },
+  ];
+  const fleetRequests = [];
+  const jobs = [];
+  let delayedAlpha = false;
+  await fleet.route("**/api/**", async (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (!path.startsWith("/api/")) return route.continue();
+    fleetRequests.push({
+      path,
+      method: req.method(),
+      body: req.postDataJSON(),
+    });
+    if (path.startsWith("/api/auth/"))
+      return route.fulfill({ json: fixtures[path] });
+    if (path === "/api/clusters") {
+      if (req.method() === "POST") {
+        assert(req.postDataJSON().talosconfig);
+        assert(req.postDataJSON().kubeconfig);
+        const cluster = { id: "gamma", name: req.postDataJSON().name };
+        registry.push(cluster);
+        return route.fulfill({ json: { cluster } });
+      }
+      return route.fulfill({ json: { clusters: registry } });
+    }
+    const match = path.match(/^\/api\/clusters\/([^/]+)(\/.*)$/);
+    assert(match, `Unscoped infrastructure request: ${path}`);
+    const [, id, suffix] = match;
+    let body = fixtures[`/api${suffix}`] || {};
+    if (suffix === "/nodes") {
+      if (id === "alpha" && delayedAlpha)
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      body = [
+        { ...nodes[0], hostname: "same-node", memoryUsage: `${id}-memory` },
+      ];
+    }
+    if (suffix === "/cluster") body = { ...fixtures["/api/cluster"], name: id };
+    if (suffix.endsWith("/config"))
+      body = {
+        configYaml: `machine:\n  token: REDACTED\n---\napiVersion: v1alpha1\nkind: KubeNodeConfig\nlabels:\n  environment: ${id}`,
+      };
+    if (suffix.endsWith("/history"))
+      body = [
+        {
+          id: "revision-1",
+          author: "admin",
+          mode: "auto",
+          status: "succeeded",
+          createdAt: "2026-09-12T00:00:00Z",
+        },
+      ];
+    if (suffix.endsWith("/history/revision-1"))
+      body = {
+        id: "revision-1",
+        diff: "- old\n+ restored",
+        config: "machine: REDACTED",
+      };
+    if (
+      (suffix.endsWith("/plan") || suffix.endsWith("/restore-plan")) &&
+      suffix.startsWith("/config/")
+    )
+      body = {
+        id: "plan-1",
+        diff: "- environment: alpha\n+ environment: updated",
+        warnings: [],
+        mode: "auto",
+      };
+    if (suffix.endsWith("/apply") || suffix.endsWith("/restore")) {
+      const job = {
+        id: `${id}-job`,
+        clusterId: id,
+        request: { kind: "config-apply" },
+        status: "queued",
+        user: "admin",
+        createdAt: "2026-09-12T00:00:00Z",
+        events: [],
+      };
+      jobs.push(job);
+      body = job;
+    }
+    if (suffix === "/jobs") body = jobs.filter((job) => job.clusterId === id);
+    if (suffix.startsWith("/jobs/"))
+      body = jobs.find((job) => suffix === `/jobs/${job.id}`) || {};
+    return route.fulfill({ json: body }).catch(() => {});
+  });
+  const fleetPage = await fleet.newPage();
+  fleetPage.on("pageerror", (e) => errors.push(String(e)));
+  await fleetPage.goto("http://127.0.0.1:5175/#nodes");
+  await fleetPage
+    .getByRole("cell", { name: "alpha-memory", exact: true })
+    .waitFor();
+  delayedAlpha = true;
+  await fleetPage
+    .getByRole("button", { name: "Обновить", exact: true })
+    .click();
+  await fleetPage.getByLabel("Кластер", { exact: true }).selectOption("beta");
+  await fleetPage
+    .getByRole("cell", { name: "beta-memory", exact: true })
+    .waitFor();
+  await fleetPage.waitForTimeout(450);
+  assert.equal(
+    await fleetPage.getByText("alpha-memory", { exact: true }).count(),
+    0,
+  );
+  await fleetPage.reload();
+  assert.equal(
+    await fleetPage.getByLabel("Кластер", { exact: true }).inputValue(),
+    "beta",
+  );
+  await fleetPage.goto("http://127.0.0.1:5175/#config");
+  await fleetPage
+    .getByLabel("YAML patch", { exact: true })
+    .fill("apiVersion: v1alpha1\nkind: KubeNodeConfig\nlabels:\n  environment: updated");
+  await fleetPage
+    .getByRole("button", { name: "Проверить и сравнить", exact: true })
+    .click();
+  await fleetPage
+    .getByRole("heading", { name: "Проверка изменений", exact: true })
+    .waitFor();
+  await fleetPage.getByLabel("Адрес ноды", { exact: true }).fill(nodes[0].ip);
+  await fleetPage
+    .getByRole("button", { name: "Применить через задание", exact: true })
+    .click();
+  await fleetPage
+    .getByRole("heading", { name: "Задания", exact: true })
+    .waitFor();
+  assert(
+    fleetRequests.some(
+      (r) =>
+        r.path === `/api/clusters/beta/config/${nodes[0].ip}/apply` &&
+        r.body.confirmedNode === nodes[0].ip,
+    ),
+  );
+  await fleetPage.goto("http://127.0.0.1:5175/#config");
+  await fleetPage
+    .getByRole("button", { name: "Просмотреть", exact: true })
+    .click();
+  await fleetPage
+    .getByRole("button", { name: "Проверить восстановление", exact: true })
+    .click();
+  await fleetPage
+    .getByRole("heading", { name: "Проверка изменений", exact: true })
+    .waitFor();
+  assert(!fleetRequests.some((r) => r.path.endsWith("/restore")));
+  await fleetPage.getByLabel("Адрес ноды", { exact: true }).fill(nodes[0].ip);
+  await fleetPage
+    .getByRole("button", { name: "Восстановить через задание", exact: true })
+    .click();
+  await fleetPage
+    .getByRole("heading", { name: "Задания", exact: true })
+    .waitFor();
+  assert(
+    fleetRequests.some(
+      (r) => r.path.endsWith("/restore") && r.body.planId === "plan-1",
+    ),
+  );
+  await fleetPage.getByLabel("Кластер", { exact: true }).selectOption("alpha");
+  await fleetPage.waitForTimeout(200);
+  assert.equal(
+    await fleetPage.getByText("beta-job", { exact: true }).count(),
+    0,
+  );
+  await fleetPage
+    .getByRole("button", { name: "Добавить кластер", exact: true })
+    .click();
+  const importDialog = fleetPage.getByRole("dialog");
+  await importDialog.getByLabel("Имя", { exact: true }).fill("Gamma");
+  await importDialog
+    .getByLabel("talosconfig", { exact: true })
+    .fill("fixture-private-talos");
+  await importDialog
+    .getByLabel("kubeconfig", { exact: true })
+    .fill("fixture-private-kube");
+  await importDialog
+    .getByRole("button", { name: "Подключить", exact: true })
+    .click();
+  await fleetPage.waitForFunction(
+    () => document.querySelector(".cluster-picker select")?.value === "gamma",
+  );
+  assert.equal(await fleetPage.getByRole("dialog").count(), 0);
+  assert(
+    !(await fleetPage.evaluate(() => JSON.stringify(localStorage))).includes(
+      "fixture-private",
+    ),
+  );
+  await fleetPage
+    .getByRole("button", { name: "Добавить кластер", exact: true })
+    .click();
+  assert.equal(
+    await fleetPage.getByLabel("talosconfig", { exact: true }).inputValue(),
+    "",
+  );
+  await fleetPage.keyboard.press("Escape");
+  await fleet.close();
   const offline = await browser.newPage({
     viewport: { width: 1440, height: 1000 },
   });
@@ -383,7 +602,9 @@ try {
         }),
   );
   await offline.goto("http://127.0.0.1:5175");
-  await offline.getByText("Часть данных недоступна").waitFor();
+  await offline
+    .getByRole("heading", { name: "Кластеры", exact: true })
+    .waitFor();
   assert.equal(
     await offline.getByText("talos-cp-01", { exact: true }).count(),
     0,
@@ -394,12 +615,12 @@ try {
   });
   await offline.goto("http://127.0.0.1:5175/#config");
   await offline
-    .getByRole("heading", { name: "Требуется вход", exact: true })
+    .getByRole("heading", { name: "Кластеры", exact: true })
     .waitFor();
   assert.equal(await offline.locator(".code-lines").count(), 0);
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: RU/EN in 10 sections, persisted language, GitHub link, auth, table search, inspector, WebSocket logs, pause, disk normalization, etcd URLs, protected config, escape, provisioning, confirmation cancellation, settings, mobile navigation, no page overflow, offline/no mock fallback.",
+    "PASS: RU/EN, auth, console workflows, mobile layout, multi-cluster isolation with delayed responses and identical nodes, persisted selection, config preview/apply/restore jobs, import without browser credential persistence, offline/no mock fallback.",
   );
   console.log("Screenshots:", artifacts);
 } finally {

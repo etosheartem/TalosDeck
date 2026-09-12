@@ -16,14 +16,16 @@ import (
 )
 
 type fixture struct {
-	mu          sync.Mutex
-	nodes       []*talos.NodeOverview
-	knodes      []k8s.UpgradeNode
-	api         string
-	commands    [][]string
-	failBackup  bool
-	failCommand bool
-	image       string
+	mu             sync.Mutex
+	nodes          []*talos.NodeOverview
+	knodes         []k8s.UpgradeNode
+	api            string
+	commands       [][]string
+	failBackup     bool
+	failCommand    bool
+	image          string
+	holdReady      bool
+	commandStarted chan struct{}
 }
 
 func newFixture() *fixture {
@@ -90,6 +92,17 @@ func (f *fixture) Run(_ context.Context, args []string, log func(string) error) 
 	}
 	if strings.Contains(joined, " upgrade ") {
 		ip := args[5]
+		if f.holdReady {
+			for i := range f.knodes {
+				if f.knodes[i].Name == ip {
+					f.knodes[i].Ready = false
+				}
+			}
+			if f.commandStarted != nil {
+				close(f.commandStarted)
+				f.commandStarted = nil
+			}
+		}
 		for i, arg := range args {
 			if arg == "--image" {
 				image := args[i+1]
@@ -103,6 +116,53 @@ func (f *fixture) Run(_ context.Context, args []string, log func(string) error) 
 		}
 	}
 	return nil
+}
+
+func TestTalosWaitsForKubernetesBeforeNextNode(t *testing.T) {
+	f := newFixture()
+	f.holdReady = true
+	started := make(chan struct{})
+	f.commandStarted = started
+	s := service(f)
+	m, err := jobs.Open(t.TempDir(), s.Run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	j, err := m.Submit(jobs.Request{Kind: "talos-upgrade", Version: "1.14.0", AllowDowntime: true}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first command not started")
+	}
+	// The command has returned and Talos has the target version. Kubernetes is
+	// still NotReady, so polling must not permit the next machine to be touched.
+	time.Sleep(20 * time.Millisecond)
+	f.mu.Lock()
+	count := len(f.commands)
+	f.holdReady = false
+	for i := range f.knodes {
+		f.knodes[i].Ready = true
+	}
+	f.mu.Unlock()
+	if count != 1 {
+		t.Fatalf("touched %d nodes before Kubernetes recovered", count)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		current, _ := m.Get(j.ID)
+		if current.Status == "succeeded" {
+			return
+		}
+		if current.Status != "running" && current.Status != "queued" {
+			t.Fatalf("%+v", current)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("upgrade did not finish after Kubernetes recovered")
 }
 func service(f *fixture) *Service {
 	return &Service{Talos: f, Kubernetes: f, Backups: f, CLI: f, PollInterval: time.Millisecond}
@@ -200,7 +260,11 @@ func TestBackupFailureAndCommandFailureStopFurtherNodes(t *testing.T) {
 		f.failBackup = backupFailure
 		f.failCommand = !backupFailure
 		j := runJob(t, service(f), jobs.Request{Kind: "talos-upgrade", Version: "1.14.0", AllowDowntime: true})
-		if j.Status != "failed" {
+		status := "interrupted"
+		if backupFailure {
+			status = "failed"
+		}
+		if j.Status != status {
 			t.Fatalf("%+v", j)
 		}
 		want := 1

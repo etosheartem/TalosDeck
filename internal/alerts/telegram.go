@@ -61,6 +61,8 @@ type TelegramService struct {
 	enabled      bool
 	minLevel     string
 	configPath   string
+	persist      func(TelegramConfig) error
+	clusterLabel string
 	apiBaseURL   string // For testing mock servers
 	recentAlerts []AlertRecord
 }
@@ -181,6 +183,8 @@ func (s *TelegramService) GetMaskedChatID() string {
 // UpdateConfig updates the in-memory configuration and persists to config file if set.
 func (s *TelegramService) UpdateConfig(cfg TelegramConfig) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	oldToken, oldChat, oldEnabled, oldLevel := s.botToken, s.chatID, s.enabled, s.minLevel
 	if cfg.BotToken != "" && !strings.Contains(cfg.BotToken, "*") {
 		s.botToken = strings.TrimSpace(cfg.BotToken)
 	}
@@ -202,12 +206,37 @@ func (s *TelegramService) UpdateConfig(cfg TelegramConfig) error {
 		MinLevel: minLvl,
 	}
 	path := s.configPath
-	s.mu.Unlock()
-
-	if path != "" {
-		return s.saveConfigSnapshot(path, snapshot)
+	var err error
+	if s.persist != nil {
+		err = s.persist(snapshot)
+	} else if path != "" {
+		err = s.saveConfigSnapshot(path, snapshot)
 	}
-	return nil
+	if err != nil {
+		s.botToken, s.chatID, s.enabled, s.minLevel = oldToken, oldChat, oldEnabled, oldLevel
+	}
+	return err
+}
+
+// SetPersistence replaces plaintext file persistence with the encrypted store.
+func (s *TelegramService) SetPersistence(save func(TelegramConfig) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persist = save
+	s.configPath = ""
+}
+
+// PrivateConfig is for encrypted migration only; API callers use GetConfig.
+func (s *TelegramService) PrivateConfig() TelegramConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return TelegramConfig{BotToken: s.botToken, ChatID: s.chatID, Enabled: s.enabled, MinLevel: s.minLevel}
+}
+
+func (s *TelegramService) SetClusterLabel(label string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clusterLabel = label
 }
 
 // SetConfigPath sets the path used to persist configuration changes.
@@ -306,6 +335,7 @@ func (s *TelegramService) SendAlertWithContext(ctx context.Context, level AlertL
 	enabled := s.enabled
 	minLevel := s.minLevel
 	baseURL := s.apiBaseURL
+	clusterLabel := s.clusterLabel
 	s.mu.RUnlock()
 
 	if token == "" || chatID == "" {
@@ -319,6 +349,9 @@ func (s *TelegramService) SendAlertWithContext(ctx context.Context, level AlertL
 	}
 
 	icon := GetIconForLevel(level)
+	if clusterLabel != "" {
+		title = clusterLabel + ": " + title
+	}
 	lvlStr := strings.ToUpper(string(level))
 
 	formattedBody := formatMessageLines(message)
@@ -622,7 +655,7 @@ func (s *TelegramService) sendRawTelegram(ctx context.Context, baseURL, token, c
 					continue
 				}
 			}
-			return fmt.Errorf("telegram request failed: %w", err)
+			return errors.New("telegram request failed: check network and credentials")
 		}
 
 		respBody, err := io.ReadAll(resp.Body)
