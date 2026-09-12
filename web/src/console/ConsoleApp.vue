@@ -45,6 +45,9 @@ import ProvidersView from "./ProvidersView.vue";
 import ProvisionView from "./ProvisionView.vue";
 import DiagnosticsView from "./DiagnosticsView.vue";
 import CertificatesView from "./CertificatesView.vue";
+import HealthView from "./HealthView.vue";
+import {healthExpired,healthNumber,type HealthReport} from "./health";
+const healthReport=ref<HealthReport|null>(null);
 import CommandPalette, { type Command } from "./CommandPalette.vue";
 import SettingsHub from "./SettingsHub.vue";
 import AlertCenter from "./AlertCenter.vue";
@@ -325,6 +328,7 @@ async function refresh() {
     probe("jobs", "/jobs", (v) => (recentJobs.value = list(v).map(job=>({...job,kind:job.request?.kind || job.kind})))),
     probe("backups", "/backups", (v) => (recentBackups.value = list(v))),
     probe("diagnostics", "/diagnostics", (v) => (diagnostics.value = v)),
+    probe("health", "/health-score", (v)=>(healthReport.value=v)),
     probe("certificates", "/certificates", (v) => (certificates.value = v)),
     probe("notifications", "/notifications/status", (v) => (notificationStatus.value = v)),
     probe(
@@ -432,6 +436,7 @@ watch(selectedCluster, async () => {
   recentBackups.value = [];
   diagnostics.value = null;
   certificates.value = null;
+  healthReport.value=null;
   notificationStatus.value=null;
   workloadFocus.value=null; paletteOpen.value=false;
   etcd.value = null;
@@ -728,7 +733,7 @@ const protectedPage = computed(
               <h1>{{ page.title }}</h1>
               <p>{{ page.description }}</p>
             </div>
-            <div v-if="!globalPage" class="refresh-tools">
+            <div v-if="!globalPage && active!=='health'" class="refresh-tools">
               <span v-if="refreshed"> {{ t("Опрос") }} {{ refreshed }}</span
               ><select
                 v-model="interval"
@@ -979,6 +984,7 @@ const protectedPage = computed(
               </section>
             </div>
             <section class="surface"><header class="surface-heading"><h2>{{ t('Оповещения') }}</h2><button @click="navigate('alert-center')">{{ t('Центр оповещений') }}</button></header><p class="notice">{{ errors.notifications||!notificationStatus?.summary||!notificationStatus.lastCheckAt||notificationStatus.lastCheckAt.startsWith('0001-') ? t('Неизвестно'):notificationLabel(notificationStatus.health) }} · {{ t('Активно') }}: {{ notificationStatus?.summary?.active??'—' }} · {{ t('Критические') }}: {{ notificationStatus?.summary?.critical??'—' }} · {{ t('Устарело') }}: {{ notificationStatus?.summary?.stale??'—' }}</p><p class="footnote">{{ t('Последняя проверка') }}: {{ notificationTime(notificationStatus?.lastCheckAt) }}</p></section>
+            <section class="surface"><header class="surface-heading"><h2>{{t('Здоровье кластера')}}</h2><button @click="navigate('health')">{{t('Проверки и оценка')}}</button></header><p class="notice">{{errors.health||healthExpired(healthReport)||healthReport?.score==null?t('Недостаточно данных'):healthNumber(healthReport.score)+' / 100'}} · {{t('Покрытие проверками')}}: {{healthNumber(healthReport?.coverage)}}% · {{healthReport?.checkedAt||'—'}}</p><p v-if="healthReport?.findings?.some(c=>c.state==='critical')" class="notice error">{{t('Критические проблемы обнаружены')}}: {{healthReport.findings.filter(c=>c.state==='critical').length}}</p></section>
             <section class="surface"><header class="surface-heading"><h2>{{ t('Сертификаты') }}</h2><button @click="navigate('certificates')">{{ t('Проверить сроки') }}</button></header><p class="notice">{{ errors.certificates || !certificates?.certificates?.length ? t('Неизвестно') : certificateStatus(certificates.status) }} · {{ t('Требует внимания') }}: {{ certificates?.summary ? certificates.summary.critical + certificates.summary.warning : '—' }} · {{ t('Неизвестно') }}: {{ certificates?.summary?.unknown ?? '—' }}</p></section>
             <section class="surface cluster-facts">
               <div>
@@ -1122,11 +1128,13 @@ const protectedPage = computed(
           <AlertCenter v-else-if="active==='alert-center'" :key="selectedCluster" @node="inspectRelatedNode($event)" @logs="inspectRelatedNode($event,true)" />
           <NotificationSettings v-else-if="active==='alerts'" :key="selectedCluster" />
           <SettingsHub v-else-if="['platform-settings','cluster-settings'].includes(active)" :global="active==='platform-settings'" @navigate="navigate" />
+          <HealthView v-else-if="active==='health'" :key="selectedCluster" @node="inspectRelatedNode($event)" @logs="inspectRelatedNode($event,true)" @diagnostics="navigate('diagnostics')" />
           <CertificatesView v-else-if="active === 'certificates'" :key="selectedCluster" />
           <DiagnosticsView
             v-else-if="active === 'diagnostics'"
             :key="selectedCluster"
             :nodes="nodes"
+            @health="navigate('health')"
             @inspect="inspected = $event"
             @logs="nodeIP = $event.ip; navigate('logs')"
             @submitted="navigate('jobs')"

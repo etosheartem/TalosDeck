@@ -292,6 +292,9 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	}}
 	ops.BackupLifecycle = &operations.BackupService{ClusterID: cluster.ID, Store: f.options.Store, Manager: bm, Operations: ops}
 	ops.Diagnostics = &operations.DiagnosticsService{ClusterID: cluster.ID, Store: f.options.Store, Talos: tm, Kubernetes: km, Backups: ops.BackupLifecycle, Certificates: certMonitor}
+	healthState := newHealthMonitor(context.Background(), cluster.ID, &operations.HealthCollector{ClusterID: cluster.ID, Talos: tm, Kubernetes: km, Backups: ops.BackupLifecycle, Certificates: certMonitor}, f.options.Store)
+	ops.Diagnostics.Health = healthState
+	rt.config.Health = healthState
 	bm.SetMaxBackups(0)
 	rt.config.Operations = ops
 	jm, err := jobs.OpenCluster(jobDir, cluster.ID, ops.Run)
@@ -319,6 +322,8 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	rt.wg.Add(2)
 	go func() { defer rt.wg.Done(); center.Run(ctx) }()
 	go func() { defer rt.wg.Done(); monitor.run(ctx) }()
+	rt.wg.Add(1)
+	go func() { defer rt.wg.Done(); healthState.run(ctx) }()
 	app := SetupServer(rt.config)
 	rt.handler = app.Handler()
 

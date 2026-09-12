@@ -2,12 +2,13 @@
 import { ref, onMounted, onUnmounted, computed } from "vue";
 import { request, post, downloadAPI } from "./client";
 import { t } from "./i18n";
+import {healthExpired,healthNumber} from "./health";
 import { canOperate } from "./permissions";
 import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
 import type { NodeOverview } from "../types";
 const props = defineProps<{ nodes: NodeOverview[] }>();
-const emit = defineEmits<{ submitted: []; inspect: [node: NodeOverview]; logs: [node: NodeOverview] }>();
+const emit = defineEmits<{ health: []; submitted: []; inspect: [node: NodeOverview]; logs: [node: NodeOverview] }>();
 const report = ref<any>(null),
   error = ref(""),
   busy = ref(false),
@@ -79,6 +80,7 @@ onUnmounted(() => {
       </div>
     </header>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
+    <p v-if="report?.snapshotId || report?.health?.snapshotId" class="notice">{{t('Снимок')}}: {{report.snapshotId || report.health.snapshotId}} · {{t('Оценка')}}: {{healthExpired(report.health)||report.health?.score==null?t('Недостаточно данных'):healthNumber(report.health.score)}} · {{t('Покрытие проверками')}}: {{report.health?.coverage ?? '—'}}% <button @click="emit('health')">{{t('Проверки и оценка')}}</button></p>
     <div class="summary-strip">
       <span
         >{{ t("Состояние") }}

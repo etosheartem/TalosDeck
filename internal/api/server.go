@@ -34,6 +34,7 @@ import (
 
 // ServerConfig configures the HTTP & WebSocket server.
 type ServerConfig struct {
+	Health          HealthSnapshotProvider
 	AlertCenter     *alertcenter.Center
 	Certificates    CertificateInspector
 	Fleet           *Fleet
@@ -136,6 +137,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	api.Use(jobMutationGuard(cfg.Jobs))
 	RegisterJobRoutes(api, cfg.Jobs, cfg.Operations, authMgr)
 	RegisterCertificateRoutes(api, cfg.Certificates, authMgr)
+	RegisterHealthScoreRoutes(api, cfg.Health, authMgr)
 	if manager != nil {
 		RegisterNodeImageRoutes(api, manager, authMgr)
 	}

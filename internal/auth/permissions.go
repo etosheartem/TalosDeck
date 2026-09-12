@@ -41,7 +41,7 @@ func Can(role, method, path string) bool {
 		return true
 	}
 	if method == "GET" || method == "HEAD" {
-		for _, prefix := range []string{"/api/clusters", "/api/cluster", "/api/nodes", "/api/k8s", "/api/storage", "/api/backups", "/api/audit", "/api/jobs", "/api/alerts", "/api/diagnostics", "/api/certificates", "/api/images", "/api/templates", "/api/health", "/api/events", "/api/network", "/ws/nodes", "/api/auth/me", "/api/auth/providers"} {
+		for _, prefix := range []string{"/api/clusters", "/api/cluster", "/api/nodes", "/api/k8s", "/api/storage", "/api/backups", "/api/audit", "/api/jobs", "/api/alerts", "/api/diagnostics", "/api/certificates", "/api/images", "/api/templates", "/api/health-score", "/api/health", "/api/events", "/api/network", "/ws/nodes", "/api/auth/me", "/api/auth/providers"} {
 			if path == prefix || strings.HasPrefix(path, prefix+"/") {
 				return true
 			}

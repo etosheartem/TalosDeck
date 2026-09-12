@@ -14,6 +14,7 @@ import (
 	"talosdeck/internal/backup"
 	"talosdeck/internal/certificates"
 	"talosdeck/internal/clusters"
+	"talosdeck/internal/health"
 	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
 	"talosdeck/internal/talos"
@@ -34,12 +35,17 @@ type DiagnosticSummary struct {
 	Info     int `json:"info"`
 }
 type DiagnosticReport struct {
-	Status    string            `json:"status"`
-	CheckedAt time.Time         `json:"checkedAt"`
-	Checks    []DiagnosticCheck `json:"checks"`
-	Summary   DiagnosticSummary `json:"summary"`
+	SnapshotID string            `json:"snapshotId,omitempty"`
+	Health     *health.Report    `json:"health,omitempty"`
+	Status     string            `json:"status"`
+	CheckedAt  time.Time         `json:"checkedAt"`
+	Checks     []DiagnosticCheck `json:"checks"`
+	Summary    DiagnosticSummary `json:"summary"`
 }
 type DiagnosticsService struct {
+	Health interface {
+		Snapshot(context.Context) health.Snapshot
+	}
 	Certificates interface {
 		Check(context.Context) certificates.Report
 	}
@@ -73,7 +79,12 @@ func (s *DiagnosticsService) Run(ctx context.Context, e *jobs.Execution, _ jobs.
 			r.Checks = append(r.Checks, DiagnosticCheck{ID: "incomplete", Severity: "warning", Component: "diagnostics", Title: "Inspection incomplete", Details: "The operation ended before every check completed. Earlier findings are retained."})
 			r.Summary.Warning++
 		}
-		if r.Summary.Critical > 0 {
+		if r.Health != nil {
+			r.Status = r.Health.Status
+			if result != nil && r.Status != "critical" {
+				r.Status = "incomplete"
+			}
+		} else if r.Summary.Critical > 0 {
 			r.Status = "critical"
 		} else if r.Summary.Warning > 0 {
 			r.Status = "degraded"
@@ -88,6 +99,71 @@ func (s *DiagnosticsService) Run(ctx context.Context, e *jobs.Execution, _ jobs.
 			result = err
 		}
 	}()
+
+	if s.Health != nil {
+		if err := e.Checkpoint(ctx, "health", "Collecting shared cluster health snapshot"); err != nil {
+			return err
+		}
+		snapshot := s.Health.Snapshot(ctx)
+		if refresh, ok := s.Health.(interface {
+			Refresh(context.Context) health.Snapshot
+		}); ok {
+			snapshot = refresh.Refresh(ctx)
+		}
+		report := health.Evaluate(snapshot, time.Now().UTC())
+		r.Health = &report
+		r.SnapshotID = snapshot.ID
+		r.CheckedAt = snapshot.CheckedAt
+		r.Status = report.Status
+		for _, check := range report.Findings {
+			if check.State == "healthy" || check.State == "not-applicable" {
+				continue
+			}
+			severity := check.State
+			if severity != "critical" && severity != "warning" {
+				severity = "info"
+			}
+			r.Checks = append(r.Checks, DiagnosticCheck{ID: check.ID, Severity: severity, Component: check.Category, Node: check.Node, Title: check.Title, Details: check.Reason + ": " + check.Details, Suggestion: check.SuggestedAction})
+			switch severity {
+			case "critical":
+				r.Summary.Critical++
+			case "warning":
+				r.Summary.Warning++
+			default:
+				r.Summary.Info++
+			}
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if state, ok := s.Health.(interface{ HealthError() error }); ok && state.HealthError() != nil {
+			return errors.New("shared health refresh could not be completed or persisted")
+		}
+		if s.Kubernetes != nil {
+			if err := e.Checkpoint(ctx, "events", "Inspecting recent Kubernetes warning events"); err != nil {
+				return err
+			}
+			events, eventErr := s.Kubernetes.Events(ctx, "", "")
+			if eventErr != nil {
+				r.Checks = append(r.Checks, DiagnosticCheck{ID: "events/unavailable", Severity: "info", Component: "events", Title: "Events unavailable", Details: "Kubernetes events could not be read.", Suggestion: "Check Kubernetes permissions and connectivity."})
+				r.Summary.Info++
+			} else {
+				count := 0
+				for _, event := range events {
+					if event.Type == "Warning" && time.Since(event.Time) >= 0 && time.Since(event.Time) < time.Hour {
+						r.Checks = append(r.Checks, DiagnosticCheck{ID: "event/" + event.Namespace + "/" + event.Name, Severity: "info", Component: "events", Title: "Recent Kubernetes warning", Details: event.Namespace + "/" + event.Name, Suggestion: "Open Events to inspect the affected resource."})
+						r.Summary.Info++
+						count++
+						if count >= 30 {
+							break
+						}
+					}
+				}
+			}
+		}
+		return e.Log("complete", fmt.Sprintf("Diagnostics captured health snapshot %s: %d critical, %d warnings", snapshot.ID, r.Summary.Critical, r.Summary.Warning))
+	}
 	add := func(severity, component, node, title, details, suggestion string) {
 		r.Checks = append(r.Checks, DiagnosticCheck{ID: fmt.Sprintf("check-%d", len(r.Checks)+1), Severity: severity, Component: component, Node: node, Title: title, Details: details, Suggestion: suggestion})
 		switch severity {
@@ -289,7 +365,7 @@ func (s *DiagnosticsService) Bundle(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if report.Status == "unknown" {
+	if report.Status == "unknown" && report.CheckedAt.IsZero() {
 		return nil, errors.New("run diagnostics before exporting a support bundle")
 	}
 	data, err := json.MarshalIndent(report, "", "  ")

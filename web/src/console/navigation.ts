@@ -141,6 +141,10 @@ export function navigation() {
     },
     {id:'alert-center',title:t('Оповещения'),icon:Bell,group:t('НАБЛЮДЕНИЕ'),description:t('Активные и устранённые проблемы, приостановки и доставка.')},
     {
+      id: "health",
+      title: t("Здоровье"), icon:Activity, group:t("НАБЛЮДЕНИЕ"), description:t("Оценка, покрытие и доказательства состояния кластера."),
+    },
+    {
       id: "diagnostics",
       title: t("Диагностика"),
       icon: Search,
