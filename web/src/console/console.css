@@ -306,13 +306,6 @@ small {
   gap: 24px;
   margin-bottom: 28px;
 }
-.eyebrow {
-  font-size: 9px;
-  letter-spacing: 1.5px;
-  color: #8a8e98;
-  margin-bottom: 10px;
-  font-weight: 600;
-}
 .page-heading p {
   color: #8f95a1;
   font-size: 13px;

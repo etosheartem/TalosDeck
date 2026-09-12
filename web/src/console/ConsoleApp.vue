@@ -543,7 +543,7 @@ const protectedPage = computed(
     <aside :class="['rail', { open: mobile }]">
       <a class="brand" href="#clusters" @click.prevent="navigate('clusters')"
         ><span class="brand-symbol">t<span>_</span></span>
-        <div>TalosDeck<small>INFRASTRUCTURE CONSOLE</small></div></a
+        <div>TalosDeck<small>{{ t('Инфраструктурная консоль') }}</small></div></a
       ><button
         class="mobile-close icon-button"
         :aria-label="t('Закрыть навигацию')"
@@ -587,13 +587,13 @@ const protectedPage = computed(
       <nav :aria-label="t('Главная навигация')">
         <template v-for="group in navGroups" :key="group"
           ><button
-            v-if="selectedCluster || group === t('ПЛАТФОРМА')"
+            v-if="selectedCluster || group === t('Платформа')"
             class="nav-group group-toggle"
             :aria-expanded="
               !!navSearch ||
               expandedGroups.includes(group) ||
               group === page.group ||
-              group === t('ПЛАТФОРМА')
+              group === t('Платформа')
             "
             @click="toggleGroup(group)"
           >
@@ -604,7 +604,7 @@ const protectedPage = computed(
               navSearch ||
               expandedGroups.includes(group) ||
               group === page.group ||
-              group === t('ПЛАТФОРМА')
+              group === t('Платформа')
             "
           >
             <button
@@ -743,7 +743,6 @@ const protectedPage = computed(
         <template v-else>
           <div class="page-heading">
             <div>
-              <div class="eyebrow">{{ page.group }} / TALOS LINUX</div>
               <h1>{{ page.title }}</h1>
               <p>{{ page.description }}</p>
             </div>
@@ -851,7 +850,7 @@ const protectedPage = computed(
           <template v-else-if="active === 'overview'">
             <div class="overview-grid">
               <section class="availability">
-                <div class="section-label">{{ t("ДОСТУПНОСТЬ КЛАСТЕРА") }}</div>
+                <div class="section-label">{{ t("Доступность кластера") }}</div>
                 <div class="availability-value">
                   <span>{{ refreshed && !errors.nodes ? ready : "—" }}</span
                   ><small>/ {{ nodes.length || "—" }} {{ t("нод") }} </small>

@@ -477,7 +477,7 @@ try {
     });
   }
   await page.getByRole("button", { name: "Открыть меню" }).click();
-  await page.getByRole("button", {name:"ОПЕРАЦИИ",exact:true}).click();
+  await page.getByRole("button", {name:"Операции",exact:true}).click();
   await page.screenshot({path:`${artifacts}/console-mobile-sidebar.png`,fullPage:true});
   await page
     .getByRole("navigation")
