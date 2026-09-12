@@ -60,4 +60,4 @@ patches:
 images:
   - name: talosdeck
     newName: ghcr.io/etosheartem/talosdeck
-    newTag: "bd7e31b1"
+    newTag: "e79e000e"
