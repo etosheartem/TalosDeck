@@ -2,6 +2,7 @@ package operations
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -31,14 +32,45 @@ func (c CLI) executable() string {
 func (c CLI) Check(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, c.executable(), "version", "--client").CombinedOutput()
+	cmd := exec.CommandContext(ctx, c.executable(), "version", "--client")
+	cmd.Env = cliEnvironment()
+	cmd.WaitDelay = 3 * time.Second
+	output := &limitedCommandOutput{}
+	cmd.Stdout, cmd.Stderr = output, output
+	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("talosctl %s is required on the server: %w", TalosctlVersion, err)
 	}
-	if !regexp.MustCompile(`(?m)Tag:\s+` + regexp.QuoteMeta(TalosctlVersion) + `\s`).Match(output) {
+	if !regexp.MustCompile(`(?m)Tag:\s+` + regexp.QuoteMeta(TalosctlVersion) + `\s`).Match(output.Bytes()) {
 		return fmt.Errorf("talosctl version must be %s (matching the bundled SDK)", TalosctlVersion)
 	}
 	return nil
+}
+
+// Version probing must not inherit credentials or collect unbounded output.
+// WaitDelay also bounds inherited pipes left open by a child of the CLI.
+type limitedCommandOutput struct{ bytes.Buffer }
+
+func (b *limitedCommandOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := 64*1024 - b.Len()
+	if remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		_, _ = b.Buffer.Write(p)
+	}
+	return n, nil
+}
+
+func cliEnvironment() []string {
+	result := []string{}
+	for _, key := range []string{"PATH", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy"} {
+		if value, ok := os.LookupEnv(key); ok {
+			result = append(result, key+"="+value)
+		}
+	}
+	return result
 }
 
 var sensitiveLine = regexp.MustCompile(`(?i)(authorization|bearer\s|password|private.?key|client-key-data|client-certificate-data|\btoken\b|\bsecret\b)`)
@@ -62,11 +94,7 @@ func (c CLI) Run(ctx context.Context, args []string, log func(string) error) err
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.executable(), args...)
-	for _, key := range []string{"PATH", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy"} {
-		if value, ok := os.LookupEnv(key); ok {
-			cmd.Env = append(cmd.Env, key+"="+value)
-		}
-	}
+	cmd.Env = cliEnvironment()
 	cmd.WaitDelay = 3 * time.Second
 	reader, writer := io.Pipe()
 	cmd.Stdout = writer

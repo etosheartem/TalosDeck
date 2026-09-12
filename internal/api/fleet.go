@@ -29,6 +29,7 @@ import (
 )
 
 type FleetOptions struct {
+	Audit                                   *audit.AuditManager
 	Store                                   *clusters.Store
 	Auth                                    *auth.AuthManager
 	DataDir, LegacyBackupDir, LegacyJobsDir string
@@ -79,6 +80,11 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 		return nil, err
 	}
 	f.globalJobs, f.globalOperations = globalJobs, globalOps
+	if opts.Audit != nil {
+		globalJobs.SetCompletionHandler(func(j jobs.Job) {
+			opts.Audit.Log(audit.AuditEvent{Action: "job." + j.Request.Kind, User: j.User, Status: j.Status, Details: map[string]any{"jobId": j.ID, "scope": "fleet"}})
+		})
+	}
 	if err := globalOps.Provision.ReconcileInterrupted(context.Background()); err != nil {
 		f.Close()
 		return nil, err
@@ -525,9 +531,43 @@ func (f *Fleet) Import(ctx context.Context, req ImportClusterRequest) (clusters.
 }
 
 func (f *Fleet) register(app *fiber.App) {
+	app.Use(func(c *fiber.Ctx) error {
+		path := c.Path()
+		action := ""
+		if path == "/api/clusters" {
+			action = "clusters"
+		} else if path == "/api/providers" || strings.HasPrefix(path, "/api/providers/") {
+			action = "providers"
+		} else if path == "/api/provision" || strings.HasPrefix(path, "/api/provision/") {
+			action = "provision"
+		}
+		if f.options.Audit == nil || action == "" || c.Method() == "GET" || c.Method() == "HEAD" || c.Method() == "OPTIONS" {
+			return c.Next()
+		}
+		err := c.Next()
+		status := "success"
+		if err != nil || c.Response().StatusCode() >= 400 {
+			status = "failed"
+		}
+		user, _ := c.Locals("user").(string)
+		if user == "" {
+			user = "anonymous"
+		}
+		f.options.Audit.Log(audit.AuditEvent{Action: action + "." + strings.ToLower(c.Method()), User: user, IP: auth.GetClientIP(c), Status: status})
+		return err
+	})
 	app.Get("/readyz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok", "registry": "available"}) })
 	app.Get("/api/health", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
 	global := app.Group("/api")
+	if f.options.Audit != nil {
+		global.Get("/audit", auth.RequireAuth(f.options.Auth), func(c *fiber.Ctx) error {
+			limit := c.QueryInt("limit", 100)
+			if limit < 1 || limit > 1000 {
+				limit = 100
+			}
+			return c.JSON(fiber.Map{"events": f.options.Audit.GetEvents(limit, c.Query("action"), c.Query("search")), "total": f.options.Audit.TotalCount()})
+		})
+	}
 	RegisterProviderRoutes(global, f.options.Store, f.options.Auth)
 	RegisterProvisionRoutes(global, f.globalJobs, f.globalOperations.Provision, f.options.Auth)
 	RegisterJobRoutes(app.Group("/api/provision"), f.globalJobs, f.globalOperations, f.options.Auth)

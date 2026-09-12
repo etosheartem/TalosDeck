@@ -17,6 +17,7 @@ type UpgradeNode struct {
 	Ready         bool
 	Unschedulable bool
 	Pressure      bool
+	ControlPlane  bool
 }
 
 // VerifyUpgradeComponents checks the actual static pod images and readiness on
@@ -118,6 +119,9 @@ func (m *K8sManager) UpgradeInventory(ctx context.Context) (string, []UpgradeNod
 	result := make([]UpgradeNode, 0, len(nodes.Items))
 	for _, n := range nodes.Items {
 		node := UpgradeNode{Name: n.Name, Version: n.Status.NodeInfo.KubeletVersion, Unschedulable: n.Spec.Unschedulable}
+		_, controlPlane := n.Labels["node-role.kubernetes.io/control-plane"]
+		_, master := n.Labels["node-role.kubernetes.io/master"]
+		node.ControlPlane = controlPlane || master
 		for _, a := range n.Status.Addresses {
 			if a.Type == corev1.NodeInternalIP {
 				node.Addresses = append(node.Addresses, a.Address)

@@ -46,6 +46,7 @@ import ProvisionView from "./ProvisionView.vue";
 import DiagnosticsView from "./DiagnosticsView.vue";
 import KubernetesView from "./KubernetesView.vue";
 import MachinesView from "./MachinesView.vue";
+import AuditView from "./AuditView.vue";
 import BackupsView from "./BackupsView.vue";
 import { navigation } from "./navigation";
 import { isAdmin, canOperate } from "./permissions";
@@ -296,7 +297,7 @@ function schedule() {
   if (interval.value && !disposed)
     timer = setTimeout(async () => {
       await refresh();
-      if (["storage", "audit"].includes(active.value)) await loadSection();
+      if (["storage"].includes(active.value)) await loadSection();
       schedule();
     }, interval.value * 1000);
 }
@@ -334,7 +335,7 @@ async function loadSection() {
       );
       if (id === generation) config.value = r.configYaml || r.yaml || "";
     }
-    if (section === "audit") result = list(await request("/audit?limit=100"));
+
     if (section === "alerts" && isAdmin.value) {
       const a = await request("/alerts/config");
       if (id === generation) {
@@ -1073,6 +1074,7 @@ const protectedPage = computed(
             :initial-kind="operationKind"
             @submitted="navigate('jobs')"
           />
+          <AuditView v-else-if="active === 'audit' || active === 'global-audit'" :key="active + (globalPage ? 'global' : selectedCluster)" :global="active === 'global-audit'" />
           <MachinesView
             v-else-if="active === 'machines' || active === 'fleet-machines'"
             :key="active + selectedCluster"
@@ -1206,18 +1208,6 @@ const protectedPage = computed(
               "
               @submitted="navigate('jobs')"
             />
-            <template v-else-if="active === 'audit'"
-              ><ResourceTable
-                :rows="data"
-                :columns="[
-                  { key: 'action', title: t('Действие') },
-                  { key: 'user', title: t('Пользователь') },
-                  { key: 'status', title: t('Результат') },
-                  { key: 'ip', title: t('Адрес'), mono: true },
-                  { key: 'timestamp', title: t('Время') },
-                ]"
-                @select="detail = $event"
-            /></template>
             <template v-else-if="active === 'maintenance'"
               ><section class="surface operation-list">
                 <article>

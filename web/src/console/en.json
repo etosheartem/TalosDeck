@@ -436,5 +436,14 @@
   "Инициализация etcd": "Bootstrapping etcd",
   "Проверка перед созданием": "Provisioning preflight",
   "Подключение кластера": "Importing cluster",
-  "Часть источников ещё не ответила.": "Some sources have not responded yet."
+  "Часть источников ещё не ответила.": "Some sources have not responded yet.",
+  "Частичная копия": "Partial backup",
+  "Полная запись": "Complete record",
+  "Целостность комплекта": "Completeness",
+  "Часть конфигураций машин отсутствует в архиве. Снимок etcd сохранён, но для восстановления нужны отдельные копии конфигураций.": "Some machine configurations are missing from this archive. The etcd snapshot was retained, but recovery needs independent configuration copies.",
+  "Аудит платформы": "Platform audit",
+  "Аудит кластера": "Cluster audit",
+  "Подключения, провайдеры, пользователи и операции платформы.": "Connections, providers, users and platform operations.",
+  "Действия и задания выбранного кластера.": "Actions and jobs for the selected cluster.",
+  "Последние {0} из {1} записей.": "Latest {0} of {1} entries."
 }

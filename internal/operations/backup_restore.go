@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
+	"net/url"
 	"os"
 	"reflect"
 	"sort"
@@ -21,6 +23,8 @@ import (
 	"github.com/minio/minio-go/v7"
 	"talosdeck/internal/backup"
 	"talosdeck/internal/jobs"
+	"talosdeck/internal/k8s"
+	"talosdeck/internal/talos"
 )
 
 type RestoreNode struct {
@@ -34,6 +38,7 @@ type RestorePlan struct {
 	Warnings  []string      `json:"warnings"`
 	Steps     []string      `json:"steps"`
 	Nodes     []string      `json:"nodes"`
+	Workers   []string      `json:"workers"`
 	Inventory []RestoreNode `json:"inventory"`
 	CreatedAt time.Time     `json:"createdAt"`
 	Checksum  string        `json:"checksum"`
@@ -71,7 +76,7 @@ func verifyEtcdSnapshot(file string) error {
 	if !bytes.Equal(h.Sum(nil), want) {
 		return errors.New("etcd snapshot hash mismatch")
 	}
-	return nil
+	return verifySnapshotStructure(file)
 }
 
 // Materialize verifies the entire object before returning a private temporary
@@ -200,6 +205,9 @@ func (s *BackupService) restoreInventory(ctx context.Context) ([]RestoreNode, er
 	}
 	out := []RestoreNode{}
 	for _, n := range nodes {
+		if n == nil {
+			return nil, errors.New("incomplete Talos inventory")
+		}
 		if n.Role != "controlplane" {
 			continue
 		}
@@ -214,6 +222,27 @@ func (s *BackupService) restoreInventory(ctx context.Context) ([]RestoreNode, er
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
 	return out, nil
+}
+
+func (s *BackupService) restoreWorkers(ctx context.Context) ([]string, error) {
+	nodes, err := s.Operations.Talos.ListNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	workers := []string{}
+	for _, n := range nodes {
+		if n == nil || (n.Role != "worker" && n.Role != "controlplane") {
+			return nil, errors.New("restore requires complete node role inventory")
+		}
+		if n.Role == "worker" {
+			if _, err := netip.ParseAddr(n.IP); err != nil {
+				return nil, errors.New("invalid worker address")
+			}
+			workers = append(workers, n.IP)
+		}
+	}
+	sort.Strings(workers)
+	return workers, nil
 }
 func (s *BackupService) PlanRestore(ctx context.Context, id, user string) (*RestorePlan, error) {
 	info, file, cleanup, err := s.Materialize(ctx, id)
@@ -234,16 +263,8 @@ func (s *BackupService) PlanRestore(ctx context.Context, id, user string) (*Rest
 		return nil, err
 	}
 	if meta != nil {
-		for _, node := range inventory {
-			found := false
-			for _, old := range meta.Nodes {
-				if old.IP == node.IP && old.Role == "controlplane" && strings.TrimPrefix(old.Version, "v") == strings.TrimPrefix(node.Version, "v") {
-					found = true
-				}
-			}
-			if !found {
-				return nil, errors.New("restore requires the original control plane inventory and Talos versions from this backup")
-			}
+		if !matchesRestoreInventory(meta, inventory) {
+			return nil, errors.New("restore requires the complete original control plane inventory and Talos versions from this backup")
 		}
 	} else {
 		var old []RestoreNode
@@ -255,6 +276,12 @@ func (s *BackupService) PlanRestore(ctx context.Context, id, user string) (*Rest
 	for _, n := range inventory {
 		p.Nodes = append(p.Nodes, n.IP)
 	}
+	p.Workers, err = s.restoreWorkers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	p.Steps = append(p.Steps[:4], "Restart worker kubelets to refresh restored Kubernetes state", "Wait for fresh node leases and stable control-plane health")
+	p.Warnings = append(p.Warnings, "Worker kubelets will restart after recovery to discard watches of the previous etcd state.")
 	if info.Partial {
 		p.Warnings = append(p.Warnings, "This archive is partial: some machine configurations could not be captured. Verify independent copies before recovery.")
 	}
@@ -274,6 +301,16 @@ func (s *BackupService) CheckRestorePlan(ctx context.Context, id, user string) e
 	return nil
 }
 func (s *BackupService) runRestore(ctx context.Context, e *jobs.Execution, r jobs.Request) (result error) {
+	readiness, ok := s.Operations.Kubernetes.(interface {
+		VerifyRestoreReadiness(context.Context, []string, time.Time) error
+	})
+	if !ok {
+		return errors.New("post-restore Kubernetes readiness verification unavailable")
+	}
+	components, ok := s.Operations.Kubernetes.(componentVerifier)
+	if !ok {
+		return errors.New("post-restore component verification unavailable")
+	}
 	var p RestorePlan
 	if err := s.get(ctx, "restore-plan", r.RestorePlanID, &p); err != nil {
 		return err
@@ -307,6 +344,10 @@ func (s *BackupService) runRestore(ctx context.Context, e *jobs.Execution, r job
 	if !reflect.DeepEqual(inventory, p.Inventory) {
 		return errors.New("control plane inventory changed since restore preview")
 	}
+	workers, err := s.restoreWorkers(ctx)
+	if err != nil || !reflect.DeepEqual(workers, p.Workers) {
+		return errors.New("worker inventory changed since restore preview; create a new plan")
+	}
 	if err = s.Operations.CLI.Check(ctx); err != nil {
 		return err
 	}
@@ -315,6 +356,7 @@ func (s *BackupService) runRestore(ctx context.Context, e *jobs.Execution, r job
 		return err
 	}
 	mutated := false
+	resetStarted := time.Now().UTC()
 	defer func() {
 		if result != nil && mutated {
 			result = fmt.Errorf("%w: restore interrupted; review every control plane before continuing: %v", jobs.ErrUncertain, result)
@@ -361,20 +403,28 @@ func (s *BackupService) runRestore(ctx context.Context, e *jobs.Execution, r job
 	if err = s.Operations.CLI.Run(ctx, args, func(line string) error { return e.Log("recover", line) }); err != nil {
 		return err
 	}
+	for _, worker := range workers {
+		if err = e.Log("workers", "Restarting kubelet on "+worker+" to refresh restored Kubernetes watches"); err != nil {
+			return err
+		}
+		args = append(s.Operations.args(worker), "--endpoints", worker, "service", "kubelet", "restart")
+		if err = s.Operations.CLI.Run(waitCtx, args, func(line string) error { return e.Log("workers", line) }); err != nil {
+			return err
+		}
+	}
 	if err = e.Log("health", "Waiting for restored etcd quorum and Kubernetes nodes"); err != nil {
 		return err
 	}
+	stableSince := time.Time{}
 	for {
 		etcd, ee := s.Operations.Talos.GetEtcdStatus(waitCtx)
-		_, nodes, ke := s.Operations.Kubernetes.UpgradeInventory(waitCtx)
-		ready := ee == nil && etcd != nil && etcd.Healthy && ke == nil && len(nodes) >= len(inventory)
-		for _, n := range nodes {
-			if !n.Ready {
-				ready = false
-			}
-		}
+		version, nodes, ke := s.Operations.Kubernetes.UpgradeInventory(waitCtx)
+		ready := ee == nil && ke == nil && restoredControlPlanesReady(inventory, nodes, etcd)
 		if ready {
-			return e.Log("complete", "Etcd restored and Kubernetes nodes are Ready; verify application data separately")
+			ready = readiness.VerifyRestoreReadiness(waitCtx, append(append([]string{}, p.Nodes...), workers...), resetStarted) == nil && components.VerifyUpgradeComponents(waitCtx, version, false) == nil
+		}
+		if restoreHealthStable(ready, time.Now(), &stableSince) {
+			return e.Log("complete", "Etcd restored; fresh kubelet leases and control-plane components stayed healthy for 30 seconds. Verify application data separately")
 		}
 		select {
 		case <-waitCtx.Done():
@@ -382,4 +432,105 @@ func (s *BackupService) runRestore(ctx context.Context, e *jobs.Execution, r job
 		case <-time.After(5 * time.Second):
 		}
 	}
+}
+
+func restoreHealthStable(ready bool, now time.Time, since *time.Time) bool {
+	if !ready {
+		*since = time.Time{}
+		return false
+	}
+	if since.IsZero() {
+		*since = now
+	}
+	return now.Sub(*since) >= 30*time.Second
+}
+
+func restoreAddress(raw string) string {
+	if ip, err := netip.ParseAddr(raw); err == nil {
+		return ip.Unmap().String()
+	}
+	return raw
+}
+
+func matchesRestoreInventory(meta *backup.FullBackupMetadata, inventory []RestoreNode) bool {
+	original := map[string]string{}
+	for _, n := range meta.Nodes {
+		if n.Role == "controlplane" {
+			ip := restoreAddress(n.IP)
+			if ip == "" || n.Version == "" || original[ip] != "" {
+				return false
+			}
+			original[ip] = strings.TrimPrefix(n.Version, "v")
+		}
+	}
+	if len(original) == 0 || len(original) != len(inventory) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, n := range inventory {
+		ip := restoreAddress(n.IP)
+		if seen[ip] || original[ip] == "" || original[ip] != strings.TrimPrefix(n.Version, "v") {
+			return false
+		}
+		seen[ip] = true
+	}
+	return true
+}
+
+// Counts cannot establish recovery: every planned control plane must be present
+// in Kubernetes and in the restored etcd membership, with its original address.
+func restoredControlPlanesReady(inventory []RestoreNode, nodes []k8s.UpgradeNode, etcd *talos.EtcdClusterStatus) bool {
+	if len(inventory) == 0 || etcd == nil || !etcd.Healthy || len(etcd.Members) != len(inventory) {
+		return false
+	}
+	for _, node := range nodes {
+		if !node.Ready {
+			return false
+		}
+	}
+	seenNodes := map[string]bool{}
+	seenMembers := map[string]bool{}
+	for _, expected := range inventory {
+		matchedName := ""
+		for _, node := range nodes {
+			if !node.ControlPlane || !node.Ready || seenNodes[node.Name] {
+				continue
+			}
+			for _, address := range node.Addresses {
+				if restoreAddress(address) == restoreAddress(expected.IP) {
+					matchedName = node.Name
+					break
+				}
+			}
+			if matchedName != "" {
+				break
+			}
+		}
+		if matchedName == "" {
+			return false
+		}
+		seenNodes[matchedName] = true
+		memberID := ""
+		for _, member := range etcd.Members {
+			if member.IsLearner || seenMembers[member.ID] || member.ID == "" {
+				continue
+			}
+			match := member.Name == matchedName || member.Hostname == matchedName
+			for _, raw := range append(append([]string(nil), member.ClientURLs...), member.PeerURLs...) {
+				u, err := url.Parse(raw)
+				if err == nil && restoreAddress(u.Hostname()) == restoreAddress(expected.IP) {
+					match = true
+				}
+			}
+			if match {
+				memberID = member.ID
+				break
+			}
+		}
+		if memberID == "" {
+			return false
+		}
+		seenMembers[memberID] = true
+	}
+	return true
 }

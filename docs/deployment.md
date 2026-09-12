@@ -1,192 +1,90 @@
 # Развёртывание TalosDeck
 
-Команды выполняются из корня репозитория. Подставьте свои пути, registry,
-image tag и Git URL. Привязки к локальной сети разработчика не требуются.
+TalosDeck — один контейнер с API, встроенным интерфейсом и `talosctl`. Можно начать с пустого реестра и импортировать кластеры через UI. Размещайте панель на отдельной VM или в management-кластере, чтобы она оставалась доступной при поломке управляемого Kubernetes.
 
-## Сборка и публикация образа
+SQLite и файловые jobs требуют **одной реплики**. Helm использует `Recreate`; несколько процессов не должны открывать общую БД.
 
-Dockerfile собирает SPA, Go-бинарник и добавляет `talosctl v1.14.0`.
-Для сборки используйте Docker Buildx; архитектура должна совпадать с нодами.
+## Образ
+
+Из корня репозитория, заменив namespace для своего fork:
 
 ```bash
 export TD_IMAGE=ghcr.io/etosheartem/talosdeck
 export TD_TAG="$(git rev-parse --short=12 HEAD)"
-
 docker login ghcr.io
-docker buildx build --platform linux/amd64 \
-  --tag "${TD_IMAGE}:${TD_TAG}" --push .
+docker buildx build --platform linux/amd64 --tag "${TD_IMAGE}:${TD_TAG}" --push .
 docker buildx imagetools inspect "${TD_IMAGE}:${TD_TAG}"
 ```
 
-Публикация в указанный namespace требует прав владельца пакета. Для своего
-fork замените `TD_IMAGE`. Для ARM используйте `linux/arm64`.
-Registry-токен публикации должен иметь право записи; Kubernetes достаточно
-права скачивания. Не переиспользуйте один тег для разных сборок.
+Для ARM используйте `linux/arm64`. Публикация требует прав записи в пакет. Используйте неизменяемый тег коммита, не `latest`. Dockerfile собирает SPA, Go и проверяет SHA-256 скачиваемого `talosctl`. Локально, без публикации: `docker build -t talosdeck:local .`.
 
-## Конфигурация подключения
+## Docker Compose
 
-Подготовьте вне репозитория:
-
-- `talosconfig` с нужным активным контекстом и доступными endpoints;
-- самодостаточный kubeconfig того же кластера, со встроенными сертификатами;
-- `runtime.env` с паролем администратора и отдельным случайным JWT secret.
-
-Пример структуры `runtime.env` — значения необходимо заменить:
-
-```dotenv
-TALOSDECK_ADMIN_PASSWORD=replace-with-a-unique-password
-TALOSDECK_JWT_SECRET=replace-with-a-random-secret
-```
-
-Случайное значение можно получить через `openssl rand -hex 32`.
-Ограничьте доступ к файлу. Файлы конфигурации должны читаться UID 1000
-в контейнере. Kubeconfig с локальным exec-плагином или адресом `127.0.0.1`
-нельзя просто перенести с рабочей станции в Pod.
-
-## Docker
+Нужны Docker Engine и плагин `docker compose`. Создайте приватный файл **вне репозитория**:
 
 ```bash
-docker volume create talosdeck-data
-docker run -d --name talosdeck --restart unless-stopped \
-  -p 127.0.0.1:8080:8080 \
-  --env-file /absolute/path/to/runtime.env \
-  -e KUBECONFIG=/etc/kubernetes/kubeconfig \
-  --mount type=bind,src=/absolute/path/to/talosconfig,dst=/etc/talos/talosconfig,readonly \
-  --mount type=bind,src=/absolute/path/to/kubeconfig,dst=/etc/kubernetes/kubeconfig,readonly \
-  --mount type=volume,src=talosdeck-data,dst=/app/data \
-  "${TD_IMAGE}:${TD_TAG}"
+install -d -m 700 "$HOME/.config/talosdeck"
+umask 077
+printf 'TALOSDECK_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 24)" \
+  > "$HOME/.config/talosdeck/runtime.env"
+printf 'TALOSDECK_IMAGE=%s:%s\nTALOSDECK_PORT=8080\n' "$TD_IMAGE" "$TD_TAG" \
+  >> "$HOME/.config/talosdeck/runtime.env"
+docker compose -p talosdeck --env-file "$HOME/.config/talosdeck/runtime.env" up -d
+docker compose -p talosdeck --env-file "$HOME/.config/talosdeck/runtime.env" ps
+curl --fail http://127.0.0.1:8080/healthz
+curl --fail http://127.0.0.1:8080/readyz
 ```
 
-Откройте `http://localhost:8080`. Для доступа с других машин настройте
-свой HTTPS reverse proxy с поддержкой WebSocket.
+Для локальной сборки задайте `TALOSDECK_IMAGE=talosdeck:local`. Откройте `http://127.0.0.1:8080`, войдите как `admin` с сохранённым паролем. Затем **Clusters → Import cluster**: имя, talosconfig и kubeconfig одного кластера со встроенными сертификатами. Локальные exec-плагины, ссылки на файлы и отключённая TLS-проверка kubeconfig не принимаются. Backend проверяет оба API и соответствие Kubernetes CA данным Talos.
 
-## Импорт и хранение данных
+Пароль из env используется только для создания первого администратора. После создания пользователей изменение env не перезаписывает их пароли. JWT secret автоматически сохраняется зашифрованным; при необходимости задайте постоянный `TALOSDECK_JWT_SECRET`.
 
-Без конфигов сервер открывает пустой список кластеров. Войдите и нажмите
-**Добавить кластер**: имя, talosconfig и kubeconfig. Загружается только выбранный
-контекст каждого файла. Обе конфигурации должны содержать встроенные credentials;
-exec/auth-provider, ссылки на локальные файлы и отключённая TLS-проверка запрещены.
-Сервер проверяет оба API, состав нод и соответствие Kubernetes CA данным Talos.
-Повторный импорт того же Talos CA возвращает конфликт.
-
-При первом запуске с существующими `TALOSCONFIG`/`KUBECONFIG` подключение
-мигрирует в SQLite. Старые `data/jobs`, `data/backups`, `data/audit.log` остаются
-на месте и закрепляются за этим кластером; provider/Telegram settings переносятся
-в зашифрованное хранилище. Исходные файлы автоматически не удаляются.
-Последующие изменения исходных конфигов не обновляют импортированную запись.
-
-Структура runtime-данных:
-
-```text
-data/talosdeck.db             Метаданные и AES-GCM credentials/revisions
-data/master.key               Ключ по умолчанию; хранить отдельно от копии БД
-data/clusters/<id>/jobs/       Журнал заданий нового кластера
-data/clusters/<id>/backups/    Снимки нового кластера
-data/clusters/<id>/audit.log   Аудит нового кластера
-data/global-audit.log          Общий аудит входа
-```
-
-Для собственного пути к ключу задайте `TALOSDECK_ENCRYPTION_KEY_FILE` либо
-`--encryption-key`. Формат ключа — JSON keyring, автоматически создаваемый
-приложением при первой инициализации. Можно заранее инициализировать пустую БД,
-сохранить созданный keyring в Kubernetes Secret и смонтировать его read-only
-с правами `0400`/`0440`. Потерянный ключ существующей БД не генерируется заново:
-без него расшифровать подключения невозможно.
-
-Для `talosctl` credentials временно материализуются в приватном каталоге
-`/dev/shm` с файлами `0600` и удаляются при штатном завершении. Другой tmpfs
-можно указать через `TALOSDECK_RUNTIME_DIR`. В Docker доступен `/dev/shm`;
-при переносе на другую ОС используйте отдельный защищённый runtime-каталог.
-
-## Резервная копия БД и смена ключа
-
-Остановите TalosDeck перед административными командами: SQLite registry
-имеет эксклюзивную блокировку процесса. Не выполняйте их во время upgrade.
+Compose привязывает порт к loopback. Для удалённых пользователей настройте HTTPS reverse proxy с WebSocket; адрес привязки меняется через `TALOSDECK_BIND_ADDRESS`. Данные и ключ находятся в отдельных volumes `talosdeck_talosdeck-data` и `talosdeck_talosdeck-keys`. Приложение работает как UID/GID 1000, с read-only filesystem и временными конфигами в tmpfs.
 
 ```bash
-./bin/talosdeck --data /srv/talosdeck/data \
-  --encryption-key /srv/talosdeck/keys/master.key \
-  --backup-database /srv/talosdeck-backups/registry.db
-
-./bin/talosdeck --data /srv/talosdeck/data \
-  --encryption-key /srv/talosdeck/keys/master.key \
-  --rotate-encryption-key /srv/talosdeck/keys/next.key
+docker compose -p talosdeck --env-file "$HOME/.config/talosdeck/runtime.env" restart talosdeck
+docker compose -p talosdeck --env-file "$HOME/.config/talosdeck/runtime.env" down
 ```
 
-Снимок содержит зашифрованную БД, без ключа, jobs и файлов etcd backups.
-Сохраните keyring отдельно, а каталоги jobs/backups/audit скопируйте при
-остановленном сервере. Для восстановления верните БД, соответствующий keyring
-и эти каталоги с исходными правами, затем запустите сервер. Незавершённые
-задания потребуют ручного review.
+Обе команды сохраняют пользователей, кластеры, jobs и backups. **Не добавляйте `down --volumes`**, если данные нужно сохранить.
 
-Ротация обновляет исходный и новый keyring до переключения БД; старые ключи
-сохраняются для восстановления исторических копий. Новый путь должен быть
-свободен. Для read-only Kubernetes Secret ротацию выполняют на отдельной
-записываемой копии данных и keyring при остановленном Deployment, затем
-обновляют Secret. Не заменяйте ключ случайной строкой.
+## Helm
 
-Снимки etcd и полные recovery-архивы содержат секреты самого кластера:
-их административное скачивание остаётся функцией резервного копирования.
-Очищенные UI/config/job exports не заменяют recovery backup.
-
-## Kubernetes и Argo CD
-
-Standalone SQLite требует одну replica и стратегию Deployment `Recreate`
-(уже указаны в манифестах). RollingUpdate с двумя процессами и общим PVC
-не подходит для этой поставки.
-
-Предполагается, что Argo CD уже установлен, `kubectl` подключён к кластеру
-размещения, а StorageClass может выделить PVC. Управляемый кластер
-выбирается через переданные credentials.
-
-### Namespace и секреты
+Нужны Helm, kubectl, StorageClass и доступ нод к registry. Выберите management-кластер через kubeconfig, затем:
 
 ```bash
-kubectl apply -f deploy/namespace.yaml
-
-kubectl -n talosdeck create secret generic talosdeck-config \
-  --from-file=talosconfig=/absolute/path/to/talosconfig \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl -n talosdeck create secret generic talosdeck-kubeconfig \
-  --from-file=kubeconfig=/absolute/path/to/kubeconfig \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl -n talosdeck create secret generic talosdeck-runtime \
-  --from-env-file=/absolute/path/to/runtime.env \
-  --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace talosdeck
+kubectl -n talosdeck create secret generic talosdeck-auth \
+  --from-env-file="$HOME/.config/talosdeck/runtime.env"
+helm lint deploy/helm/talosdeck
+helm upgrade --install talosdeck deploy/helm/talosdeck \
+  --namespace talosdeck \
+  --set image.repository="$TD_IMAGE" --set image.tag="$TD_TAG" \
+  --set auth.existingSecret=talosdeck-auth --wait --timeout 5m
+kubectl -n talosdeck get pods,pvc,svc
+kubectl -n talosdeck port-forward svc/talosdeck 8080:8080
 ```
 
-Значения Secret не должны попадать в Git. Для приватного образа дополнительно
-создайте registry pull Secret в namespace `talosdeck` и укажите его имя
-в `spec.template.spec.imagePullSecrets` Deployment.
+Создаются отдельные PVC для данных (10 GiB) и ключа (64 MiB); реестр изначально пуст. При необходимости задайте `persistence.storageClass` и `encryption.storageClass`. Существующие тома подключаются через `persistence.existingClaim` и `encryption.existingClaim`.
 
-### Манифесты
+Для приватного registry создайте pull Secret и передайте `--set 'imagePullSecrets[0].name=registry-credentials'`. Не помещайте пароли в values или Git. ServiceAccount Pod не получает автоматический доступ к управляемому кластеру: используется импортированный kubeconfig.
 
-Используйте каталог [gitops/talosdeck](../gitops/talosdeck). Он содержит
-Deployment, Service, PVC и Kustomize-патчи. Перед первым sync проверьте:
-
-- `images.newName` и `images.newTag` в `kustomization.yaml` соответствуют
-  опубликованному образу;
-- PVC использует существующий StorageClass или default-класс;
-- имена Secret и путь kubeconfig совпадают с созданными выше;
-- доступ из Pod к Talos API и Kubernetes API разрешён сетью;
-- число replicas равно 1: файловый job store не является HA-хранилищем.
+Необязательный импорт при первом запуске:
 
 ```bash
-kubectl kustomize gitops/talosdeck
-git add gitops/talosdeck
-git commit -m "deploy: configure TalosDeck image"
-git push
+kubectl -n talosdeck create secret generic talosdeck-bootstrap \
+  --from-file=talosconfig=/absolute/private/path/talosconfig \
+  --from-file=kubeconfig=/absolute/private/path/kubeconfig
+# Добавьте к helm upgrade: --set bootstrap.existingSecret=talosdeck-bootstrap
 ```
 
-### Application
+Готовый JSON keyring можно подключить через `encryption.existingSecret`, ключ `master.key`. Это keyring TalosDeck, не произвольный пароль. Для CLI-ротации нужен writable key volume; Secret монтируется read-only.
 
-Подключите Git-репозиторий в Argo CD. Для приватного репозитория нужны
-отдельные Git credentials; registry pull Secret их не заменяет.
+Ingress: `ingress.enabled`, `className`, `host`, `tlsSecret`. Контроллер должен поддерживать WebSocket. OIDC: `oidc.enabled`, issuer, clientID, redirectURL, группы ролей; client secret хранится в `auth.existingSecret`. См. [authentication](authentication.md).
 
-Создайте Application со следующими полями, подставив URL и ветку,
-в которые отправлены манифесты:
+## Argo CD
+
+Argo может управлять chart `deploy/helm/talosdeck` либо Kustomize-каталогом `gitops/talosdeck`. Runtime и registry Secrets создайте отдельно. Для Helm используйте Application в своём GitOps-репозитории:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -199,7 +97,15 @@ spec:
   source:
     repoURL: https://github.com/etosheartem/TalosDeck.git
     targetRevision: main
-    path: gitops/talosdeck
+    path: deploy/helm/talosdeck
+    helm:
+      releaseName: talosdeck
+      values: |
+        image:
+          repository: ghcr.io/etosheartem/talosdeck
+          tag: REPLACE_WITH_COMMIT_TAG
+        auth:
+          existingSecret: talosdeck-auth
   destination:
     server: https://kubernetes.default.svc
     namespace: talosdeck
@@ -208,75 +114,67 @@ spec:
       - CreateNamespace=true
 ```
 
-Сохраните этот манифест отдельно от `gitops/talosdeck`, например
-в `/tmp/talosdeck-application.yaml`, и примените:
+Доступ Argo к приватному Git настраивается отдельно от registry credentials. Выполните Sync и проверьте PVC, Pod и фактический imageID. GitLab pipeline выполняет frontend smoke, Go tests/vet, публикацию образа и изменение Kustomize image tag. Для Helm Application меняйте `image.tag` в своём GitOps-репозитории.
+
+GitLab публикует тег `CI_COMMIT_SHORT_SHA` (8 символов). Сокращённый хеш из `git log` может иметь другую длину: используйте точный опубликованный тег. Приведённая выше ручная сборка отдельно создаёт 12-символьный тег.
+
+## Backup, обновление и откат панели
+
+Сохраняйте **data volume и соответствующий keyring**. В data находятся SQLite, jobs, аудит и backups. Без ключа зашифрованные credentials не восстановить. Копию ключа храните отдельно, с ограниченным доступом.
+
+Для согласованной полной копии Compose остановите приложение и упакуйте оба тома проверенным runtime image:
 
 ```bash
-kubectl apply -f /tmp/talosdeck-application.yaml
-argocd app sync talosdeck
-argocd app wait talosdeck --sync --health --timeout 300
-kubectl -n talosdeck get pods,pvc,svc
-kubectl -n talosdeck logs deployment/talosdeck --tail=100
-kubectl -n talosdeck port-forward svc/talosdeck 8080:8080
+export TD_BACKUP="$HOME/talosdeck-backup-$(date +%Y%m%d-%H%M%S)"
+install -d -m 700 "$TD_BACKUP"
+docker compose -p talosdeck --env-file "$HOME/.config/talosdeck/runtime.env" stop talosdeck
+docker run --rm --network none --user 0:0 --entrypoint tar \
+  -v talosdeck_talosdeck-data:/source:ro -v "$TD_BACKUP":/backup \
+  "${TD_IMAGE}:${TD_TAG}" -C /source -czf /backup/data.tgz .
+docker run --rm --network none --user 0:0 --entrypoint tar \
+  -v talosdeck_talosdeck-keys:/source:ro -v "$TD_BACKUP":/backup \
+  "${TD_IMAGE}:${TD_TAG}" -C /source -czf /backup/keys.tgz .
+docker compose -p talosdeck --env-file "$HOME/.config/talosdeck/runtime.env" start talosdeck
 ```
 
-Argo CD CLI должен быть подключён к вашему серверу. Для другой площадки
-размещения укажите зарегистрированный destination. AppProject должен разрешать
-выбранные repo и destination. Sync также можно выполнить через UI Argo CD.
-
-Откройте `http://localhost:8080`. Если порт занят, используйте
-`18080:8080` и откройте `http://localhost:18080`.
-
-## Обновление панели
-
-Соберите и опубликуйте новый образ, измените `newTag` в GitOps-манифесте,
-отправьте коммит и выполните Sync. Один push образа не меняет Deployment.
-
-Текущая `.gitlab-ci.yml` автоматизирует сборку в GHCR и изменение image tag
-для настроенного GitLab-окружения; это не GitHub Actions workflow.
-
-Проверка фактически запущенного образа:
+Восстанавливайте архивы в **новые пустые тома**, сохраняя владельца. Пример для отдельного recovery-проекта:
 
 ```bash
-kubectl -n talosdeck get deployment talosdeck \
-  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
-kubectl -n talosdeck get pods -l app=talosdeck \
+docker volume create talosdeck-recovery_talosdeck-data
+docker volume create talosdeck-recovery_talosdeck-keys
+docker run --rm --network none --user 0:0 --entrypoint tar \
+  -v talosdeck-recovery_talosdeck-data:/target -v "$TD_BACKUP":/backup:ro \
+  "${TD_IMAGE}:${TD_TAG}" -C /target -xzf /backup/data.tgz
+docker run --rm --network none --user 0:0 --entrypoint tar \
+  -v talosdeck-recovery_talosdeck-keys:/target -v "$TD_BACKUP":/backup:ro \
+  "${TD_IMAGE}:${TD_TAG}" -C /target -xzf /backup/keys.tgz
+TALOSDECK_PORT=18080 docker compose -p talosdeck-recovery \
+  --env-file "$HOME/.config/talosdeck/runtime.env" up -d
+```
+
+После проверки можно переключить reverse proxy. Не используйте исходный и восстановленный экземпляры для параллельного управления одной инфраструктурой.
+
+Для обновления Compose поменяйте тег в env, выполните `docker compose ... pull` и `docker compose ... up -d`. Для Helm — `helm upgrade`, для Argo — коммит и Sync.
+
+**Откат image не откатывает схему БД.** Старый бинарник должен отказать в открытии более новой схемы. Не редактируйте номер миграции для обхода защиты. При несовместимости восстанавливайте согласованный snapshot данных и ключа, созданный перед обновлением, вместе с прежним образом. Без такого snapshot гарантировать downgrade нельзя. Незавершённые jobs после рестарта становятся interrupted и требуют проверки, а не повторяются автоматически.
+
+## Диагностика
+
+```bash
+docker compose -p talosdeck --env-file "$HOME/.config/talosdeck/runtime.env" logs --tail=100 talosdeck
+kubectl -n talosdeck logs deployment/talosdeck --tail=100
+kubectl -n talosdeck get events --sort-by=.lastTimestamp
+kubectl -n talosdeck get pods -l app.kubernetes.io/name=talosdeck \
   -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].imageID}{"\n"}{end}'
 ```
 
-Откат приложения — вернуть предыдущий тег коммитом и выполнить Sync.
-Это не откатывает данные на PVC. При изменении runtime Secret перезапустите
-Deployment, чтобы процесс получил новые переменные окружения.
-
-## Данные и интеграции
-
-В `/app/data` хранятся резервные копии, аудит и задания. Сохраняйте этот
-каталог между перезапусками. Копии для аварийного восстановления должны
-быть доступны вне управляемого кластера.
-
-Proxmox настраивается через `PROXMOX_URL`, `PROXMOX_NODE`,
-`PROXMOX_API_TOKEN`, `PROXMOX_STORAGE`, `PROXMOX_ISO`, `PROXMOX_BRIDGE`.
-Токен: `user@realm!tokenid=secret`. Для собственного CA используйте
-`PROXMOX_CA_FILE` с подключённым файлом. Telegram — через
-`TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID`. Секретные значения передавайте
-через runtime Secret/файл окружения.
-
-## Диагностика запуска
-
-| Симптом | Проверить |
+| Симптом | Проверка |
 |---|---|
-| `ImagePullBackOff` | Image/tag, права pull, DNS и доверие CA registry на нодах |
-| PVC `Pending` | StorageClass, provisioner, место и ограничения размещения |
-| `CreateContainerConfigError` | Наличие и имена Secret |
-| `CrashLoopBackOff` | Логи предыдущего контейнера, конфиги и права на каталог данных |
-| Workloads возвращают `403` | Явный kubeconfig, его permissions и выбранный кластер |
-| Видна только часть нод | Talos discovery/Members; при необходимости полный список `nodes` в talosconfig |
-| Старый интерфейс | ImageID, тег в манифесте, Sync и правильный адрес панели |
+| ImagePullBackOff | Тег, pull credentials, DNS и CA registry |
+| PVC Pending | StorageClass, provisioner, ёмкость и размещение |
+| БД заблокирована | Одна реплика, завершён ли прежний процесс |
+| Не расшифровываются credentials | Соответствует ли keyring snapshot базы |
+| Старый интерфейс | ImageID, image tag, Argo Sync и адрес панели |
+| Частичный backup | Недоступные ноды в результате; частичный архив не равен полной копии |
 
-```bash
-kubectl -n talosdeck get events --sort-by=.lastTimestamp
-kubectl -n talosdeck describe deployment talosdeck
-kubectl -n talosdeck describe pvc talosdeck-data
-```
-
-Обновления управляемого кластера: [операции и задания](operations.md).
+Proxmox подключается через **Providers**, Telegram и backup targets — для выбранного кластера. Legacy-переменные окружения не заменяют настройки импортированных кластеров. Дальше: [операции](operations.md), [provisioning](provisioning.md).

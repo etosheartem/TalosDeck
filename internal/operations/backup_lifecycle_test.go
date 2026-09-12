@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/minio/minio-go/v7"
+	bolt "go.etcd.io/bbolt"
 	"talosdeck/internal/backup"
 	"talosdeck/internal/clusters"
 	"talosdeck/internal/jobs"
@@ -91,8 +92,9 @@ func TestSnapshotHashCheckedBeforeReset(t *testing.T) {
 	if err := os.WriteFile(file, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyEtcdSnapshot(file); err != nil {
-		t.Fatal(err)
+	// Correct hash on random bytes is not a recoverable etcd database.
+	if err := verifyEtcdSnapshot(file); err == nil {
+		t.Fatal("hashed garbage accepted")
 	}
 	data[20] ^= 0xff
 	os.WriteFile(file, data, 0600)
@@ -102,6 +104,34 @@ func TestSnapshotHashCheckedBeforeReset(t *testing.T) {
 	os.WriteFile(file, db, 0600)
 	if err := verifyEtcdSnapshot(file); err == nil {
 		t.Fatal("unhashed snapshot accepted")
+	}
+	validFile := filepath.Join(t.TempDir(), "valid.snapshot")
+	database, err := bolt.Open(validFile, 0600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = database.Update(func(tx *bolt.Tx) error { _, e := tx.CreateBucket([]byte("key")); return e }); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+	validData, err := os.ReadFile(validFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(validData)
+	os.WriteFile(validFile, append(validData, sum[:]...), 0600)
+	if err = verifyEtcdSnapshot(validFile); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLiveEtcdSnapshotStructure(t *testing.T) {
+	file := os.Getenv("TALOSDECK_TEST_SNAPSHOT")
+	if file == "" {
+		t.Skip("set an isolated downloaded etcd snapshot")
+	}
+	if err := verifyEtcdSnapshot(file); err != nil {
+		t.Fatal(err)
 	}
 }
 func TestRestoreArchiveDoesNotExtractSecretsOrPaths(t *testing.T) {

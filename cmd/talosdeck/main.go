@@ -86,7 +86,7 @@ func main() {
 		log.Fatalf("Cannot open global audit: %v", err)
 	}
 	defer globalAudit.Close()
-	fleet, err := api.OpenFleet(api.FleetOptions{Store: store, Auth: authMgr, DataDir: *dataDir, LegacyBackupDir: *backupDir, LegacyJobsDir: os.Getenv("TALOSDECK_JOBS_DIR")})
+	fleet, err := api.OpenFleet(api.FleetOptions{Store: store, Auth: authMgr, Audit: globalAudit, DataDir: *dataDir, LegacyBackupDir: *backupDir, LegacyJobsDir: os.Getenv("TALOSDECK_JOBS_DIR")})
 	if err != nil {
 		log.Fatalf("Cannot open fleet: %v", err)
 	}

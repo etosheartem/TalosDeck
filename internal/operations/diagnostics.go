@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"talosdeck/internal/backup"
 	"talosdeck/internal/clusters"
 	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
@@ -169,7 +170,7 @@ func (s *DiagnosticsService) Run(ctx context.Context, e *jobs.Execution, _ jobs.
 		add("warning", "workloads", "", "Pod inspection unavailable", "Could not list pods.", "Check Kubernetes permissions and API health.")
 	} else {
 		for _, p := range pods {
-			if p.Status != "Running" && p.Status != "Completed" {
+			if podNeedsDiagnosticAttention(p) {
 				add("warning", "workloads", p.NodeName, "Pod requires attention", p.Namespace+"/"+p.Name+": "+p.Status, "Open the pod inspector for events and container status.")
 			}
 			if p.Restarts >= 5 {
@@ -219,8 +220,16 @@ func (s *DiagnosticsService) Run(ctx context.Context, e *jobs.Execution, _ jobs.
 		backups, be := s.Backups.List(ctx)
 		if be != nil || len(backups) == 0 {
 			add("warning", "backups", "", "No verified restore point listed", "The backup catalog is empty or unavailable.", "Create a backup and test recovery.")
-		} else if time.Since(backups[0].Timestamp) > 24*time.Hour {
-			add("warning", "backups", "", "Latest backup is older than 24 hours", backups[0].Timestamp.UTC().Format(time.RFC3339), "Check schedule and recent backup jobs.")
+		} else {
+			complete := latestCompleteBackup(backups)
+			if backups[0].Partial {
+				add("warning", "backups", "", "Latest backup is partial", "Some machine configurations are missing from the latest archive.", "Check the failed backup job and keep independent machine configurations before recovery.")
+			}
+			if complete == nil {
+				add("warning", "backups", "", "No complete backup listed", "Only partial archives are available.", "Resolve unavailable machine configurations and create a complete backup.")
+			} else if time.Since(complete.Timestamp) > 24*time.Hour {
+				add("warning", "backups", "", "Latest complete backup is older than 24 hours", complete.Timestamp.UTC().Format(time.RFC3339), "Check schedule and recent backup jobs.")
+			}
 		}
 	}
 	if r.Summary.Critical > 0 {
@@ -229,6 +238,23 @@ func (s *DiagnosticsService) Run(ctx context.Context, e *jobs.Execution, _ jobs.
 		r.Status = "degraded"
 	}
 	return e.Log("complete", fmt.Sprintf("Diagnostics complete: %d critical, %d warnings", r.Summary.Critical, r.Summary.Warning))
+}
+
+func latestCompleteBackup(backups []*backup.BackupInfo) *backup.BackupInfo {
+	var latest *backup.BackupInfo
+	for _, candidate := range backups {
+		if candidate != nil && !candidate.Partial && (latest == nil || candidate.Timestamp.After(latest.Timestamp)) {
+			latest = candidate
+		}
+	}
+	return latest
+}
+
+func podNeedsDiagnosticAttention(p k8s.PodInfo) bool {
+	if p.Status == "Succeeded" || p.Status == "Completed" {
+		return false
+	}
+	return p.Status != "Running" || (p.TotalContainers > 0 && p.ReadyCount < p.TotalContainers)
 }
 
 // Bundle uses only allowlisted diagnostic DTOs. It deliberately excludes raw

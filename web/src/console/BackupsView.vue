@@ -182,11 +182,12 @@ onUnmounted(() => {
       </div>
       <ResourceTable
         :rows="
-          rows.map((r) => ({ ...r, sizeLabel: r.humanSize || bytes(r.size) }))
+          rows.map((r) => ({ ...r, completeness:r.partial?t('Частичная копия'):t('Полная запись'), sizeLabel: r.humanSize || bytes(r.size) }))
         "
         :columns="[
           { key: 'filename', title: t('Файл'), mono: true },
           { key: 'type', title: t('Тип') },
+          { key: 'completeness', title: t('Целостность комплекта') },
           { key: 'sizeLabel', title: t('Размер') },
           { key: 'timestamp', title: t('Создано') },
           { key: 'node', title: t('Нода') },
@@ -332,6 +333,7 @@ onUnmounted(() => {
         <dt>SHA256</dt>
         <dd class="inspection-copy">{{ selected.checksum }}</dd>
       </dl>
+      <p v-if="selected.partial" class="notice warning">{{ t('Часть конфигураций машин отсутствует в архиве. Снимок etcd сохранён, но для восстановления нужны отдельные копии конфигураций.') }}</p>
       <div v-if="isAdmin" class="toolbar">
         <button
           :disabled="busy"

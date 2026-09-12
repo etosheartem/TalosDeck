@@ -6,6 +6,7 @@ import (
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/siderolabs/talos/pkg/machinery/resources/block"
+	"path"
 	"strings"
 )
 
@@ -20,27 +21,86 @@ func (m *TalosManager) RestorePartition(ctx context.Context, node string) (strin
 	if err != nil {
 		return "", errors.New("cannot inspect etcd storage layout")
 	}
-	ephemeral := false
+	specs := map[string]block.VolumeStatusSpec{}
 	for v := range volumes.All() {
 		if v == nil || v.TypedSpec() == nil {
 			continue
 		}
-		spec := v.TypedSpec()
-		id := string(v.Metadata().ID())
-		if id == "ETCD" && spec.Type == block.VolumeTypePartition && spec.Location != "" && strings.TrimRight(spec.MountSpec.TargetPath, "/") == "/var/lib/etcd" {
-			return "ETCD", nil
+		specs[string(v.Metadata().ID())] = *v.TypedSpec()
+	}
+	return restorePartitionFromVolumes(specs)
+}
+
+func restorePartitionFromVolumes(specs map[string]block.VolumeStatusSpec) (string, error) {
+	if _, present := specs["ETCD"]; !present {
+		mount, backing, err := resolveRestoreMount(specs, "EPHEMERAL", map[string]bool{})
+		if err == nil && mount == "/var" && backing == "EPHEMERAL" {
+			return "EPHEMERAL", nil
 		}
-		if id == "ETCD" && spec.Type == block.VolumeTypePartition {
-			return "", errors.New("unrecognized ETCD partition mount")
-		}
-		if id == "EPHEMERAL" && spec.Type == block.VolumeTypePartition && spec.Location != "" && strings.TrimRight(spec.MountSpec.TargetPath, "/") == "/var" {
-			ephemeral = true
+		return "", errors.New("cannot identify the partition containing etcd; automatic restore refused")
+	}
+	mount, backing, err := resolveRestoreMount(specs, "ETCD", map[string]bool{})
+	if err != nil || mount != "/var/lib/etcd" || (backing != "ETCD" && backing != "EPHEMERAL") {
+		return "", errors.New("unsupported ETCD backing volume; automatic restore refused")
+	}
+	if backing == "EPHEMERAL" {
+		parent, root, e := resolveRestoreMount(specs, "EPHEMERAL", map[string]bool{})
+		if e != nil || parent != "/var" || root != "EPHEMERAL" {
+			return "", errors.New("unrecognized EPHEMERAL backing partition")
 		}
 	}
-	if ephemeral {
-		return "EPHEMERAL", nil
+	return backing, nil
+}
+
+// MountSpec.ParentID, not the block-device ParentID, describes Talos 1.14's
+// directory chain ETCD -> /var/lib -> EPHEMERAL. Follow only known directories
+// and partitions, rejecting aliases, cycles, traversal and alternate bind paths.
+func resolveRestoreMount(specs map[string]block.VolumeStatusSpec, id string, visited map[string]bool) (string, string, error) {
+	spec, ok := specs[id]
+	if !ok || visited[id] || len(visited) >= 32 || spec.MountSpec.BindTarget != nil {
+		return "", "", errors.New("unsupported volume mount chain")
 	}
-	return "", errors.New("cannot identify the partition containing etcd; automatic restore refused")
+	if spec.Type != block.VolumeTypeDirectory && spec.Type != block.VolumeTypePartition {
+		return "", "", errors.New("unsupported volume backing type")
+	}
+	visited[id] = true
+	target := strings.TrimRight(spec.MountSpec.TargetPath, "/")
+	if target == "" {
+		return "", "", errors.New("empty volume mount")
+	}
+	for _, component := range strings.Split(target, "/") {
+		if component == ".." {
+			return "", "", errors.New("volume path traversal")
+		}
+	}
+	parentID := spec.MountSpec.ParentID
+	// Some older directory resources identify their backing parent directly.
+	if parentID == "" && spec.Type == block.VolumeTypeDirectory {
+		parentID = spec.ParentID
+	}
+	root := id
+	if parentID != "" {
+		parent, backing, err := resolveRestoreMount(specs, parentID, visited)
+		if err != nil {
+			return "", "", err
+		}
+		if path.IsAbs(target) {
+			if !strings.HasPrefix(path.Clean(target), parent+"/") {
+				return "", "", errors.New("mount escapes backing parent")
+			}
+		} else {
+			target = path.Join(parent, target)
+		}
+		if spec.Type == block.VolumeTypeDirectory {
+			root = backing
+		}
+	} else if spec.Type == block.VolumeTypeDirectory || !path.IsAbs(target) {
+		return "", "", errors.New("unidentified volume parent")
+	}
+	if spec.Type == block.VolumeTypePartition && spec.Location == "" {
+		return "", "", errors.New("partition location unavailable")
+	}
+	return path.Clean(target), root, nil
 }
 func (m *TalosManager) EtcdPreparing(ctx context.Context, node string) bool {
 	services, err := m.ListServices(ctx, node)

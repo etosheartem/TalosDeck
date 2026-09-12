@@ -46,16 +46,16 @@ func newFleetFixture(t *testing.T) fleetFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := OpenFleet(FleetOptions{Store: store, Auth: am, DataDir: filepath.Join(dir, "data")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(f.Close)
 	aj, err := audit.NewAuditManager(filepath.Join(dir, "audit.log"), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { aj.Close() })
+	f, err := OpenFleet(FleetOptions{Store: store, Auth: am, Audit: aj, DataDir: filepath.Join(dir, "data")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.Close)
 	app := SetupServer(ServerConfig{Fleet: f, Auth: am, Audit: aj, AlertService: alerts.NewTelegramService("", "", false), Proxmox: &proxmox.Client{}})
 	t.Cleanup(func() { _ = app.Shutdown() })
 	return fleetFixture{f, app, am, aj, token}
@@ -137,6 +137,43 @@ func TestFleetEmptyRegistryAuthAndImportRedaction(t *testing.T) {
 	list, err := f.fleet.options.Store.List(context.Background())
 	if err != nil || len(list) != 0 {
 		t.Fatalf("failed import persisted record: %+v %v", list, err)
+	}
+}
+
+func TestFleetAuditRecordsActorWithoutRequestSecrets(t *testing.T) {
+	f := newFleetFixture(t)
+	secret := "provider-secret-must-not-enter-audit"
+	for _, token := range []string{"", f.token} {
+		code, _ := fleetRequest(t, f.app, "POST", "/api/clusters", token, map[string]string{"talosconfig": secret})
+		if code < 400 {
+			t.Fatalf("invalid import accepted: %d", code)
+		}
+	}
+	if code, _ := fleetRequest(t, f.app, "GET", "/api/audit", "", nil); code != 401 {
+		t.Fatalf("anonymous audit access: %d", code)
+	}
+	viewer, err := f.auth.GenerateToken("auditor", "viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, raw := fleetRequest(t, f.app, "GET", "/api/audit", viewer, nil)
+	if code != 200 || bytes.Contains(raw, []byte(secret)) {
+		t.Fatalf("audit access or redaction failed: %d %s", code, raw)
+	}
+	var result struct {
+		Events []audit.AuditEvent `json:"events"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	actors := map[string]bool{}
+	for _, event := range result.Events {
+		if event.Action == "clusters.post" && event.Status == "failed" {
+			actors[event.User] = true
+		}
+	}
+	if !actors["anonymous"] || !actors["admin"] {
+		t.Fatalf("failed import actors missing: %v", actors)
 	}
 }
 
