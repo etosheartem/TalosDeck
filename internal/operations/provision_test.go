@@ -76,7 +76,11 @@ func TestGeneratedProvisionConfigsHaveSharedFreshCredentialsAndNetworking(t *tes
 	}
 }
 
-type failCreateProvider struct{ created int }
+type failCreateProvider struct {
+	created   int
+	deleted   int
+	deleteErr error
+}
 
 func (f *failCreateProvider) NextID(context.Context) (int, error) { return 151, nil }
 func (f *failCreateProvider) CreateMachine(context.Context, proxmox.MachineSpec, proxmox.OwnedMachine) (string, error) {
@@ -89,7 +93,10 @@ func (f *failCreateProvider) StartOwned(context.Context, proxmox.OwnedMachine) e
 func (f *failCreateProvider) MachineAddress(context.Context, proxmox.OwnedMachine) (string, error) {
 	return "", nil
 }
-func (f *failCreateProvider) DeleteOwned(context.Context, proxmox.OwnedMachine) error { return nil }
+func (f *failCreateProvider) DeleteOwned(context.Context, proxmox.OwnedMachine) error {
+	f.deleted++
+	return f.deleteErr
+}
 func TestProvisionFailureRetainsOwnershipAndCannotReplay(t *testing.T) {
 	s, spec, dir := provisionFixture(t)
 	fake := &failCreateProvider{}
@@ -106,6 +113,9 @@ func TestProvisionFailureRetainsOwnershipAndCannotReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := runJob(t, &Service{Provision: s}, request)
+	if len(job.Intents) != 1 || job.Intents[0].Action != "create" || job.Intents[0].Outcome != "UNKNOWN" || job.Intents[0].Evidence != nil {
+		t.Fatalf("ambiguous create lacks durable unknown intent: %+v", job.Intents)
+	}
 	if job.Status != "interrupted" {
 		t.Fatalf("%+v", job)
 	}
@@ -175,11 +185,48 @@ func TestProvisionFailureRetainsOwnershipAndCannotReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupJob := runJob(t, &Service{Provision: s}, cleanupRequest)
+	if len(cleanupJob.Intents) != 1 || cleanupJob.Intents[0].Action != "delete" || cleanupJob.Intents[0].Outcome != "succeeded" || cleanupJob.Intents[0].Evidence == nil {
+		t.Fatalf("delete lacks provider completion proof: %+v", cleanupJob.Intents)
+	}
 	if cleanupJob.Status != "succeeded" {
 		t.Fatalf("cleanup: %+v", cleanupJob)
 	}
 	machines, err = ListOwnedMachines(context.Background(), s.Store, FleetScope)
 	if err != nil || machines[0].Status != "deleted" || machines[0].CleanupEligible {
 		t.Fatalf("cleanup state: %+v %v", machines, err)
+	}
+}
+
+func TestCleanupAmbiguousDeletePersistsUnknownAndDoesNotReplay(t *testing.T) {
+	s, spec, _ := provisionFixture(t)
+	p := &failCreateProvider{deleteErr: errors.New("response lost after delete")}
+	s.ProviderFactory = func(ProviderRecord) (proxmox.MachineProvider, error) { return p, nil }
+	plan, err := s.Plan(context.Background(), spec, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := s.Request(context.Background(), plan.ID, spec.Name, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runJob(t, &Service{Provision: s}, request)
+	machines, err := ListOwnedMachines(context.Background(), s.Store, FleetScope)
+	if err != nil || len(machines) != 1 {
+		t.Fatal(machines, err)
+	}
+	cleanup, err := s.Plan(context.Background(), ProvisionSpec{Kind: "machine-cleanup", Name: machines[0].Name, MachineID: machines[0].ID, ProviderID: spec.ProviderID}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err = s.Request(context.Background(), cleanup.ID, machines[0].Name, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := runJob(t, &Service{Provision: s}, request)
+	if j.Status != "interrupted" || len(j.Intents) != 1 || j.Intents[0].Outcome != "UNKNOWN" || j.Intents[0].Evidence != nil || p.deleted != 1 {
+		t.Fatalf("ambiguous delete incorrectly resolved: %+v calls=%d", j, p.deleted)
+	}
+	if _, err = s.Request(context.Background(), cleanup.ID, machines[0].Name, "admin"); err == nil {
+		t.Fatal("ambiguous delete replayed")
 	}
 }

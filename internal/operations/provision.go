@@ -411,6 +411,9 @@ func (s *ProvisionService) Run(ctx context.Context, e *jobs.Execution, r jobs.Re
 		if err := s.save(ctx, plan, false); err != nil {
 			return err
 		}
+		if err := beginMachineIntent(ctx, e, "create", record); err != nil {
+			return err
+		}
 		task, err := provider.CreateMachine(ctx, spec, record.Machine())
 		if err != nil {
 			return fmt.Errorf("%w: VM %d creation not confirmed", jobs.ErrUncertain, vmid)
@@ -420,6 +423,12 @@ func (s *ProvisionService) Run(ctx context.Context, e *jobs.Execution, r jobs.Re
 		}
 		if err := provider.WaitTask(ctx, task); err != nil {
 			return fmt.Errorf("%w: VM %d creation task failed", jobs.ErrUncertain, vmid)
+		}
+		if err := provider.VerifyOwned(ctx, record.Machine()); err != nil {
+			return fmt.Errorf("%w: created VM identity not proven", jobs.ErrUncertain)
+		}
+		if err := proveMachineIntent(ctx, e, "create", record); err != nil {
+			return err
 		}
 		record.Status = "created"
 		if err := saveOwned(ctx, s.Store, record, false); err != nil {
@@ -545,8 +554,15 @@ func (s *ProvisionService) deleteWorker(ctx context.Context, e *jobs.Execution, 
 	if err := e.Checkpoint(ctx, "delete-worker", "Deleting provider-owned worker VM"); err != nil {
 		return err
 	}
+	if err := beginMachineIntent(ctx, e, "delete", record); err != nil {
+		return err
+	}
 	if err := p.DeleteOwned(ctx, record.Machine()); err != nil {
 		return fmt.Errorf("%w: deletion was not confirmed", jobs.ErrUncertain)
+	}
+	// DeleteOwned returns success only after the ownership-verified provider deletion task completes.
+	if err := proveMachineIntent(ctx, e, "delete", record); err != nil {
+		return err
 	}
 	record.Status = "deleted"
 	if err := saveOwned(ctx, s.Store, record, false); err != nil {

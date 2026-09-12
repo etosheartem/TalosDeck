@@ -99,8 +99,15 @@ func (s *ProvisionService) cleanupMachine(ctx context.Context, e *jobs.Execution
 	if err := e.Checkpoint(ctx, "cleanup-machine", "Deleting only the verified machine retained by failed provisioning"); err != nil {
 		return err
 	}
+	if err := beginMachineIntent(ctx, e, "delete", r); err != nil {
+		return err
+	}
 	if err := provider.DeleteOwned(ctx, r.Machine()); err != nil {
 		return fmt.Errorf("%w: failed-resource deletion not confirmed", jobs.ErrUncertain)
+	}
+	// A timeout or provider error above leaves the intent UNKNOWN. No retry.
+	if err := proveMachineIntent(ctx, e, "delete", r); err != nil {
+		return err
 	}
 	r.Status = "deleted"
 	return saveOwned(ctx, s.Store, r, false)

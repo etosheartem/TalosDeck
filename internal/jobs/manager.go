@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"talosdeck/internal/reconcile"
 )
 
 var ErrBusy = errors.New("another operation is running or requires review")
@@ -46,38 +47,47 @@ type Event struct {
 	Message string    `json:"message"`
 }
 type Job struct {
-	ID            string    `json:"id"`
-	ClusterID     string    `json:"clusterId,omitempty"`
-	Request       Request   `json:"request"`
-	User          string    `json:"user"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
-	Step          string    `json:"step"`
-	Error         string    `json:"error,omitempty"`
-	StopRequested bool      `json:"stopRequested"`
-	Reviewed      bool      `json:"reviewed"`
-	Events        []Event   `json:"events,omitempty"`
+	WorkflowVersion       int                `json:"workflowVersion,omitempty"`
+	PlanVersion           int                `json:"planVersion,omitempty"`
+	StepSchemaVersion     int                `json:"stepSchemaVersion,omitempty"`
+	ReconciliationOutcome string             `json:"reconciliationOutcome,omitempty"`
+	Intents               []reconcile.Intent `json:"intents,omitempty"`
+	ID                    string             `json:"id"`
+	ClusterID             string             `json:"clusterId,omitempty"`
+	Request               Request            `json:"request"`
+	User                  string             `json:"user"`
+	Status                string             `json:"status"`
+	CreatedAt             time.Time          `json:"createdAt"`
+	UpdatedAt             time.Time          `json:"updatedAt"`
+	Step                  string             `json:"step"`
+	Error                 string             `json:"error,omitempty"`
+	StopRequested         bool               `json:"stopRequested"`
+	Reviewed              bool               `json:"reviewed"`
+	Events                []Event            `json:"events,omitempty"`
 }
 type Runner func(context.Context, *Execution, Request) error
 
 type Manager struct {
-	mu         sync.Mutex
-	dir        string
-	lock       *os.File
-	jobs       map[string]*Job
-	active     string
-	manual     bool
-	closed     bool
-	storageErr error
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	runner     Runner
-	onComplete func(Job)
-	clusterID  string
-	closeOnce  sync.Once
-	closeErr   error
+	authorityMu   sync.RWMutex
+	authority     reconcile.Authority
+	instanceID    string
+	executorEpoch uint64
+	mu            sync.Mutex
+	dir           string
+	lock          *os.File
+	jobs          map[string]*Job
+	active        string
+	manual        bool
+	closed        bool
+	storageErr    error
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	runner        Runner
+	onComplete    func(Job)
+	clusterID     string
+	closeOnce     sync.Once
+	closeErr      error
 }
 
 // SetCompletionHandler installs a bounded observer for audit/notifications.
@@ -132,6 +142,7 @@ func OpenCluster(dir, clusterID string, runner Runner) (*Manager, error) {
 		switch j.Status {
 		case "queued", "running":
 			j.Status = "interrupted"
+			j.ReconciliationOutcome = reconcile.Unknown
 			j.Error = "Server stopped before completion was verified. Inspect the cluster before acknowledging this job."
 			j.UpdatedAt = time.Now().UTC()
 		case "succeeded", "failed", "stopped", "interrupted":
@@ -176,7 +187,18 @@ func (m *Manager) save(j *Job) error {
 	defer d.Close()
 	return d.Sync()
 }
-func clone(j *Job) Job { c := *j; c.Events = append([]Event(nil), j.Events...); return c }
+func clone(j *Job) Job {
+	c := *j
+	c.Events = append([]Event(nil), j.Events...)
+	c.Intents = append([]reconcile.Intent(nil), j.Intents...)
+	for n := range c.Intents {
+		if c.Intents[n].Evidence != nil {
+			v := *c.Intents[n].Evidence
+			c.Intents[n].Evidence = &v
+		}
+	}
+	return c
+}
 func (m *Manager) busy() bool {
 	if m.active != "" || m.manual {
 		return true
@@ -206,6 +228,9 @@ func (m *Manager) ReserveManual() (func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.available(); err != nil {
+		return nil, err
+	}
+	if err := m.validateAuthority(m.ctx); err != nil {
 		return nil, err
 	}
 	m.manual = true
@@ -252,7 +277,7 @@ func (m *Manager) Submit(r Request, user string) (Job, error) {
 		delete(m.jobs, oldest.ID)
 	}
 	now := time.Now().UTC()
-	j := &Job{ID: uuid.NewString(), ClusterID: m.clusterID, Request: r, User: user, Status: "queued", CreatedAt: now, UpdatedAt: now, Events: []Event{{Time: now, Step: "queued", Message: "Job accepted"}}}
+	j := &Job{WorkflowVersion: 1, PlanVersion: 1, StepSchemaVersion: 1, ID: uuid.NewString(), ClusterID: m.clusterID, Request: r, User: user, Status: "queued", CreatedAt: now, UpdatedAt: now, Events: []Event{{Time: now, Step: "queued", Message: "Job accepted"}}}
 	if err := m.save(j); err != nil {
 		return Job{}, err
 	}
@@ -274,9 +299,16 @@ func (m *Manager) run(id string) {
 		}
 		m.mu.Lock()
 		j := m.jobs[id]
+		for _, intent := range j.Intents {
+			if intent.Outcome != "succeeded" {
+				runErr = ErrUncertain
+				break
+			}
+		}
 		switch {
 		case m.ctx.Err() != nil || m.storageErr != nil || panicked || errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) || errors.Is(runErr, ErrUncertain):
 			j.Status = "interrupted"
+			j.ReconciliationOutcome = reconcile.Unknown
 		case errors.Is(runErr, ErrStopped):
 			j.Status = "stopped"
 		case runErr != nil:
@@ -316,6 +348,10 @@ func (m *Manager) run(id string) {
 	}
 	ctx, cancel := context.WithTimeout(m.ctx, 4*time.Hour)
 	defer cancel()
+	if runErr = m.validateAuthority(ctx); runErr != nil {
+		runErr = fmt.Errorf("%w: %v", ErrUncertain, runErr)
+		return
+	}
 	runErr = m.runner(ctx, e, r)
 }
 func (m *Manager) List() []Job {
@@ -445,6 +481,9 @@ func (e *Execution) Checkpoint(ctx context.Context, step, message string) error 
 	m.mu.Unlock()
 	if stop {
 		return ErrStopped
+	}
+	if err := m.validateAuthority(ctx); err != nil {
+		return fmt.Errorf("%w: %v", ErrUncertain, err)
 	}
 	return e.Log(step, message)
 }
