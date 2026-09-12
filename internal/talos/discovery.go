@@ -30,6 +30,31 @@ func (m *TalosManager) clusterNodes(ctx context.Context) []string {
 			// request's 12s budget while leaving time for the warm status reads.
 			discoveryCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			if specs, ok := discoverMembers(discoveryCtx, c, append(m.GetEndpoints(), configured...)); ok {
+				// A restart may know only the deleted IPv4 address. Use the
+				// authenticated stale member to remove its configured DNS/IPv6
+				// aliases too, without discarding unrelated unavailable targets.
+				blocked := map[string]bool{}
+				for _, spec := range specs {
+					if len(m.retainedMembers([]cluster.MemberSpec{spec})) == 0 {
+						for alias := range memberTargetAliases([]cluster.MemberSpec{spec}) {
+							blocked[alias] = true
+						}
+					}
+				}
+				if len(blocked) > 0 {
+					kept := make([]string, 0, len(configured))
+					for _, target := range configured {
+						if !blocked[canonicalNodeTarget(target)] {
+							kept = append(kept, target)
+						}
+					}
+					configured = kept
+					m.mu.Lock()
+					m.nodes = append([]string(nil), kept...)
+					m.mu.Unlock()
+				}
+				specs = m.retainedMembers(specs)
+				m.discoveredAliases = memberTargetAliases(specs)
 				aliases := resolveMemberAliases(discoveryCtx, configured, specs)
 				m.discoveredNodes = canonicalMemberInventory(configured, specs, aliases)
 				m.discoveryAt = time.Now()
@@ -45,6 +70,135 @@ func (m *TalosManager) clusterNodes(ctx context.Context) []string {
 		return append([]string(nil), m.discoveredNodes...)
 	}
 	return canonicalMemberInventory(configured, nil, nil)
+}
+
+// ForgetNode is only for a confirmed deletion of a provider-owned machine. It
+// must never be called just because a node is unavailable. The provisioning
+// registry replays these tombstones on startup; credentials remain untouched.
+// A hostname narrows the tombstone so another authenticated machine reusing the
+// address is discoverable even while an old COSI membership record survives.
+func (m *TalosManager) ForgetNode(address string, hostname ...string) {
+	address = canonicalNodeTarget(address)
+	if address == "" {
+		return
+	}
+	name := ""
+	if len(hostname) > 0 {
+		name = normalizedHostname(hostname[0])
+	}
+	m.discoveryMu.Lock()
+	defer m.discoveryMu.Unlock()
+	if m.forgottenNodes == nil {
+		m.forgottenNodes = map[string]string{}
+	}
+	m.forgottenNodes[address] = name
+	aliases := map[string]bool{address: true}
+	for _, alias := range m.discoveredAliases[address] {
+		aliases[canonicalNodeTarget(alias)] = true
+	}
+	remove := func(nodes []string) []string {
+		out := make([]string, 0, len(nodes))
+		for _, node := range nodes {
+			if !aliases[canonicalNodeTarget(node)] && (name == "" || normalizedHostname(node) != name) {
+				out = append(out, node)
+			}
+		}
+		return out
+	}
+	m.mu.Lock()
+	m.nodes = remove(m.nodes)
+	m.mu.Unlock()
+	m.discoveredNodes = remove(m.discoveredNodes)
+	m.discoveryAt = time.Time{}
+	m.metricsMu.Lock()
+	for alias := range aliases {
+		delete(m.cpuSamples, alias)
+	}
+	m.metricsMu.Unlock()
+}
+
+// RememberNode is called after a newly provisioned node has been authenticated
+// and admitted, allowing intentional reuse of an explicitly deleted target.
+func (m *TalosManager) RememberNode(address string, hostname ...string) {
+	address = canonicalNodeTarget(address)
+	if address == "" {
+		return
+	}
+	m.discoveryMu.Lock()
+	defer m.discoveryMu.Unlock()
+	delete(m.forgottenNodes, address)
+	m.mu.Lock()
+	found := false
+	for _, node := range m.nodes {
+		if canonicalNodeTarget(node) == address {
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.nodes = append(m.nodes, address)
+		sort.Strings(m.nodes)
+	}
+	m.mu.Unlock()
+	m.discoveryAt = time.Time{}
+}
+
+func canonicalNodeTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if ip, err := netip.ParseAddr(target); err == nil {
+		return ip.Unmap().String()
+	}
+	return normalizedHostname(target)
+}
+
+func memberTargetAliases(members []cluster.MemberSpec) map[string][]string {
+	result := map[string][]string{}
+	for _, member := range members {
+		aliases := []string{}
+		if member.Hostname != "" {
+			aliases = append(aliases, canonicalNodeTarget(member.Hostname))
+		}
+		for _, address := range member.Addresses {
+			if address.IsValid() {
+				aliases = append(aliases, address.Unmap().String())
+			}
+		}
+		for _, alias := range aliases {
+			result[alias] = aliases
+		}
+	}
+	return result
+}
+
+// Caller holds discoveryMu. Filtering complete members (rather than one chosen
+// address) also suppresses stale IPv6 aliases of the explicitly deleted node.
+func (m *TalosManager) retainedMembers(members []cluster.MemberSpec) []cluster.MemberSpec {
+	out := make([]cluster.MemberSpec, 0, len(members))
+	for _, member := range members {
+		forgotten := false
+		for address, name := range m.forgottenNodes {
+			if name != "" && normalizedHostname(member.Hostname) != name {
+				continue
+			}
+			if canonicalNodeTarget(member.Hostname) == address {
+				forgotten = true
+				break
+			}
+			for _, ip := range member.Addresses {
+				if ip.Unmap().String() == address {
+					forgotten = true
+					break
+				}
+			}
+			if forgotten {
+				break
+			}
+		}
+		if !forgotten {
+			out = append(out, member)
+		}
+	}
+	return out
 }
 
 // Try at most four targets at once: one unreachable configured node must not

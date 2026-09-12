@@ -396,6 +396,9 @@ func (s *ProvisionService) configureMachines(ctx context.Context, e *jobs.Execut
 		if err := saveOwned(ctx, s.Store, record, false); err != nil {
 			return err
 		}
+		if s.Talos != nil {
+			s.Talos.RememberNode(record.Address, record.Name)
+		}
 	}
 	return e.Log("complete", "Created machines are Ready; cluster credentials and VM ownership are stored encrypted")
 }

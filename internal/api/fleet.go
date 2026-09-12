@@ -147,6 +147,21 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 		return nil, errors.New("invalid Talos credentials")
 	}
 	rt.config.Manager = tm
+	owned, err := operations.ListOwnedMachines(context.Background(), f.options.Store, cluster.ID)
+	if err != nil {
+		return nil, err
+	}
+	liveAddresses := map[string]bool{}
+	for _, record := range owned {
+		if record.Status != "deleted" && record.Address != "" {
+			liveAddresses[record.Address] = true
+		}
+	}
+	for _, record := range owned {
+		if record.Status == "deleted" && record.Address != "" && !liveAddresses[record.Address] {
+			tm.ForgetNode(record.Address, record.Name)
+		}
+	}
 	km, err := k8s.NewK8sManagerFromBytes(creds.Kubeconfig)
 	if err != nil {
 		return nil, err

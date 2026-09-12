@@ -36,4 +36,15 @@ func TestRollingUpgradeWaitsForControlPlaneComponentsToSettle(t *testing.T) {
 	if f.transientFailures != 2 || len(f.commands) != 3 {
 		t.Fatalf("expected readiness retries before remaining nodes: failures=%d commands=%d", f.transientFailures, len(f.commands))
 	}
+	for _, args := range f.commands {
+		endpoint := ""
+		for i, arg := range args {
+			if arg == "--endpoints" && i+1 < len(args) {
+				endpoint = args[i+1]
+			}
+		}
+		if endpoint != args[5] {
+			t.Fatalf("disruptive operation must reconnect directly to its node, got %v", args)
+		}
+	}
 }

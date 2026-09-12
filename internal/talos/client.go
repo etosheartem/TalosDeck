@@ -14,17 +14,19 @@ import (
 
 // TalosManager manages connections and operations with the Talos cluster.
 type TalosManager struct {
-	client          *client.Client
-	cfg             *config.Config
-	talosconfigPath string
-	endpoints       []string
-	nodes           []string
-	mu              sync.RWMutex
-	metricsMu       sync.Mutex
-	cpuSamples      map[string]cpuSnapshot
-	discoveryMu     sync.Mutex
-	discoveryAt     time.Time
-	discoveredNodes []string
+	client            *client.Client
+	cfg               *config.Config
+	talosconfigPath   string
+	endpoints         []string
+	nodes             []string
+	mu                sync.RWMutex
+	metricsMu         sync.Mutex
+	cpuSamples        map[string]cpuSnapshot
+	discoveryMu       sync.Mutex
+	discoveryAt       time.Time
+	discoveredNodes   []string
+	forgottenNodes    map[string]string // explicit deleted address -> authenticated member hostname
+	discoveredAliases map[string][]string
 }
 
 // NewTalosManager opens the given talosconfig and initializes a Talos client.

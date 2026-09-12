@@ -486,6 +486,7 @@ func (s *ProvisionService) deleteWorker(ctx context.Context, e *jobs.Execution, 
 	if err := saveOwned(ctx, s.Store, record, false); err != nil {
 		return err
 	}
+	s.Talos.ForgetNode(record.Address, record.Name)
 	if err := s.Kubernetes.DeleteProvisionedNode(ctx, record.Name, record.Address); err != nil {
 		return err
 	}

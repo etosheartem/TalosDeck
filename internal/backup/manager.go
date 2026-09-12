@@ -46,6 +46,7 @@ type NodeMeta struct {
 
 // FullBackupMetadata describes the contents and environment of a full cluster backup.
 type FullBackupMetadata struct {
+	Warnings          []string   `json:"warnings,omitempty"`
 	Timestamp         time.Time  `json:"timestamp"`
 	ClusterName       string     `json:"clusterName"`
 	Endpoint          string     `json:"endpoint,omitempty"`
@@ -58,6 +59,7 @@ type FullBackupMetadata struct {
 
 // BackupInfo describes an existing backup artifact.
 type BackupInfo struct {
+	Partial     bool       `json:"partial,omitempty"`
 	ID          string     `json:"id"`
 	Filename    string     `json:"filename"`
 	Size        int64      `json:"size"`
@@ -438,6 +440,7 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 
 	// 4. Retrieve MachineConfigs for each node, sanitizing keys (BKP-02)
 	nodeConfigs := make(map[string][]byte)
+	warnings := []string{}
 	for _, n := range nodes {
 		safeHost := sanitizeFilename(n.Hostname)
 		safeIP := sanitizeFilename(n.IP)
@@ -445,7 +448,8 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 
 		cfgBytes, cfgErr := m.talosManager.GetNodeConfig(ctx, n.IP)
 		if cfgErr != nil {
-			nodeConfigs[configFileName] = []byte(fmt.Sprintf("# Failed to retrieve live config for %s (%s): %v\n", n.Hostname, n.IP, cfgErr))
+			warnings = append(warnings, "Machine configuration unavailable for "+n.IP)
+			nodeConfigs[configFileName] = []byte("# Machine configuration unavailable; recover from an independent configuration backup.\n")
 		} else {
 			nodeConfigs[configFileName] = cfgBytes
 		}
@@ -527,6 +531,7 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 
 	// Add metadata.json
 	metaObj := FullBackupMetadata{
+		Warnings:          warnings,
 		Timestamp:         now,
 		ClusterName:       clusterName,
 		Endpoint:          endpoint,
@@ -619,7 +624,8 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		Checksum:    checksum,
 		ClusterName: clusterName,
 		NodeCount:   len(nodes),
-		Description: fmt.Sprintf("Full disaster recovery archive: %d nodes, talosconfig, machine configs, etcd snapshot", len(nodes)),
+		Description: fmt.Sprintf("Disaster recovery archive: %d nodes, talosconfig, machine configs, etcd snapshot", len(nodes)),
+		Partial:     len(warnings) > 0,
 	}
 
 	if err := publishBackup(archiveTempPath, archivePath, checksum, info); err != nil {

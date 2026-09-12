@@ -307,6 +307,9 @@ func (s *BackupService) Run(ctx context.Context, e *jobs.Execution, r jobs.Reque
 			return err
 		}
 	}
+	if info.Partial {
+		return errors.New("backup retained, but some machine configurations were unavailable; archive is partial and retention was not applied")
+	}
 	if err = e.Checkpoint(ctx, "retention", "Applying backup retention"); err != nil {
 		return err
 	}

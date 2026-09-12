@@ -255,6 +255,9 @@ func (s *BackupService) PlanRestore(ctx context.Context, id, user string) (*Rest
 	for _, n := range inventory {
 		p.Nodes = append(p.Nodes, n.IP)
 	}
+	if info.Partial {
+		p.Warnings = append(p.Warnings, "This archive is partial: some machine configurations could not be captured. Verify independent copies before recovery.")
+	}
 	if err = s.put(ctx, "restore-plan", p.ID, p); err != nil {
 		return nil, err
 	}
