@@ -29,6 +29,7 @@ import (
 	"talosdeck/internal/operations"
 	"talosdeck/internal/proxmox"
 	"talosdeck/internal/talos"
+	"talosdeck/internal/templates"
 )
 
 type FleetOptions struct {
@@ -59,6 +60,7 @@ type Fleet struct {
 	globalOperations *operations.Service
 	downloadTickets  *DownloadTickets
 	images           *imagefactory.Client
+	templates        *templates.Service
 }
 
 func OpenFleet(opts FleetOptions) (*Fleet, error) {
@@ -77,6 +79,11 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 	f := &Fleet{options: opts, runtimes: make(map[string]*clusterRuntime)}
 	f.downloadTickets = NewDownloadTickets(opts.Auth)
 	f.images = imagefactory.NewClient()
+	templateService, err := templates.Open(context.Background(), opts.Store)
+	if err != nil {
+		return nil, errors.New("cannot open template registry")
+	}
+	f.templates = templateService
 	globalOps := &operations.Service{ClusterName: "TalosDeck fleet", Images: f.images}
 	globalOps.Provision = &operations.ProvisionService{ClusterID: operations.FleetScope, Store: opts.Store, Images: f.images, RegisterCluster: func(ctx context.Context, name string, talosconfig, kubeconfig []byte, providerID string) (string, error) {
 		cluster, err := f.Import(ctx, ImportClusterRequest{Name: name, Talosconfig: string(talosconfig), Kubeconfig: string(kubeconfig), Provider: providerID})
@@ -568,6 +575,8 @@ func (f *Fleet) register(app *fiber.App) {
 			action = "clusters"
 		} else if path == "/api/providers" || strings.HasPrefix(path, "/api/providers/") {
 			action = "providers"
+		} else if path == "/api/templates" || strings.HasPrefix(path, "/api/templates/") {
+			action = "templates"
 		} else if path == "/api/images" || strings.HasPrefix(path, "/api/images/") {
 			action = "images"
 		} else if path == "/api/provision" || strings.HasPrefix(path, "/api/provision/") {
@@ -601,6 +610,7 @@ func (f *Fleet) register(app *fiber.App) {
 		})
 	}
 	RegisterImageRoutes(global, f.images, f.options.Auth)
+	RegisterTemplateRoutes(global, f.templates, f.globalOperations.Provision, f.options.Auth)
 	RegisterProviderRoutes(global, f.options.Store, f.options.Auth)
 	RegisterProvisionRoutes(global, f.globalJobs, f.globalOperations.Provision, f.options.Auth)
 	RegisterJobRoutes(app.Group("/api/provision"), f.globalJobs, f.globalOperations, f.options.Auth)

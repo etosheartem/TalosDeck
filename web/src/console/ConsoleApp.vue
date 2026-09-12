@@ -49,6 +49,7 @@ import CommandPalette, { type Command } from "./CommandPalette.vue";
 import SettingsHub from "./SettingsHub.vue";
 import AlertCenter from "./AlertCenter.vue";
 import ImagePicker from "./ImagePicker.vue";
+import TemplatesView from "./TemplatesView.vue";
 import NotificationSettings from "./NotificationSettings.vue";
 import { notificationTime, notificationLabel, type AlertSnapshot } from "./notifications";
 const notificationStatus = ref<Pick<AlertSnapshot, 'health'|'lastCheckAt'|'summary'> | null>(null);
@@ -795,7 +796,7 @@ const protectedPage = computed(
                   @click="dialog = 'create-cluster'"
                 >
                   {{ t("Создать кластер") }}
-                </button>
+                </button><button v-if="isAdmin" @click="navigate('templates')">{{t('Из шаблона')}}</button>
               </div>
             </header>
             <ResourceTable
@@ -1116,6 +1117,7 @@ const protectedPage = computed(
             @add="dialog = 'create-worker'"
             @submitted="active === 'fleet-machines' ? (showGlobalJobs=true,navigate('clusters')) : navigate('jobs')"
           />
+          <TemplatesView v-else-if="active==='templates'" @submitted="showGlobalJobs=true; navigate('clusters')" />
           <ImagePicker v-else-if="active==='images'" />
           <AlertCenter v-else-if="active==='alert-center'" :key="selectedCluster" @node="inspectRelatedNode($event)" @logs="inspectRelatedNode($event,true)" />
           <NotificationSettings v-else-if="active==='alerts'" :key="selectedCluster" />

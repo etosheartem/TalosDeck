@@ -40,6 +40,14 @@ Review the plan and type its name to start. The job:
 
 Do not use an installer image that drops required extensions. Select an Image Factory installer containing the intended extensions and a tag matching the requested Talos release.
 
+## Create from a cluster template
+
+Open **Templates**, select a saved revision and choose **Create cluster**. Templates contain the reusable image profile, Kubernetes version, CNI, storage and machine sizing/network defaults. Supply the new cluster name, provider, ISO storage and unique machine names; static networking also requires addresses, gateway and nameservers for this deployment. Credentials and existing VM identities are never copied from a template.
+
+Review the generated provisioning plan and confirm its cluster name. The plan saves the template ID, revision and specification hash atomically, and the job records this provenance in its journal. Editing or archiving the template does not alter an already prepared plan. Execution uses the same provisioning job and verification checks as a manually prepared cluster.
+
+For API clients, `POST /api/templates/:id/revisions/:revision/plans` accepts the deployment-specific values and returns a normal provisioning plan. Submit its ID through the existing provisioning endpoint; do not submit a template specification as a job request.
+
 ## Add or remove workers
 
 Select a cluster before adding workers. TalosDeck obtains the existing cluster secrets and network settings from an authenticated control-plane MachineConfig. It does not search the management server for configuration files. New workers must use the cluster's current Kubernetes version.

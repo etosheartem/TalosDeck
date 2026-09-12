@@ -32,6 +32,7 @@ TalosDeck — панель управления Talos Linux и Kubernetes. Go-б
   Telegram/Slack/Discord/Webhook/Email, маршруты и журнал доставки.
 - Мониторинг сертификатов Talos/Kubernetes: сроки credentials, CA и API endpoints,
   предупреждения за 30/14/7 дней и отдельное состояние неполной проверки.
+- Шаблоны кластеров с неизменяемыми ревизиями и созданием через проверяемый план.
 - Talos Image Factory: выбор версии и официальных extensions, проверка schematic,
   согласованные ISO/installer и просмотр установленного образа ноды.
 - Русский и английский интерфейс.
@@ -52,6 +53,7 @@ TalosDeck на отдельной машине или в management-класте
 - [Пользователи, роли и OIDC](docs/authentication.md).
 - [Proxmox и создание кластеров](docs/provisioning.md).
 - [Образы Talos, schematics и extensions](docs/images.md).
+- [Шаблоны и создание кластеров по ревизии](docs/templates.md).
 - [Резервные копии и восстановление](docs/backups.md).
 - [Сроки сертификатов и обновление credentials](docs/certificates.md).
 - [Алерты, каналы и доставка уведомлений](docs/notifications.md).

@@ -37,7 +37,15 @@ type ProvisionSpec struct {
 	Machines          []proxmox.MachineSpec `json:"machines,omitempty"`
 	MachineID         string                `json:"machineId,omitempty"`
 }
+type TemplateReference struct {
+	ID       string `json:"id"`
+	Revision int    `json:"revision"`
+	SpecHash string `json:"specHash"`
+	Name     string `json:"name"`
+}
+
 type ProvisionPlan struct {
+	Template     *TemplateReference    `json:"template,omitempty"`
 	ImageProfile *imagefactory.Profile `json:"imageProfile,omitempty"`
 	ID           string                `json:"id"`
 	Spec         ProvisionSpec         `json:"spec"`
@@ -201,6 +209,39 @@ func ValidateProvision(spec ProvisionSpec, clusterID string) error {
 	return nil
 }
 func (s *ProvisionService) Plan(ctx context.Context, spec ProvisionSpec, user string) (*ProvisionPlan, error) {
+	return s.plan(ctx, spec, user, nil)
+}
+
+// PlanFromTemplate accepts provenance only from the server-side template resolver.
+// The ordinary provisioning request cannot set or override this reference.
+func (s *ProvisionService) PlanFromTemplate(ctx context.Context, spec ProvisionSpec, user string, ref TemplateReference) (*ProvisionPlan, error) {
+	if id, err := uuid.Parse(ref.ID); err != nil || id == uuid.Nil || ref.Revision < 1 || !schematicPattern.MatchString(ref.SpecHash) || strings.TrimSpace(ref.Name) == "" || len(ref.Name) > 100 || strings.ContainsAny(ref.Name, "\r\n\x00") {
+		return nil, errors.New("invalid template reference")
+	}
+	if spec.Kind != "cluster-create" {
+		return nil, errors.New("templates can only create new clusters")
+	}
+	return s.plan(ctx, spec, user, &ref)
+}
+func (s *ProvisionService) plan(ctx context.Context, spec ProvisionSpec, user string, ref *TemplateReference) (*ProvisionPlan, error) {
+	// Detach caller-owned slices and strings before network calls or persistence.
+	input := struct {
+		Spec ProvisionSpec
+		Ref  *TemplateReference
+		User string
+	}{spec, ref, user}
+	data, err := json.Marshal(input)
+	if err != nil {
+		return nil, errors.New("cannot copy provisioning input")
+	}
+	input.Spec = ProvisionSpec{}
+	input.Ref = nil
+	input.User = ""
+	if err := json.Unmarshal(data, &input); err != nil {
+		return nil, errors.New("cannot copy provisioning input")
+	}
+	spec, ref, user = input.Spec, input.Ref, input.User
+
 	if unavailable(s.Store) {
 		return nil, errors.New("provisioning store unavailable")
 	}
@@ -258,7 +299,7 @@ func (s *ProvisionService) Plan(ctx context.Context, spec ProvisionSpec, user st
 			}
 		}
 	}
-	state := &provisionState{ProvisionPlan: ProvisionPlan{ImageProfile: profile, ID: uuid.NewString(), Spec: spec, Status: "planned", CreatedAt: time.Now().UTC(), SafetyNotes: []string{"Only newly allocated VMs are created. Failures retain ownership records and never replay automatically.", "The boot ISO must include qemu-guest-agent. Initial boot requires DHCP; static addresses are applied in MachineConfig.", "The selected CNI and storage add-on are installed before readiness verification. Manual ISO and installer versions must match."}}, ClusterID: s.ClusterID, Author: user, Provider: provider}
+	state := &provisionState{ProvisionPlan: ProvisionPlan{Template: ref, ImageProfile: profile, ID: uuid.NewString(), Spec: spec, Status: "planned", CreatedAt: time.Now().UTC(), SafetyNotes: []string{"Only newly allocated VMs are created. Failures retain ownership records and never replay automatically.", "The boot ISO must include qemu-guest-agent. Initial boot requires DHCP; static addresses are applied in MachineConfig.", "The selected CNI and storage add-on are installed before readiness verification. Manual ISO and installer versions must match."}}, ClusterID: s.ClusterID, Author: user, Provider: provider}
 	if profile != nil {
 		state.SafetyNotes = append(state.SafetyNotes, "The confirmed Factory schematic is used for both the boot ISO and installer. A unique checksum-verified ISO is retained on the provider for inspection after completion or failure.")
 	}
@@ -333,6 +374,11 @@ func (s *ProvisionService) Run(ctx context.Context, e *jobs.Execution, r jobs.Re
 			panic(panicValue)
 		}
 	}()
+	if plan.Template != nil {
+		if err := e.Log("template", fmt.Sprintf("Template %s revision %d; spec SHA256 %s", plan.Template.ID, plan.Template.Revision, plan.Template.SpecHash)); err != nil {
+			return err
+		}
+	}
 	provider, err := s.provider(plan.Provider)
 	if err != nil {
 		return errors.New("provider unavailable")
