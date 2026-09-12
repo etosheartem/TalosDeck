@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { t, locale, setLocale } from "./i18n";
+import { recoveryState } from "./recovery";
 
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import {
@@ -702,6 +703,10 @@ const protectedPage = computed(
         </div>
       </header>
       <main>
+        <div v-if="recoveryState === 'safe'" class="notice error recovery-banner" role="alert">
+          <AlertTriangle :size="20" aria-hidden="true" />
+          <div><strong>{{ t('Безопасный режим после восстановления') }}</strong><p>{{ t('TalosDeck восстановлен из резервной копии. Изменения инфраструктуры, фоновые задания и расписания заблокированы. Администратор должен проверить результаты незавершённых операций и отключение прежнего экземпляра перед возобновлением управления. Автоматического продолжения нет.') }}</p></div>
+        </div>
         <p v-if="logoutWarning" class="notice error" role="alert">{{ logoutWarning }}</p>
         <div v-if="registryError" class="notice error" role="alert">
           {{ registryError

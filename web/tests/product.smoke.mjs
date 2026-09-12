@@ -17,6 +17,7 @@ async function contextFor(role='admin'){
  const backup={id:'backup-1',filename:'production-etcd.snapshot',type:'etcd',size:1024,humanSize:'1 KiB',timestamp:'2026-09-12T00:00:00Z',checksum:'fixture-sha256'};
  const job=(kind,id)=>({id,clusterId:'cluster-a',request:{kind},status:'queued',createdAt:'2026-09-12T00:00:00Z',user:'admin',events:[],step:'queued'});
  await context.route('**/api/**',async route=>{
+ if(new URL(route.request().url()).pathname === '/api/recovery/status') return route.fulfill({json:{safeMode:false,requiresReview:false,automaticResume:false}});
    const req=route.request(),raw=new URL(req.url()).pathname;if(!raw.startsWith('/api/'))return route.continue();
    const path=raw.replace('/api/clusters/cluster-a','/api');const body=req.postDataJSON();calls.push({raw,path,method:req.method(),body});let result;
    if(path==='/api/auth/providers')result={oidc:{enabled:true,name:'Keycloak',loginUrl:'/api/auth/oidc/login'}};

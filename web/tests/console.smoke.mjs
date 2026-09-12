@@ -58,6 +58,7 @@ try {
     },
   ];
   const fixtures = {
+    "/api/recovery/status": {safeMode:false,requiresReview:false,automaticResume:false},
     "/api/auth/providers": { oidc: { enabled: false } },
     "/api/auth/users": {
       users: [
@@ -501,6 +502,7 @@ try {
   await fleet.route("**/api/**", async (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname;
+    if (path === "/api/recovery/status") return route.fulfill({json:fixtures[path]});
     if (!path.startsWith("/api/")) return route.continue();
     fleetRequests.push({
       path,
@@ -717,7 +719,7 @@ try {
   );
   await offline.goto("http://127.0.0.1:5175");
   await offline
-    .getByRole("heading", { name: "Кластеры", exact: true })
+    .getByRole("heading", { name: "TalosDeck", exact: true })
     .waitFor();
   assert.equal(
     await offline.getByText("talos-cp-01", { exact: true }).count(),
@@ -729,7 +731,7 @@ try {
   });
   await offline.goto("http://127.0.0.1:5175/#config");
   await offline
-    .getByRole("heading", { name: "Кластеры", exact: true })
+    .getByRole("heading", { name: "TalosDeck", exact: true })
     .waitFor();
   assert.equal(await offline.locator(".code-lines").count(), 0);
   assert.deepEqual(errors, []);

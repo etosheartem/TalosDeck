@@ -1,10 +1,11 @@
 import { computed } from "vue";
+import { recoveryState } from "./recovery";
 import { currentUser, isAuthenticated } from "../api";
 export const isAdmin = computed(
-  () => isAuthenticated.value && currentUser.value.role === "admin",
+  () => recoveryState.value === "normal" && isAuthenticated.value && currentUser.value.role === "admin",
 );
 export const canOperate = computed(
   () =>
-    isAuthenticated.value &&
+    recoveryState.value === "normal" && isAuthenticated.value &&
     ["admin", "operator"].includes(currentUser.value.role),
 );

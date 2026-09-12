@@ -676,5 +676,9 @@
   "Нет вычетов. Проверяйте покрытие и неизвестные результаты.": "No deductions. Review coverage and unknown results.",
   "Проверки и оценка": "Checks and score",
   "Не применимо": "Not applicable",
-  "В политике v1 предупреждение вычитает 25 баллов, критическая проверка — 75, потеря кворума, истёкший или ещё не действующий сертификат — 100. Вычеты внутри категории не суммируются: применяется наибольший.": "Policy v1 deducts 25 points for a warning, 75 for a critical check, and 100 for quorum loss, an expired certificate or a certificate that is not yet valid. Category deductions are not added together: the largest applies."
+  "В политике v1 предупреждение вычитает 25 баллов, критическая проверка — 75, потеря кворума, истёкший или ещё не действующий сертификат — 100. Вычеты внутри категории не суммируются: применяется наибольший.": "Policy v1 deducts 25 points for a warning, 75 for a critical check, and 100 for quorum loss, an expired certificate or a certificate that is not yet valid. Category deductions are not added together: the largest applies.",
+  "Проверяем режим восстановления…": "Checking recovery mode…",
+  "Не удалось проверить режим восстановления. Управление недоступно до проверки состояния сервера.": "Recovery mode could not be verified. Management remains unavailable until the server status is checked.",
+  "Безопасный режим после восстановления": "Recovery safe mode",
+  "TalosDeck восстановлен из резервной копии. Изменения инфраструктуры, фоновые задания и расписания заблокированы. Администратор должен проверить результаты незавершённых операций и отключение прежнего экземпляра перед возобновлением управления. Автоматического продолжения нет.": "TalosDeck was restored from a backup. Infrastructure changes, background jobs and schedules are blocked. An administrator must review unfinished operations and verify the previous instance is disabled before management resumes. Nothing resumes automatically."
 }
