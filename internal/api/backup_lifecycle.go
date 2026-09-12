@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func RegisterBackupLifecycleRoutes(router fiber.Router, s *operations.BackupService, jm *jobs.Manager, am *auth.AuthManager, auditLog *audit.AuditManager) {
+func RegisterBackupLifecycleRoutes(router fiber.Router, s *operations.BackupService, jm *jobs.Manager, am *auth.AuthManager, auditLog *audit.AuditManager, tickets ...*DownloadTickets) {
 	group := router.Group("/backups", auth.RequireAuth(am))
 	record := func(c *fiber.Ctx, action string, details map[string]any) {
 		if auditLog != nil {
@@ -125,6 +125,20 @@ func RegisterBackupLifecycleRoutes(router fiber.Router, s *operations.BackupServ
 		record(c, "backup.restore", map[string]any{"jobId": job.ID, "planId": body.PlanID})
 		return c.Status(202).JSON(job)
 	})
+	if len(tickets) > 0 && tickets[0] != nil {
+		group.Post("/:id/download-ticket", func(c *fiber.Ctx) error {
+			items, err := s.List(c.UserContext())
+			if err != nil {
+				return fiber.NewError(503, "Cannot read backup catalog")
+			}
+			for _, info := range items {
+				if info.ID == c.Params("id") {
+					return tickets[0].Issue(c, s.ClusterID, info.ID)
+				}
+			}
+			return fiber.ErrNotFound
+		})
+	}
 	group.Get("/:id/download", func(c *fiber.Ctx) error {
 		ctx, cancel := context.WithTimeout(c.UserContext(), 10*time.Minute)
 		defer cancel()

@@ -3,6 +3,7 @@ package operations
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,8 +51,8 @@ func TestCLICheckDoesNotInheritApplicationCredentials(t *testing.T) {
 func TestVersionOutputCaptureIsBounded(t *testing.T) {
 	b := &limitedCommandOutput{}
 	input := []byte(strings.Repeat("x", 2*1024*1024))
-	n, err := b.Write(input)
-	if err != nil || n != len(input) || b.Len() != 64*1024 {
+	n, err := io.Copy(b, struct{ io.Reader }{strings.NewReader(string(input))})
+	if err != nil || n != int64(len(input)) || b.Len() != 64*1024 {
 		t.Fatal("output cap or writer contract violated")
 	}
 }

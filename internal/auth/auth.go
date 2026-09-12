@@ -370,6 +370,12 @@ func isTrustedProxy(ipStr string) bool {
 	return false
 }
 
+// IsSecureRequest trusts a forwarded transport only from the actual socket peer
+// already allowed by the application's proxy policy.
+func IsSecureRequest(c *fiber.Ctx) bool {
+	return c.Context().IsTLS() || (isTrustedProxy(c.Context().RemoteIP().String()) && strings.EqualFold(strings.TrimSpace(c.Get("X-Forwarded-Proto")), "https"))
+}
+
 // GetClientIP returns the real client IP address checking X-Forwarded-For ONLY if direct peer is trusted (SEC-06).
 func GetClientIP(c *fiber.Ctx) string {
 	directIP := c.IP()

@@ -62,6 +62,21 @@ export const globalRequest = <T = any>(path: string, init: RequestInit = {}) =>
 export const globalPost = (path: string, body: unknown = {}) =>
   globalRequest(path, { method: "POST", body: JSON.stringify(body) });
 export async function downloadAPI(path: string, name: string) {
+  if (/^\/backups\/[^/]+\/download$/.test(path)) {
+    const epoch = clusterEpoch();
+    const url = scopeURL(`/api${path}`);
+    await post(path.replace(/\/download$/, "/download-ticket"));
+    if (epoch !== clusterEpoch()) return;
+    // Let the browser stream to disk. The one-use HttpOnly cookie authorizes
+    // this exact URL; neither the JWT nor the archive enters a URL/Blob buffer.
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
   const controller = new AbortController();
   const release = trackRequest(controller);
   const epoch = clusterEpoch();

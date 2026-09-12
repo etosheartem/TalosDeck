@@ -54,6 +54,7 @@ type Fleet struct {
 	closed           bool
 	globalJobs       *jobs.Manager
 	globalOperations *operations.Service
+	downloadTickets  *DownloadTickets
 }
 
 func OpenFleet(opts FleetOptions) (*Fleet, error) {
@@ -70,6 +71,7 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 		opts.LegacyJobsDir = filepath.Join(opts.DataDir, "jobs")
 	}
 	f := &Fleet{options: opts, runtimes: make(map[string]*clusterRuntime)}
+	f.downloadTickets = NewDownloadTickets(opts.Auth)
 	globalOps := &operations.Service{ClusterName: "TalosDeck fleet"}
 	globalOps.Provision = &operations.ProvisionService{ClusterID: operations.FleetScope, Store: opts.Store, RegisterCluster: func(ctx context.Context, name string, talosconfig, kubeconfig []byte, providerID string) (string, error) {
 		cluster, err := f.Import(ctx, ImportClusterRequest{Name: name, Talosconfig: string(talosconfig), Kubeconfig: string(kubeconfig), Provider: providerID})
@@ -276,6 +278,7 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 		_ = svc.SendAlertWithContext(notifyCtx, level, "Operation "+job.Status, "Job "+job.ID+" ("+job.Request.Kind+")")
 	})
 	rt.config.Auth = f.options.Auth
+	rt.config.DownloadTickets = f.downloadTickets
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancel = cancel
 	rt.wg.Add(1)

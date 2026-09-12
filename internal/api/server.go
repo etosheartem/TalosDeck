@@ -33,19 +33,20 @@ import (
 
 // ServerConfig configures the HTTP & WebSocket server.
 type ServerConfig struct {
-	Fleet        *Fleet
-	ClusterName  string
-	Manager      *talos.TalosManager
-	K8s          *k8s.K8sManager
-	Backup       *backup.BackupManager
-	AlertService *alerts.TelegramService
-	AlertWatcher *alerts.Watcher
-	Proxmox      *proxmox.Client
-	Audit        *audit.AuditManager
-	Auth         *auth.AuthManager
-	Jobs         *jobs.Manager
-	Operations   *operations.Service
-	Port         string
+	Fleet           *Fleet
+	ClusterName     string
+	Manager         *talos.TalosManager
+	K8s             *k8s.K8sManager
+	Backup          *backup.BackupManager
+	AlertService    *alerts.TelegramService
+	AlertWatcher    *alerts.Watcher
+	Proxmox         *proxmox.Client
+	Audit           *audit.AuditManager
+	Auth            *auth.AuthManager
+	DownloadTickets *DownloadTickets
+	Jobs            *jobs.Manager
+	Operations      *operations.Service
+	Port            string
 }
 
 // SetupServer initializes the Fiber app with routes and middlewares.
@@ -68,8 +69,17 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 			})
 		},
 	})
+	// Keep normal responses bounded while allowing large authenticated backup
+	// bodies to stream directly to disk in the browser.
+	app.Server().HeaderReceived = backupRequestConfig
 
 	app.Use(recover.New())
+	app.Use(func(c *fiber.Ctx) error {
+		c.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("Referrer-Policy", "no-referrer")
+		return c.Next()
+	})
 	app.Use(logger.New(logger.Config{
 		Format: "[${time}] ${status} - ${latency} ${method} ${path}\n",
 	}))
@@ -104,6 +114,14 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	if authMgr == nil {
 		authMgr = auth.NewAuthManagerFromEnv()
 	}
+	if cfg.DownloadTickets == nil {
+		if cfg.Fleet != nil {
+			cfg.DownloadTickets = cfg.Fleet.downloadTickets
+		} else {
+			cfg.DownloadTickets = NewDownloadTickets(authMgr)
+		}
+	}
+	app.Use(cfg.DownloadTickets.Authenticate)
 	app.Use(auditMutationGuard(auditMgr, authMgr, cfg.Fleet != nil))
 	RegisterSecurityRoutes(app, authMgr, auditMgr)
 	if cfg.Fleet != nil {
@@ -344,7 +362,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	}
 	if bm != nil {
 		if cfg.Operations != nil && cfg.Operations.BackupLifecycle != nil {
-			RegisterBackupLifecycleRoutes(api, cfg.Operations.BackupLifecycle, cfg.Jobs, authMgr, auditMgr)
+			RegisterBackupLifecycleRoutes(api, cfg.Operations.BackupLifecycle, cfg.Jobs, authMgr, auditMgr, cfg.DownloadTickets)
 		}
 		RegisterBackupRoutes(api, bm, authMgr, auditMgr)
 	}

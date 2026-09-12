@@ -51,6 +51,9 @@ func addonManifest(kind, endpoint string) ([]byte, error) {
 	return data, nil
 }
 func (m *K8sManager) InstallAddon(ctx context.Context, kind string) error {
+	if m == nil || m.credentialConfig == nil {
+		return errors.New("Kubernetes addon credentials unavailable")
+	}
 	data, err := addonManifest(kind, m.credentialConfig.Host)
 	if err != nil {
 		return err
@@ -99,6 +102,9 @@ func (m *K8sManager) InstallAddon(ctx context.Context, kind string) error {
 	return nil
 }
 func (m *K8sManager) AddonReady(ctx context.Context, kind string) bool {
+	if m == nil || m.clientset == nil {
+		return false
+	}
 	if kind == "local-path" {
 		d, err := m.clientset.AppsV1().Deployments("local-path-storage").Get(ctx, "local-path-provisioner", metav1.GetOptions{})
 		return err == nil && d.Status.ObservedGeneration >= d.Generation && d.Status.AvailableReplicas >= 1

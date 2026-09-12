@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
@@ -87,5 +88,5 @@ func NewK8sManagerFromBytes(data []byte) (*K8sManager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig: unable to initialize TLS client")
 	}
-	return &K8sManager{clientset: cs, cache: podCache{entries: make(map[string]podCacheEntry), ttl: 2 * time.Second}}, nil
+	return &K8sManager{clientset: cs, credentialConfig: rest.CopyConfig(cfg), cache: podCache{entries: make(map[string]podCacheEntry), ttl: 2 * time.Second}}, nil
 }

@@ -49,7 +49,10 @@ func (c CLI) Check(ctx context.Context) error {
 
 // Version probing must not inherit credentials or collect unbounded output.
 // WaitDelay also bounds inherited pipes left open by a child of the CLI.
-type limitedCommandOutput struct{ bytes.Buffer }
+type limitedCommandOutput struct{ buffer bytes.Buffer }
+
+func (b *limitedCommandOutput) Bytes() []byte { return b.buffer.Bytes() }
+func (b *limitedCommandOutput) Len() int      { return b.buffer.Len() }
 
 func (b *limitedCommandOutput) Write(p []byte) (int, error) {
 	n := len(p)
@@ -58,7 +61,7 @@ func (b *limitedCommandOutput) Write(p []byte) (int, error) {
 		if len(p) > remaining {
 			p = p[:remaining]
 		}
-		_, _ = b.Buffer.Write(p)
+		_, _ = b.buffer.Write(p)
 	}
 	return n, nil
 }
