@@ -39,6 +39,45 @@ func (m *Manager) validateAuthority(ctx context.Context) error {
 	return nil
 }
 
+func (m *Manager) HasExecutionAuthority() bool {
+	m.authorityMu.RLock()
+	defer m.authorityMu.RUnlock()
+	return m.authority != nil
+}
+
+// ValidateExecution checks admission immediately before a nested mutation,
+// without creating another event or authorizing a retry.
+func (e *Execution) ValidateExecution(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m := e.manager
+	m.mu.Lock()
+	j, ok := m.jobs[e.id]
+	storageErr := m.storageErr
+	stop := ok && j.StopRequested
+	m.mu.Unlock()
+	if !ok {
+		return ErrNotFound
+	}
+	if storageErr != nil {
+		return storageErr
+	}
+	if stop {
+		return ErrStopped
+	}
+	m.authorityMu.RLock()
+	configured := m.authority != nil
+	m.authorityMu.RUnlock()
+	if !configured {
+		return fmt.Errorf("%w: independent execution authority required", ErrUncertain)
+	}
+	if err := m.validateAuthority(ctx); err != nil {
+		return fmt.Errorf("%w: %v", ErrUncertain, err)
+	}
+	return nil
+}
+
 // BeginIntent must precede a side effect. An existing intent can never authorize
 // a replay, even if its observed result was successful. Observe it instead.
 func (e *Execution) BeginIntent(ctx context.Context, id, action string, identity reconcile.Identity) error {

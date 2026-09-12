@@ -338,6 +338,12 @@ func (s *Service) Run(ctx context.Context, e *jobs.Execution, r jobs.Request) er
 		}
 		return s.BackupLifecycle.Run(ctx, e, r)
 	}
+	if r.Kind == "worker-replace" {
+		if s.Provision == nil {
+			return fmt.Errorf("worker replacement unavailable")
+		}
+		return s.Provision.RunReplacement(ctx, e, r)
+	}
 	if r.Kind == "cluster-create" || r.Kind == "worker-create" || r.Kind == "worker-delete" || r.Kind == "machine-cleanup" {
 		if s.Provision == nil {
 			return fmt.Errorf("provisioning unavailable")

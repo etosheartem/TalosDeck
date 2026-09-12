@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"talosdeck/internal/reconcile"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -477,6 +478,23 @@ func (m *K8sManager) CordonAndDrainNode(ctx context.Context, nodeName string) er
 		return err
 	}
 	nodeName = resolvedName
+	return m.drainNode(ctx, nodeName, "", m.allowEmptyDirDeletion)
+}
+
+func (m *K8sManager) drainNode(ctx context.Context, nodeName, expectedUID string, allowEmptyDir bool) error {
+	verifyIdentity := func() error {
+		if expectedUID == "" {
+			return nil
+		}
+		node, err := m.clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		return workerIdentity(node, nodeName, expectedUID)
+	}
+	if err := verifyIdentity(); err != nil {
+		return err
+	}
 
 	// 2. Drain: list pods scheduled on this node and evict/delete them
 	pods, err := m.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{
@@ -498,7 +516,7 @@ func (m *K8sManager) CordonAndDrainNode(ctx context.Context, nodeName string) er
 		}
 		// Evicting a pod with emptyDir destroys that data for good, so refuse by
 		// default and make the operator opt in, the way `kubectl drain` does.
-		if !m.allowEmptyDirDeletion {
+		if !allowEmptyDir {
 			if vol := podEmptyDirVolume(&pod); vol != "" {
 				return fmt.Errorf(
 					"cannot safely drain node %s: pod %s/%s uses emptyDir volume %q whose data would be lost; set TALOSDECK_ALLOW_EMPTYDIR_DELETION=true to allow",
@@ -509,7 +527,10 @@ func (m *K8sManager) CordonAndDrainNode(ctx context.Context, nodeName string) er
 	}
 
 	for _, pod := range drainable {
-		if err := m.evictPod(ctx, pod); err != nil {
+		if expectedUID != "" && pod.UID == "" {
+			return fmt.Errorf("pod identity unavailable")
+		}
+		if err := m.evictPodChecked(ctx, pod, verifyIdentity); err != nil {
 			return fmt.Errorf("failed to evict pod %s/%s from node %s: %w", pod.Namespace, pod.Name, nodeName, err)
 		}
 	}
@@ -519,6 +540,9 @@ func (m *K8sManager) CordonAndDrainNode(ctx context.Context, nodeName string) er
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		if err := verifyIdentity(); err != nil {
+			return err
+		}
 		remaining, err := m.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{
 			FieldSelector: "spec.nodeName=" + nodeName,
 		})
@@ -557,6 +581,9 @@ func (m *K8sManager) SetNodeMaintenance(ctx context.Context, identifier string, 
 	}
 
 	patch := []byte(fmt.Sprintf(`{"spec":{"unschedulable":%t}}`, enable))
+	if err := reconcile.CheckMutation(ctx); err != nil {
+		return "", err
+	}
 	if _, err := m.clientset.CoreV1().Nodes().Patch(ctx, nodeName, types.StrategicMergePatchType, patch, metav1.PatchOptions{}); err != nil {
 		action := "uncordon"
 		if enable {
@@ -618,6 +645,10 @@ func podEmptyDirVolume(pod *corev1.Pod) string {
 // evictPod evicts one pod, honouring its own termination grace period and
 // retrying while a PodDisruptionBudget temporarily forbids the disruption.
 func (m *K8sManager) evictPod(ctx context.Context, pod corev1.Pod) error {
+	return m.evictPodChecked(ctx, pod, func() error { return nil })
+}
+
+func (m *K8sManager) evictPodChecked(ctx context.Context, pod corev1.Pod, verifyIdentity func() error) error {
 	eviction := &policyv1.Eviction{
 		ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
 	}
@@ -626,11 +657,24 @@ func (m *K8sManager) evictPod(ctx context.Context, pod corev1.Pod) error {
 	if grace := pod.Spec.TerminationGracePeriodSeconds; grace != nil {
 		eviction.DeleteOptions = &metav1.DeleteOptions{GracePeriodSeconds: grace}
 	}
+	if pod.UID != "" {
+		if eviction.DeleteOptions == nil {
+			eviction.DeleteOptions = &metav1.DeleteOptions{}
+		}
+		uid := pod.UID
+		eviction.DeleteOptions.Preconditions = &metav1.Preconditions{UID: &uid}
+	}
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	for {
+		if err := verifyIdentity(); err != nil {
+			return err
+		}
+		if err := reconcile.CheckMutation(ctx); err != nil {
+			return err
+		}
 		err := m.clientset.PolicyV1().Evictions(pod.Namespace).Evict(ctx, eviction)
 		switch {
 		case err == nil, apierrors.IsNotFound(err):

@@ -69,8 +69,7 @@ func TestProviderReconcileObservesWithoutRetryAndRejectsForeignScope(t *testing.
 	if observed.Intents[0].Outcome != "UNKNOWN" || observed.Intents[0].Evidence.State != "unknown" {
 		t.Fatal("outage mistaken for proof", observed)
 	}
-	foreign := *s
-	foreign.ClusterID = "other-cluster"
+	foreign := ProvisionService{Store: s.Store, ClusterID: "other-cluster", ProviderFactory: s.ProviderFactory}
 	reads := p.reads
 	if _, err = foreign.ReconcileJob(context.Background(), m, j.ID); err == nil || p.reads != reads {
 		t.Fatal("foreign scope queried provider")

@@ -5,7 +5,7 @@ import { t } from "./i18n";
 import { isAdmin } from "./permissions";
 import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
-const emit = defineEmits<{ add: []; submitted: [] }>();
+const emit = defineEmits<{ add: []; replace: []; submitted: [] }>();
 const props = defineProps<{global?:boolean}>();
 const request = (path:string, init:RequestInit={}) => apiRequest(path,init,props.global?'global':'cluster');
 const post = (path:string,body:unknown) => request(path,{method:'POST',body:JSON.stringify(body)});
@@ -67,7 +67,7 @@ onUnmounted(() => {
       <h2>{{ t("Управляемые машины") }}</h2>
       <div class="toolbar">
         <button :disabled="busy" @click="run(load)">{{ t("Обновить") }}</button
-        ><button v-if="isAdmin && !global" class="primary" @click="emit('add')">
+        ><button v-if="isAdmin && !global" @click="emit('replace')">{{t('Заменить worker')}}</button><button v-if="isAdmin && !global" class="primary" @click="emit('add')">
           {{ t("Добавить worker") }}
         </button>
       </div>

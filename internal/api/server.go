@@ -154,6 +154,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	}
 	if cfg.Operations != nil && cfg.Operations.Provision != nil {
 		RegisterProvisionRoutes(api, cfg.Jobs, cfg.Operations.Provision, authMgr)
+		RegisterReplacementRoutes(api, cfg.Jobs, cfg.Operations.Provision, authMgr)
 	}
 	if cfg.K8s != nil && cfg.Operations != nil {
 		RegisterInspectorRoutes(api, cfg.K8s, cfg.Operations.Diagnostics, cfg.Jobs, authMgr)

@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -68,15 +69,21 @@ type provisionState struct {
 	ImportStarted bool           `json:"importStarted,omitempty"`
 }
 type ProvisionService struct {
-	Images          FactoryImages
-	ClusterID       string
-	Store           ProvisionStore
-	Talos           *talos.TalosManager
-	Kubernetes      *k8s.K8sManager
-	RegisterCluster func(context.Context, string, []byte, []byte, string) (string, error)
-	ProviderFactory func(ProviderRecord) (proxmox.MachineProvider, error)
-	PollInterval    time.Duration
-	Audit           func(action, user, status, id string)
+	replacementMu          sync.Mutex
+	replacementActive      map[string]bool
+	replacementKube        replacementKubernetes
+	replacementChildPlan   func(context.Context, ProvisionSpec, string) (*ProvisionPlan, error)
+	replacementChildRun    func(context.Context, *jobs.Execution, jobs.Request) error
+	replacementChildVerify func(context.Context, *jobs.Execution, *provisionState, []proxmox.OwnedMachineRecord) error
+	Images                 FactoryImages
+	ClusterID              string
+	Store                  ProvisionStore
+	Talos                  *talos.TalosManager
+	Kubernetes             *k8s.K8sManager
+	RegisterCluster        func(context.Context, string, []byte, []byte, string) (string, error)
+	ProviderFactory        func(ProviderRecord) (proxmox.MachineProvider, error)
+	PollInterval           time.Duration
+	Audit                  func(action, user, status, id string)
 }
 
 func (s *ProvisionService) provider(p ProviderRecord) (proxmox.MachineProvider, error) {

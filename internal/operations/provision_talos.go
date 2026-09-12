@@ -28,6 +28,7 @@ import (
 	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
 	"talosdeck/internal/proxmox"
+	"talosdeck/internal/reconcile"
 	"talosdeck/internal/talos"
 )
 
@@ -228,6 +229,10 @@ func (s *ProvisionService) configureMachines(ctx context.Context, e *jobs.Execut
 			bootstrap.Close()
 			return errors.New("owned machine maintenance API unavailable")
 		}
+		if err := reconcile.CheckMutation(ctx); err != nil {
+			bootstrap.Close()
+			return err
+		}
 		response, applyErr := bootstrap.ApplyConfiguration(ctx, &machine.ApplyConfigurationRequest{Data: plan.Configs[i], Mode: machine.ApplyConfigurationRequest_AUTO})
 		bootstrap.Close()
 		if applyErr != nil || response == nil || len(response.Messages) != 1 {
@@ -245,6 +250,12 @@ func (s *ProvisionService) configureMachines(ctx context.Context, e *jobs.Execut
 		}
 		records[i] = record
 	}
+	return s.verifyConfiguredMachines(ctx, e, plan, records)
+}
+
+// verifyConfiguredMachines performs no configuration application. For an
+// existing worker it only observes readiness and persists verified ownership.
+func (s *ProvisionService) verifyConfiguredMachines(ctx context.Context, e *jobs.Execution, plan *provisionState, records []proxmox.OwnedMachineRecord) error {
 	var talosClient *client.Client
 	var kube *k8s.K8sManager
 	if plan.Spec.Kind == "cluster-create" {

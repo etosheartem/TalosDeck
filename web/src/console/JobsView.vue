@@ -112,6 +112,7 @@ const title = (value: string) =>
     "config-apply": t("Изменить конфигурацию"),
     "config-restore": t("Восстановить конфигурацию"),
     "cluster-create": t('Создать кластер'),
+    "worker-replace": t("Замена worker"),
     "worker-create": t('Добавить worker'),
     "worker-delete": t('Удалить машину'),
     "machine-cleanup": t('Очистить ресурсы'),

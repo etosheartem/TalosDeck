@@ -26,7 +26,17 @@ func (s *ProvisionService) ReconcileJob(ctx context.Context, m *jobs.Manager, id
 	if len(j.Intents) == 0 {
 		return j, errors.New("job has no durable provider intents")
 	}
-	plan, err := s.load(ctx, j.Request.ProvisionID)
+	planID := j.Request.ProvisionID
+	replacementOldID := ""
+	if j.Request.Kind == "worker-replace" {
+		parent, parentErr := s.loadReplacement(ctx, planID)
+		if parentErr != nil {
+			return j, parentErr
+		}
+		planID = parent.ReplacementPlan.ID
+		replacementOldID = parent.MachineID
+	}
+	plan, err := s.load(ctx, planID)
 	if err != nil || plan.ClusterID != s.ClusterID {
 		return j, errors.New("provisioning plan unavailable in this scope")
 	}
@@ -35,7 +45,7 @@ func (s *ProvisionService) ReconcileJob(ctx context.Context, m *jobs.Manager, id
 			return j, err
 		}
 		machineID := strings.TrimPrefix(intent.ID, intent.Action+":")
-		belongs := plan.Spec.MachineID == machineID
+		belongs := plan.Spec.MachineID == machineID || replacementOldID == machineID
 		for _, candidate := range plan.MachineIDs {
 			belongs = belongs || candidate == machineID
 		}

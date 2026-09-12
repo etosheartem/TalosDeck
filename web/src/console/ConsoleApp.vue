@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t, locale, setLocale } from "./i18n";
-import { recoveryState } from "./recovery";
+import { recoveryState, recoveryAutomationPaused } from "./recovery";
 
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import {
@@ -40,6 +40,7 @@ import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
 import NodeInspector from "./NodeInspector.vue";
 import JobsView from "./JobsView.vue";
+import WorkerReplacementView from "./WorkerReplacementView.vue";
 import ConfigView from "./ConfigView.vue";
 import SecurityView from "./SecurityView.vue";
 import ProvidersView from "./ProvidersView.vue";
@@ -172,7 +173,7 @@ async function signOut() {
 }
 const commands = computed<Command[]>(() => {
  const scope=clusters.value.find(c=>c.id===selectedCluster.value)?.name || t('Платформа');
- const allowed=(id:string)=>!(['providers','config','alerts','machines','fleet-machines'].includes(id)&&!isAdmin.value)&&!(id==='updates'&&!canOperate.value);
+ const allowed=(id:string)=>!(['providers','config','alerts','machines','fleet-machines','worker-replacement'].includes(id)&&!isAdmin.value)&&!(id==='updates'&&!canOperate.value);
  const all:Command[]=pages.value.filter(p=>(p.global||!!selectedCluster.value)&&allowed(p.id)).map(p=>({id:'page-'+p.id,label:p.title,kind:t('Раздел'),context:p.global?t('Платформа'):scope,run:()=>navigate(p.id)}));
  if(isAuthenticated.value){
   for(const c of clusters.value) all.unshift({id:'cluster-'+c.id,label:c.name,kind:t('Кластер'),context:t('Платформа'),run:()=>{switchCluster(c.id);navigate('overview');}});
@@ -528,7 +529,7 @@ function rollingReboot() {
 const protectedPage = computed(
   () =>
     !isAuthenticated.value ||
-    (["config", "providers", "machines", "fleet-machines", "alerts"].includes(active.value) &&
+    (["config", "providers", "machines", "fleet-machines", "worker-replacement", "alerts"].includes(active.value) &&
       !isAdmin.value) ||
     (active.value === "updates" && !canOperate.value),
 );
@@ -610,6 +611,7 @@ const protectedPage = computed(
                   (p.global || !!selectedCluster) &&
                   (!p.hidden || !!navSearch) &&
                   (p.id !== 'providers' || isAdmin) &&
+                  (p.id !== 'worker-replacement' || isAdmin) &&
                   p.title.toLowerCase().includes(navSearch.toLowerCase()),
               )"
               :key="item.id"
@@ -706,6 +708,10 @@ const protectedPage = computed(
         <div v-if="recoveryState === 'safe'" class="notice error recovery-banner" role="alert">
           <AlertTriangle :size="20" aria-hidden="true" />
           <div><strong>{{ t('Безопасный режим после восстановления') }}</strong><p>{{ t('TalosDeck восстановлен из резервной копии. Изменения инфраструктуры, фоновые задания и расписания заблокированы. Администратор должен проверить результаты незавершённых операций и отключение прежнего экземпляра перед возобновлением управления. Автоматического продолжения нет.') }}</p></div>
+        </div>
+        <div v-else-if="recoveryAutomationPaused" class="notice recovery-banner" role="status">
+          <strong>{{ t('Автоматизация приостановлена после восстановления') }}</strong>
+          <p>{{ t('Ручное управление разрешено после проверки. Расписания и фоновая доставка уведомлений остаются приостановленными; старые задания автоматически не продолжаются.') }}</p>
         </div>
         <p v-if="logoutWarning" class="notice error" role="alert">{{ logoutWarning }}</p>
         <div v-if="registryError" class="notice error" role="alert">
@@ -1121,11 +1127,13 @@ const protectedPage = computed(
             @submitted="navigate('jobs')"
           />
           <AuditView v-else-if="active === 'audit' || active === 'global-audit'" :key="active + (globalPage ? 'global' : selectedCluster)" :global="active === 'global-audit'" />
+          <WorkerReplacementView v-else-if="active === 'worker-replacement'" :key="selectedCluster" @submitted="navigate('jobs')" @jobs="navigate('jobs')" />
           <MachinesView
             v-else-if="active === 'machines' || active === 'fleet-machines'"
             :key="active + selectedCluster"
             :global="active === 'fleet-machines'"
             @add="dialog = 'create-worker'"
+            @replace="navigate('worker-replacement')"
             @submitted="active === 'fleet-machines' ? (showGlobalJobs=true,navigate('clusters')) : navigate('jobs')"
           />
           <TemplatesView v-else-if="active==='templates'" @submitted="showGlobalJobs=true; navigate('clusters')" />

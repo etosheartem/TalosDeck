@@ -116,6 +116,7 @@ export function navigation() {
       group: t("ОПЕРАЦИИ"),
       description: t("Фоновые операции, состояние шагов и журнал выполнения."),
     },
+    {id:"worker-replacement",title:t("Замена worker"),icon:Wrench,group:t("ОПЕРАЦИИ"),description:t("Замена зарегистрированной worker-машины с проверкой данных и fencing.")},
     {
       id: "updates",
       title: t("Обновления"),
