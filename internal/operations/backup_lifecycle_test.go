@@ -180,7 +180,12 @@ func TestMinIORemoteBackupIntegrityAndRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.RemoveBucket(context.Background(), target.Bucket)
-	saved, err := s.SaveTarget(ctx, target)
+	jm, err := jobs.OpenCluster(t.TempDir(), s.ClusterID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer jm.Close()
+	saved, err := s.SaveTarget(ctx, target, jm)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +220,7 @@ func TestMinIORemoteBackupIntegrityAndRedaction(t *testing.T) {
 	}
 	changed := saved
 	changed.Endpoint = "http://127.0.0.1:1"
-	if _, err = s.SaveTarget(ctx, changed); err == nil {
+	if _, err = s.SaveTarget(ctx, changed, jm); err == nil {
 		t.Fatal("historical target location allowed to change")
 	}
 	_, err = client.PutObject(ctx, target.Bucket, object, strings.NewReader("tampered"), 8, minio.PutObjectOptions{})

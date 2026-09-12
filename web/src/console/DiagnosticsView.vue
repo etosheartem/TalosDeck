@@ -5,12 +5,15 @@ import { t } from "./i18n";
 import { canOperate } from "./permissions";
 import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
-const emit = defineEmits<{ submitted: [] }>();
+import type { NodeOverview } from "../types";
+const props = defineProps<{ nodes: NodeOverview[] }>();
+const emit = defineEmits<{ submitted: []; inspect: [node: NodeOverview]; logs: [node: NodeOverview] }>();
 const report = ref<any>(null),
   error = ref(""),
   busy = ref(false),
   severity = ref("all"),
   selected = ref<any>(null);
+const selectedNode = computed(() => selected.value?.node ? props.nodes.find(n => n.ip === selected.value.node || n.hostname === selected.value.node) : undefined);
 let live = true;
 const rows = computed(() =>
   (report.value?.checks || []).filter(
@@ -113,7 +116,13 @@ onUnmounted(() => {
     /><Modal v-if="selected" :title="selected.title" @close="selected = null"
       ><p class="inspection-copy">{{ selected.details }}</p>
       <h3>{{ t("Рекомендация") }}</h3>
-      <p class="inspection-copy">{{ selected.suggestion || "—" }}</p></Modal
+      <p class="inspection-copy">{{ selected.suggestion || "—" }}</p>
+      <div v-if="selectedNode" class="toolbar">
+        <button @click="emit('inspect', selectedNode!); selected = null">{{ t("Открыть ноду") }}</button>
+        <button @click="emit('logs', selectedNode!); selected = null">{{ t("Логи ноды") }}</button>
+      </div>
+      <p v-else-if="selected.node" class="footnote">{{ t("Нода отсутствует в текущем списке. Обновите состояние кластера.") }}</p>
+      </Modal
     >
   </section>
 </template>

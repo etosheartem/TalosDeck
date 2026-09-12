@@ -52,6 +52,28 @@ async function contextFor(role='admin'){
  const page=await context.newPage();page.on('pageerror',e=>errors.push(String(e)));return{context,page,calls};
 }
 try{
+ {
+  const {context,page,calls}=await contextFor();let imported=false,attempts=0;
+  await context.route('**/api/clusters',async route=>{
+   if(route.request().method()==='POST'){
+    attempts++;const body=route.request().postDataJSON();assert.equal(body.talosconfig,'PRIVATE-TALOS-FILE');assert.equal(body.kubeconfig,'PRIVATE-KUBE-FILE');
+    if(attempts===1)return route.fulfill({status:422,json:{error:'Credentials do not match this cluster'}});
+    imported=true;return route.fulfill({json:{cluster:{id:'cluster-a',name:'First cluster'}}});
+   }
+   return route.fulfill({json:{clusters:imported?[{id:'cluster-a',name:'First cluster',health:'healthy'}]:[]}});
+  });
+  await page.goto('http://127.0.0.1:5176/#clusters');await page.getByRole('heading',{name:'Кластеры',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Добавить кластер',exact:true}).last().click();const dialog=page.getByRole('dialog');
+  await dialog.getByLabel('Имя',{exact:true}).fill('First cluster');
+  await dialog.getByLabel('Загрузить файл talosconfig',{exact:true}).setInputFiles({name:'talosconfig',mimeType:'text/plain',buffer:Buffer.from('PRIVATE-TALOS-FILE')});
+  await dialog.getByLabel('Загрузить файл kubeconfig',{exact:true}).setInputFiles({name:'kubeconfig',mimeType:'text/plain',buffer:Buffer.from('PRIVATE-KUBE-FILE')});
+  await dialog.getByRole('button',{name:'Подключить',exact:true}).click();await dialog.getByRole('alert').getByText('Credentials do not match this cluster',{exact:true}).waitFor();
+  assert.equal(await dialog.getByLabel('talosconfig',{exact:true}).inputValue(),'PRIVATE-TALOS-FILE');
+  await dialog.getByRole('button',{name:'Подключить',exact:true}).click();await page.getByRole('heading',{name:'Обзор',exact:true}).waitFor();
+  await page.waitForFunction(()=>document.querySelector('.availability-value')?.textContent.includes('1'));assert(calls.some(c=>c.raw==='/api/clusters/cluster-a/nodes'));
+  assert(!(await page.evaluate(()=>JSON.stringify(localStorage))).includes('PRIVATE-'));assert.equal(attempts,2);await context.close();
+ }
+
  const {context,page,calls}=await contextFor();
  await page.goto('http://127.0.0.1:5176');await page.getByRole('heading',{name:'Кластеры',exact:true}).waitFor();
  await page.getByRole('button',{name:'Production',exact:true}).click();await page.getByRole('heading',{name:'Обзор',exact:true}).waitFor();await page.waitForFunction(()=>document.querySelector('.availability-value')?.textContent.includes('1'));
@@ -76,7 +98,18 @@ try{
  assert(nativeRequests.some(c=>c.url==='/api/clusters/cluster-a/backups/backup-1/download'&&c.method==='GET'&&c.authorization===undefined));
  await page.evaluate(()=>{Response.prototype.blob=window.__blobOriginal;delete window.__blobOriginal;});await page.keyboard.press('Escape');
  await page.getByRole('tab',{name:'Резервные копии',exact:true}).click();await page.getByRole('cell',{name:'Частичная копия',exact:true}).waitFor();await page.getByRole('button',{name:'partial-full.tar.gz',exact:true}).click();await page.getByRole('dialog').getByText('Часть конфигураций машин отсутствует',{exact:false}).waitFor();await page.keyboard.press('Escape');await page.getByRole('button',{name:'production-etcd.snapshot',exact:true}).click();dialog=page.getByRole('dialog');await dialog.getByRole('button',{name:'Проверить восстановление',exact:true}).click();await dialog.getByRole('heading',{name:'План восстановления',exact:true}).waitFor();assert(!calls.some(c=>c.path==='/api/backups/restore'));await dialog.getByLabel('Введите имя кластера').fill('wrong');assert(await dialog.getByRole('button',{name:'Восстановить через задание'}).isDisabled());await dialog.getByLabel('Введите имя кластера').fill('Production');await dialog.getByRole('button',{name:'Восстановить через задание'}).click();await page.getByRole('heading',{name:'Задания',exact:true}).waitFor();
- await page.goto('http://127.0.0.1:5176/#diagnostics');await page.getByRole('button',{name:'Disk pressure',exact:true}).click();await page.getByText('Expand the disk',{exact:true}).waitFor();await page.keyboard.press('Escape');await page.getByRole('button',{name:'Проверить кластер',exact:true}).click();await page.getByRole('heading',{name:'Задания',exact:true}).waitFor();assert(calls.some(c=>c.path==='/api/diagnostics/run'&&c.method==='POST'));
+ await page.goto('http://127.0.0.1:5176/#diagnostics');await page.getByRole('button',{name:'Disk pressure',exact:true}).click();await page.getByText('Expand the disk',{exact:true}).waitFor();
+ await page.evaluate(()=>{
+  window.__logSockets=[];
+  window.WebSocket=class {
+   constructor(url){window.__logSockets.push(url);setTimeout(()=>{this.onopen?.();this.onmessage?.({data:'fixture kernel log'});},0);}
+   close(){} send(){}
+  };
+ });
+ await page.getByRole('button',{name:'Логи ноды',exact:true}).click();await page.getByRole('heading',{name:'Логи Talos',exact:true}).waitFor();
+ await page.getByText('fixture kernel log',{exact:true}).waitFor();assert((await page.evaluate(()=>window.__logSockets)).some(url=>url.endsWith('/api/clusters/cluster-a/ws/nodes/10.0.0.1/dmesg')));
+
+ await page.goto('http://127.0.0.1:5176/#diagnostics');await page.getByRole('button',{name:'Проверить кластер',exact:true}).click();await page.getByRole('heading',{name:'Задания',exact:true}).waitFor();assert(calls.some(c=>c.path==='/api/diagnostics/run'&&c.method==='POST'));
  await page.goto('http://127.0.0.1:5176/#workloads');await page.getByRole('button',{name:'api-0',exact:true}).click();await page.getByText('fixture pod log',{exact:true}).waitFor();await page.keyboard.press('Escape');
  await page.goto('http://127.0.0.1:5176/#users');await page.getByRole('button',{name:'Добавить пользователя',exact:true}).click();dialog=page.getByRole('dialog');await dialog.getByLabel('Пользователь',{exact:true}).fill('new-operator');await dialog.getByLabel('Пароль',{exact:true}).fill('fixture-password-123');await dialog.getByLabel('Роль',{exact:true}).selectOption('operator');await dialog.getByRole('button',{name:'Создать',exact:true}).click();await dialog.waitFor({state:'hidden'});assert(calls.some(c=>c.raw==='/api/auth/users'&&c.method==='POST'&&c.body.role==='operator'));await page.getByRole('button',{name:'teammate',exact:true}).click();await page.getByRole('button',{name:'Отозвать сеансы',exact:true}).click();await page.getByRole('dialog').getByText('Сеансы пользователя отозваны',{exact:true}).waitFor();await page.keyboard.press('Escape');
  for(const section of ['clusters','providers','users','diagnostics','backups']){await page.goto(`http://127.0.0.1:5176/#${section}`);await page.waitForTimeout(100);await page.screenshot({path:`${artifacts}/${section}.png`,fullPage:true});}

@@ -445,5 +445,11 @@
   "Аудит кластера": "Cluster audit",
   "Подключения, провайдеры, пользователи и операции платформы.": "Connections, providers, users and platform operations.",
   "Действия и задания выбранного кластера.": "Actions and jobs for the selected cluster.",
-  "Последние {0} из {1} записей.": "Latest {0} of {1} entries."
+  "Последние {0} из {1} записей.": "Latest {0} of {1} entries.",
+  "Загрузить файл {0}": "Load {0} file",
+  "Файл слишком большой. Максимум 2 МиБ.": "File is too large. Maximum 2 MiB.",
+  "Не удалось прочитать файл": "Could not read the file",
+  "Открыть ноду": "Open node",
+  "Логи ноды": "Node logs",
+  "Нода отсутствует в текущем списке. Обновите состояние кластера.": "The node is not in the current inventory. Refresh the cluster status."
 }

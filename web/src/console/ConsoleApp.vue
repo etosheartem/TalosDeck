@@ -69,18 +69,35 @@ async function loadClusters() {
   }
 }
 async function importCluster() {
+  if (importing.value) return;
   importing.value = true;
+  actionError.value = "";
   try {
     const result = await post("/clusters", importForm.value);
     importForm.value = { name: "", talosconfig: "", kubeconfig: "" };
     dialog.value = "";
     await loadClusters();
-    selectCluster(result.cluster.id);
+    switchCluster(result.cluster.id);
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e);
   } finally {
     importing.value = false;
   }
+}
+
+async function readImportFile(event: Event, field: "talosconfig" | "kubeconfig") {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  const form = importForm.value;
+  if (!file) return;
+  actionError.value = "";
+  try {
+    if (file.size > 2 * 1024 * 1024) throw new Error(t("Файл слишком большой. Максимум 2 МиБ."));
+    const value = await file.text();
+    if (dialog.value === "import" && importForm.value === form && input.files?.[0] === file && !importing.value) form[field] = value;
+  } catch (e) {
+    if (dialog.value === "import" && importForm.value === form && input.files?.[0] === file) actionError.value = e instanceof Error ? e.message : t("Не удалось прочитать файл");
+  } finally { if (input.files?.[0] === file) input.value = ""; }
 }
 
 const pages = computed(navigation);
@@ -1085,6 +1102,9 @@ const protectedPage = computed(
           <DiagnosticsView
             v-else-if="active === 'diagnostics'"
             :key="selectedCluster"
+            :nodes="nodes"
+            @inspect="inspected = $event"
+            @logs="nodeIP = $event.ip; navigate('logs')"
             @submitted="navigate('jobs')"
           />
           <section v-else-if="active === 'logs'" class="panel">
@@ -1455,8 +1475,10 @@ const protectedPage = computed(
             autocomplete="off"
         /></label>
         <label
-          >talosconfig<textarea
+          >talosconfig<input type="file" :aria-label="t('Загрузить файл {0}', ['talosconfig'])" :disabled="importing" @change="readImportFile($event, 'talosconfig')" /><textarea
             v-model="importForm.talosconfig"
+            :disabled="importing"
+            aria-label="talosconfig"
             required
             rows="8"
             spellcheck="false"
@@ -1464,8 +1486,10 @@ const protectedPage = computed(
           />
         </label>
         <label
-          >kubeconfig<textarea
+          >kubeconfig<input type="file" :aria-label="t('Загрузить файл {0}', ['kubeconfig'])" :disabled="importing" @change="readImportFile($event, 'kubeconfig')" /><textarea
             v-model="importForm.kubeconfig"
+            :disabled="importing"
+            aria-label="kubeconfig"
             required
             rows="8"
             spellcheck="false"

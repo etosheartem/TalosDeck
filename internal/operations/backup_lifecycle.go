@@ -107,7 +107,19 @@ func backupS3(t BackupTarget) (*minio.Client, error) {
 	}
 	return minio.New(u.Host, &minio.Options{Creds: credentials.NewStaticV4(t.AccessKey, t.SecretKey, ""), Secure: u.Scheme == "https", Region: t.Region})
 }
-func (s *BackupService) SaveTarget(ctx context.Context, t BackupTarget) (BackupTarget, error) {
+
+// SaveTarget reserves the same cluster journal used by backups/restores before
+// reading historical references. This also protects first-use targets whose
+// initial upload has not yet published remote-backup metadata.
+func (s *BackupService) SaveTarget(ctx context.Context, t BackupTarget, manager *jobs.Manager) (BackupTarget, error) {
+	if manager == nil {
+		return t, errors.New("backup job manager unavailable")
+	}
+	release, err := manager.ReserveManual()
+	if err != nil {
+		return t, err
+	}
+	defer release()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if t.ID == "local" || t.Type != "s3" || strings.TrimSpace(t.Name) == "" {

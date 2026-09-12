@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"github.com/gofiber/fiber/v2"
 	"talosdeck/internal/audit"
 	"talosdeck/internal/auth"
@@ -38,7 +39,10 @@ func RegisterBackupLifecycleRoutes(router fiber.Router, s *operations.BackupServ
 		}
 		ctx, cancel := context.WithTimeout(c.UserContext(), 30*time.Second)
 		defer cancel()
-		saved, err := s.SaveTarget(ctx, t)
+		saved, err := s.SaveTarget(ctx, t, jm)
+		if errors.Is(err, jobs.ErrBusy) {
+			return jobError(err)
+		}
 		if err != nil {
 			return fiber.NewError(422, err.Error())
 		}
