@@ -70,6 +70,10 @@ func Serve(ctx context.Context, dir string, input io.Reader, output io.Writer) e
 	if err != nil || epoch == ^uint64(0) {
 		return errors.New("authority epoch is invalid")
 	}
+	if hello.Epoch != epoch {
+		_ = encoder.Encode(message{Error: "authority epoch advanced; recovery review required"})
+		return errors.New("authority epoch advanced; recovery review required")
+	}
 	epoch++
 	tmp, err := os.CreateTemp(dir, ".epoch-")
 	if err != nil {

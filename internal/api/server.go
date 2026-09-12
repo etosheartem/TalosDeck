@@ -34,6 +34,7 @@ import (
 
 // ServerConfig configures the HTTP & WebSocket server.
 type ServerConfig struct {
+	AutomationPaused bool
 	RecoverySafeMode bool
 	Health           HealthSnapshotProvider
 	AlertCenter      *alertcenter.Center
@@ -130,7 +131,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	app.Use(recoveryGuard(safeMode))
 	app.Get("/api/recovery/status", func(c *fiber.Ctx) error {
 		c.Set("Cache-Control", "no-store")
-		return c.JSON(fiber.Map{"safeMode": safeMode, "requiresReview": safeMode, "automaticResume": false})
+		return c.JSON(fiber.Map{"safeMode": safeMode, "requiresReview": safeMode, "automaticResume": false, "automationPaused": cfg.AutomationPaused || (cfg.Fleet != nil && cfg.Fleet.automationPaused)})
 	})
 	app.Use(cfg.DownloadTickets.Authenticate)
 	app.Use(auditMutationGuard(auditMgr, authMgr, cfg.Fleet != nil))

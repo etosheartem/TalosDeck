@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 )
 
 // RecoveryRequired treats even malformed markers, directories and symlinks as
@@ -38,7 +39,7 @@ func recoveryGuard(enabled bool) fiber.Handler {
 			switch path {
 			case "/api/auth/login", "/api/auth/logout", "/api/auth/oidc/exchange":
 			default:
-				blocked = true
+				blocked = blocked || c.Method() != fiber.MethodPost || !isReadOnlyReconcilePath(c.Path())
 			}
 		}
 		if blocked {
@@ -46,4 +47,17 @@ func recoveryGuard(enabled bool) fiber.Handler {
 		}
 		return c.Next()
 	}
+}
+
+// Exact route matching keeps the safe-mode exception limited to observation.
+func isReadOnlyReconcilePath(path string) bool {
+	p := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	validID := func(s string) bool { v, err := uuid.Parse(s); return err == nil && v.String() == s }
+	if len(p) == 4 {
+		return p[0] == "api" && p[1] == "jobs" && validID(p[2]) && p[3] == "reconcile"
+	}
+	if len(p) == 5 {
+		return p[0] == "api" && p[1] == "provision" && p[2] == "jobs" && validID(p[3]) && p[4] == "reconcile"
+	}
+	return len(p) == 6 && p[0] == "api" && p[1] == "clusters" && validID(p[2]) && p[3] == "jobs" && validID(p[4]) && p[5] == "reconcile"
 }

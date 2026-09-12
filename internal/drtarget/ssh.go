@@ -64,7 +64,7 @@ func SSHUpload(ctx context.Context, host, directory, archivePath string) (Receip
 	if err != nil {
 		return Receipt{}, err
 	}
-	if n <= 0 {
+	if n <= 0 || n > maxArchiveBytes {
 		return Receipt{}, errors.New("empty recovery archive")
 	}
 	r := Receipt{Object: uuid.NewString() + ".tdr", Size: n, SHA256: hex.EncodeToString(h.Sum(nil))}
@@ -106,7 +106,7 @@ func SSHDownload(ctx context.Context, host, directory string, r Receipt, destina
 	if err := validateSSH(host, directory); err != nil {
 		return err
 	}
-	if !sshObjectPattern.MatchString(r.Object) || r.Size <= 0 || len(r.SHA256) != 64 {
+	if !sshObjectPattern.MatchString(r.Object) || !validReceipt(r) {
 		return errors.New("invalid SSH recovery receipt")
 	}
 	if _, err := uuid.Parse(strings.TrimSuffix(r.Object, ".tdr")); err != nil {
@@ -140,6 +140,9 @@ func SSHDownload(ctx context.Context, host, directory string, r Receipt, destina
 		return err
 	}
 	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = syncDownloadParent(destination); err != nil {
 		return err
 	}
 	ok = true

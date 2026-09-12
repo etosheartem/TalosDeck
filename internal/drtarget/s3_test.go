@@ -13,3 +13,11 @@ func TestRecoveryTargetRequiresIndependentTLSConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReceiptRejectsOverflowAndMalformedChecksum(t *testing.T) {
+	for _, r := range []Receipt{{Size: 1 << 62, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, {Size: 1, SHA256: "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"}, {Size: -1, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}} {
+		if validReceipt(r) {
+			t.Fatalf("accepted invalid receipt %+v", r)
+		}
+	}
+}

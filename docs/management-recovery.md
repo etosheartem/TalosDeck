@@ -15,7 +15,10 @@ A backup and its key on the same lost disk do not provide disaster recovery.
 The archive includes files under DATA (SQLite, jobs, journals and local backups),
 excluding encryption keys, locks and the previous recovery marker. The entire archive
 is encrypted and authenticated; extraction verifies paths, schema and file checksums.
-External legacy job/backup directories must first be consolidated into DATA. Environment
+External legacy job/backup directories must first be consolidated into DATA.
+The backup command requires `--confirm-complete-data-directory`: verify the running
+deployment arguments (including legacy `--backups` and `TALOSDECK_JOBS_DIR`) before
+confirming. The CLI cannot discover historical deployment arguments automatically. Environment
 and deployment secrets outside DATA are **not** automatically captured. Preserve their
 independent recovery configuration; do not put them in a public repository.
 
@@ -41,7 +44,7 @@ backup. Scheduled backup wrappers must stop/start the service reliably; do not k
 mid-write to obtain a backup.
 
 ```sh
-talosdeck recovery backup --data /srv/talosdeck/data \
+talosdeck recovery backup --data /srv/talosdeck/data --confirm-complete-data-directory \
   --key /secure/talosdeck/master.key --target /secure/dr-target.json \
   --receipt /secure/receipts/backup-2026-09-13.json
 ```
@@ -131,8 +134,12 @@ job checkpoint and persisted provider intent validates that lease. Disconnect po
 the client permanently; it cannot silently reconnect and reuse the old epoch.
 A new successful acquisition increments and fsyncs the authority's epoch.
 
-This is opt-in for compatibility with existing installations. **An old binary or a
-process started without this configuration is not fenced by it.** All executors must
+Enabling authority is opt-in for existing installations. Once enabled, its configuration
+and last acquired epoch are persisted in DATA; omitting flags on restart does not disable
+it. Acquisition requires the authority epoch to match the saved expected epoch. A stale
+copy is refused even after the newer executor has exited. A crash between remote grant
+and local epoch persistence conservatively requires review. **An old binary without this
+mechanism is not fenced by it.** All executors must
 use the same authority, and superseded legacy hosts/credentials must be fenced separately.
 A validation round trip also cannot retract a provider request already sent before
 lease loss. Reconcile those outcomes; never treat lease loss as proof an operation failed.
@@ -141,3 +148,56 @@ Restored safe mode does not acquire execution authority and does not resume jobs
 Unavailable authority fails mutation admission closed. A live but partitioned old
 session can delay takeover until its SSH session terminates; availability is sacrificed
 rather than forcibly granting a second lease.
+
+## Reviewed manual activation
+
+After reconnecting and reviewing outcomes, stop the restored server. Use the Jobs
+screen's **Reconcile** action to collect provider ownership evidence beforehand.
+It is available in safe mode, never resubmits a command, and cannot prove an ambiguous
+delete merely from a missing/filtered provider listing. Unproved outcomes stay UNKNOWN.
+
+Prepare an explicit review list (empty `[]` only when there are no unresolved jobs):
+
+```json
+[{"jobId":"REPLACE-WITH-JOB-UUID","reason":"Observed the resource identity and reviewed the remaining unknown outcome; no automatic retry authorized."}]
+```
+
+Separately record a short single-line attestation explaining how the old management
+instance was fenced. Do not include credentials. This is an operator assertion, not
+an automatic provider fencing check. Then:
+
+```sh
+talosdeck recovery activate --data /srv/talosdeck/restored \
+  --key /secure/talosdeck/master.key --actor operator-name \
+  --fencing-evidence /secure/recovery/fencing.txt \
+  --reviews /secure/recovery/reviews.json --confirm-old-management-fenced \
+  --authority-host execution-host --authority-binary /usr/local/bin/talosdeck \
+  --authority-state /var/lib/talosdeck-authority
+```
+
+The command locks the registry and job journals, validates credentials and execution
+rights, records explicit job reviews without converting UNKNOWN to success, and commits
+an encrypted activation receipt bound to this restore and authority epoch. The sentinel
+and its encrypted database anchor remain. Removing the sentinel does not unlock the
+restored database. A subsequent restore invalidates the old activation receipt.
+
+If the expected epoch has advanced, investigate/fence the earlier executor and reconcile
+its outcomes. Only after that review may an operator supply `--expected-epoch N` for the
+verified current epoch. This is a compare-and-swap expectation, not forced takeover:
+a live authority holder still blocks acquisition. Interrupted activation errors report
+the acquired epoch for review; never guess or loop through epochs to obtain admission.
+
+Restart with the same DATA and key. Persisted authority policy is loaded even if flags
+are omitted. A fresh matching authority lease enables **manual management only**.
+Backups schedules, notification delivery and other background collectors remain paused;
+old jobs are not resumed. The console displays this state. Automatic scheduling cannot
+yet be re-enabled through this recovery workflow; this limitation is deliberate and
+must be accounted for operationally.
+
+Lab acceptance on 2026-09-13 destroyed a dedicated management guest and disk, restored
+to a fresh guest, and verified admin access, three real nodes, provider credentials and
+safe mode. Measured snapshot-to-loss interval was 29.5 seconds and recovery 99.3 seconds
+against declared 24h/30min lab targets. Image and binary were cached; target was on the
+same hypervisor outside the guest disk. This does not prove hypervisor-loss recovery.
+Separate process tests verified exclusive authority, returning stale executors (including
+after the newer process exited), and that omitted flags do not bypass persisted policy.

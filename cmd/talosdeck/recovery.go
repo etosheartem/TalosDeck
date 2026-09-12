@@ -16,6 +16,9 @@ import (
 )
 
 func recoveryCommand(args []string) error {
+	if len(args) > 0 && args[0] == "activate" {
+		return recoveryActivateCommand(args[1:])
+	}
 	if len(args) == 0 {
 		return errors.New("usage: talosdeck recovery backup|restore|drill [flags]")
 	}
@@ -24,6 +27,7 @@ func recoveryCommand(args []string) error {
 	key := fs.String("key", "", "independently supplied master keyring")
 	target := fs.String("target", "", "independent S3 (HTTPS) or SSH target JSON file")
 	receiptPath := fs.String("receipt", "", "receipt output (backup) or input (restore/drill)")
+	completeData := fs.Bool("confirm-complete-data-directory", false, "confirm all durable journals/backups/config artifacts are under DATA; external deployment secrets are retained independently")
 	timeout := fs.Duration("timeout", 30*time.Minute, "operation deadline")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -38,8 +42,8 @@ func recoveryCommand(args []string) error {
 		return errors.New("data directory required")
 	}
 	// Existing external legacy journals require explicit migration into DATA first.
-	if os.Getenv("TALOSDECK_JOBS_DIR") != "" {
-		return errors.New("external legacy jobs directory configured: consolidate durable state before recovery backup")
+	if args[0] == "backup" && (!*completeData || os.Getenv("TALOSDECK_JOBS_DIR") != "") {
+		return errors.New("backup requires complete-data-directory confirmation and consolidation of external legacy journals/backups")
 	}
 	var config drtarget.Config
 	raw, err := os.ReadFile(*target)
@@ -71,10 +75,17 @@ func recoveryCommand(args []string) error {
 		}()
 		version := "development"
 		if info, ok := debug.ReadBuildInfo(); ok {
+			dirty := false
 			for _, setting := range info.Settings {
 				if setting.Key == "vcs.revision" {
 					version = setting.Value
 				}
+				if setting.Key == "vcs.modified" && setting.Value == "true" {
+					dirty = true
+				}
+			}
+			if dirty {
+				version += "+dirty"
 			}
 		}
 		manifest, err := recovery.Create(ctx, recovery.Options{DataDir: *data, KeyPath: *key, ArchivePath: archive, ApplicationVersion: version})
@@ -98,6 +109,12 @@ func recoveryCommand(args []string) error {
 				}{receipt, false, "unknown"}); writeErr == nil {
 					if out.Sync() == nil {
 						complete = true
+						if parent, openErr := os.Open(filepath.Dir(*receiptPath)); openErr == nil {
+							// Preserve the ambiguous-upload locator even when directory
+							// durability cannot be confirmed; never erase that evidence.
+							_ = parent.Sync()
+							_ = parent.Close()
+						}
 					}
 				}
 			}
@@ -112,6 +129,15 @@ func recoveryCommand(args []string) error {
 			return err
 		}
 		if err = out.Sync(); err != nil {
+			return err
+		}
+		parent, err := os.Open(filepath.Dir(*receiptPath))
+		if err != nil {
+			return err
+		}
+		err = parent.Sync()
+		parent.Close()
+		if err != nil {
 			return err
 		}
 		complete = true

@@ -124,3 +124,43 @@ func TestC9EpochChangesBetweenCheckpoints(t *testing.T) {
 		t.Fatal("superseded executor continued", j)
 	}
 }
+
+type authorityExpiresAfter struct {
+	calls atomic.Int32
+	allow int32
+}
+
+func (a *authorityExpiresAfter) Validate(context.Context, string, uint64) error {
+	if a.calls.Add(1) > a.allow {
+		return reconcile.ErrAuthority
+	}
+	return nil
+}
+func TestIntentPersistenceDoesNotOutliveAuthorityAdmission(t *testing.T) {
+	var mutated atomic.Bool
+	m, err := Open(t.TempDir(), func(ctx context.Context, e *Execution, _ Request) error {
+		if err := e.BeginIntent(ctx, "create", "create", reconcile.Identity{ProviderID: "p", ResourceID: "r", Generation: "g", OwnerID: "c"}); err != nil {
+			return err
+		}
+		mutated.Store(true)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	// Runner admission + pre-persistence admission succeed; post-fsync admission fails.
+	a := &authorityExpiresAfter{allow: 2}
+	if err = m.SetExecutionAuthority(a, "test", 1); err != nil {
+		t.Fatal(err)
+	}
+	j, err := m.Submit(Request{Kind: "test"}, "tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.wg.Wait()
+	j, _ = m.Get(j.ID)
+	if mutated.Load() || j.Status != "interrupted" || len(j.Intents) != 1 || j.Intents[0].Outcome != reconcile.Unknown {
+		t.Fatal(mutated.Load(), j)
+	}
+}

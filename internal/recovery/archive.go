@@ -24,6 +24,7 @@ import (
 
 const SafeModeFile = "recovery-required.json"
 const maxFiles = 100000
+const maxManifestBytes = 16 << 20
 const maxBytes int64 = 100 << 30
 
 type Options struct{ DataDir, KeyPath, ArchivePath, ApplicationVersion string }
@@ -52,7 +53,7 @@ func digestFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), e
 }
 func validPath(p string) bool {
-	return p != "" && p != "." && !strings.Contains(p, "\\") && !filepath.IsAbs(p) && filepath.Clean(p) == p && p != ".." && !strings.HasPrefix(p, "../")
+	return len(p) <= 4096 && p != "" && p != "." && !strings.Contains(p, "\\") && !filepath.IsAbs(p) && filepath.Clean(p) == p && p != ".." && !strings.HasPrefix(p, "../")
 }
 
 // Create requires the server to be stopped. ArchivePath must be outside DataDir.
@@ -62,10 +63,19 @@ func Create(ctx context.Context, o Options) (m Manifest, err error) {
 	if err != nil {
 		return m, err
 	}
+	data, err = filepath.EvalSymlinks(data)
+	if err != nil {
+		return m, err
+	}
 	out, err := filepath.Abs(o.ArchivePath)
 	if err != nil {
 		return m, err
 	}
+	outputParent, err := filepath.EvalSymlinks(filepath.Dir(out))
+	if err != nil {
+		return m, err
+	}
+	out = filepath.Join(outputParent, filepath.Base(out))
 	if out == data || strings.HasPrefix(out, data+string(os.PathSeparator)) {
 		return m, errors.New("archive must be outside data directory")
 	}
@@ -115,6 +125,9 @@ func Create(ctx context.Context, o Options) (m Manifest, err error) {
 		if e != nil {
 			return e
 		}
+		if !validPath(rel) {
+			return errors.New("unsupported data file path")
+		}
 		info, e := d.Info()
 		if e != nil {
 			return e
@@ -130,6 +143,15 @@ func Create(ctx context.Context, o Options) (m Manifest, err error) {
 		}
 		if os.SameFile(info, keyInfo) || d.Name() == "master.key" || strings.HasSuffix(rel, ".lock") || rel == SafeModeFile {
 			return nil
+		}
+		if info.Size() <= 1<<20 {
+			keyCopy, e := isKeyringFile(path)
+			if e != nil {
+				return e
+			}
+			if keyCopy {
+				return nil
+			}
 		}
 		total += info.Size()
 		if total > maxBytes || len(m.Entries) >= maxFiles {
@@ -194,7 +216,13 @@ func Create(ctx context.Context, o Options) (m Manifest, err error) {
 		return m, err
 	}
 	tw := tar.NewWriter(encrypted)
-	b, _ := json.Marshal(m)
+	b, err := json.Marshal(m)
+	if err != nil {
+		return m, err
+	}
+	if len(b) > maxManifestBytes {
+		return m, errors.New("recovery manifest size limit exceeded")
+	}
 	if err = tw.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0600, Size: int64(len(b))}); err != nil {
 		return m, err
 	}
@@ -228,6 +256,9 @@ func Create(ctx context.Context, o Options) (m Manifest, err error) {
 		return m, err
 	}
 	if err = f.Close(); err != nil {
+		return m, err
+	}
+	if err = syncDir(filepath.Dir(out)); err != nil {
 		return m, err
 	}
 	ok = true
@@ -293,10 +324,31 @@ func Restore(ctx context.Context, archivePath, destDir, keyPath string) (m Manif
 	if err != nil {
 		return m, err
 	}
+	actualSchema, e := databaseSchema(ctx, stage)
+	if e != nil {
+		return m, e
+	}
+	if actualSchema != m.SchemaVersion {
+		return m, errors.New("backup schema metadata does not match database")
+	}
 	if err = validate(ctx, stage, keyPath); err != nil {
 		return m, err
 	}
 	marker, _ := json.Marshal(map[string]any{"restoredAt": time.Now().UTC(), "backupCreatedAt": m.CreatedAt, "requiresReview": true, "reason": "management plane restored; destructive jobs and schedules must remain disabled"})
+	// Bind restore-required state to encrypted durable data as well as the
+	// filesystem marker. Removing the marker must never authorize execution.
+	restoredStore, err := clusters.Open(filepath.Join(stage, "talosdeck.db"), keyPath)
+	if err != nil {
+		return m, err
+	}
+	err = restoredStore.PutSecret(ctx, "__fleet__", "recovery", "required", marker)
+	storeCloseErr := restoredStore.Close()
+	if err != nil {
+		return m, err
+	}
+	if storeCloseErr != nil {
+		return m, storeCloseErr
+	}
 	markerFile, err := os.OpenFile(filepath.Join(stage, SafeModeFile), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return m, err
@@ -311,13 +363,9 @@ func Restore(ctx context.Context, archivePath, destDir, keyPath string) (m Manif
 	if closeErr != nil {
 		return m, closeErr
 	}
-	stageDir, err := os.Open(stage)
-	if err != nil {
-		return m, err
-	}
-	err = stageDir.Sync()
-	stageDir.Close()
-	if err != nil {
+	// Flush nested directories too: syncing only their parent does not persist
+	// the entries for jobs, backups and audit files inside them.
+	if err = syncTreeDirectories(stage); err != nil {
 		return m, err
 	}
 	// Atomically publish without replacing a concurrently created destination.
@@ -347,10 +395,10 @@ func extract(ctx context.Context, path, dir, key string) (m Manifest, err error)
 	if e != nil {
 		return m, e
 	}
-	if h.Name != "manifest.json" || h.Typeflag != tar.TypeReg || h.Size > 16<<20 {
+	if h.Name != "manifest.json" || h.Typeflag != tar.TypeReg || h.Size > maxManifestBytes {
 		return m, errors.New("invalid recovery manifest")
 	}
-	if e = json.NewDecoder(io.LimitReader(tr, 16<<20)).Decode(&m); e != nil {
+	if e = json.NewDecoder(io.LimitReader(tr, maxManifestBytes)).Decode(&m); e != nil {
 		return m, e
 	}
 	if m.FormatVersion != 1 || m.SchemaVersion < 1 || m.SchemaVersion > 2 || len(m.Entries) > maxFiles || m.CreatedAt.IsZero() {
@@ -365,10 +413,10 @@ func extract(ctx context.Context, path, dir, key string) (m Manifest, err error)
 		if _, exists := expected[entry.Path]; exists {
 			return m, errors.New("duplicate manifest entry")
 		}
-		total += entry.Size
-		if total > maxBytes {
+		if entry.Size > maxBytes-total {
 			return m, errors.New("archive size limit exceeded")
 		}
+		total += entry.Size
 		expected[entry.Path] = entry
 	}
 	if _, exists := expected["talosdeck.db"]; !exists {
@@ -417,6 +465,15 @@ func extract(ctx context.Context, path, dir, key string) (m Manifest, err error)
 		if hex.EncodeToString(hash.Sum(nil)) != entry.SHA256 {
 			return m, errors.New("backup checksum mismatch")
 		}
+		if entry.Size <= 1<<20 {
+			isKey, e := isKeyringFile(dst)
+			if e != nil {
+				return m, e
+			}
+			if isKey {
+				return m, errors.New("backup contains a master keyring; keys must be retained separately")
+			}
+		}
 	}
 	if _, e = io.Copy(io.Discard, decrypted); e != nil {
 		return m, e
@@ -435,4 +492,59 @@ func Drill(ctx context.Context, archivePath, keyPath string) (Manifest, error) {
 	}
 	defer os.RemoveAll(d)
 	return Restore(ctx, archivePath, filepath.Join(d, "data"), keyPath)
+}
+
+func isKeyringFile(path string) (bool, error) {
+	b, e := os.ReadFile(path)
+	if e != nil {
+		return false, e
+	}
+	var k keyring
+	if json.Unmarshal(b, &k) != nil || k.Active == "" || len(k.Keys[k.Active]) != 32 {
+		return false, nil
+	}
+	for _, key := range k.Keys {
+		if len(key) != 32 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+func syncDir(path string) error {
+	d, e := os.Open(path)
+	if e != nil {
+		return e
+	}
+	defer d.Close()
+	return d.Sync()
+}
+func syncTreeDirectories(root string) error {
+	var dirs []string
+	if e := filepath.WalkDir(root, func(p string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if d.IsDir() {
+			dirs = append(dirs, p)
+		}
+		return nil
+	}); e != nil {
+		return e
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if e := syncDir(dirs[i]); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+func databaseSchema(ctx context.Context, dir string) (int, error) {
+	db, e := sql.Open("sqlite", filepath.Join(dir, "talosdeck.db"))
+	if e != nil {
+		return 0, e
+	}
+	defer db.Close()
+	var n int
+	e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&n)
+	return n, e
 }

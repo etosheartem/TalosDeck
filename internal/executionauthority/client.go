@@ -14,9 +14,10 @@ import (
 )
 
 type SSHOptions struct {
-	Host         string
-	RemoteBinary string
-	StateDir     string
+	ExpectedEpoch uint64
+	Host          string
+	RemoteBinary  string
+	StateDir      string
 }
 
 type Client struct {
@@ -59,17 +60,17 @@ func OpenSSH(ctx context.Context, opts SSHOptions, instance string) (*Client, er
 	done := make(chan struct{})
 	go func() { _ = command.Wait(); close(done) }()
 	stop := func() { _ = command.Process.Kill(); <-done }
-	c, err := openTransport(ctx, input, output, stop, instance)
+	c, err := openTransport(ctx, input, output, stop, instance, opts.ExpectedEpoch)
 	return c, err
 }
-func openTransport(ctx context.Context, input io.WriteCloser, output io.ReadCloser, stop func(), instance string) (*Client, error) {
+func openTransport(ctx context.Context, input io.WriteCloser, output io.ReadCloser, stop func(), instance string, expectedEpoch uint64) (*Client, error) {
 	c := &Client{input: input, output: output, stop: stop, InstanceID: instance}
 	c.scan = bufio.NewScanner(output)
 	c.scan.Buffer(make([]byte, 1024), 4096)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	reply, err := c.exchange(ctx, message{Op: "acquire", Instance: instance})
-	if err != nil || reply.Op != "acquired" || reply.Instance != instance || reply.Epoch == 0 {
+	reply, err := c.exchange(ctx, message{Op: "acquire", Instance: instance, Epoch: expectedEpoch})
+	if err != nil || reply.Op != "acquired" || reply.Instance != instance || reply.Epoch == 0 || expectedEpoch == ^uint64(0) || reply.Epoch != expectedEpoch+1 {
 		c.poison()
 		return nil, errors.New("execution authority acquisition failed")
 	}

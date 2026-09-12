@@ -19,6 +19,7 @@ import (
 	"talosdeck/internal/clusters"
 	"talosdeck/internal/executionauthority"
 	"talosdeck/internal/proxmox"
+	"talosdeck/internal/recovery"
 )
 
 func env(name, fallback string) string {
@@ -49,7 +50,7 @@ func main() {
 	backupDir := flag.String("backups", "", "Legacy backups directory (default: DATA/backups)")
 	port := flag.String("port", env("PORT", ":8080"), "HTTP port")
 	nodesFlag := flag.String("nodes", "", "Additional node addresses for legacy migration")
-	dbBackup := flag.String("backup-database", "", "Write a consistent encrypted database snapshot and exit")
+	dbBackup := flag.String("backup-database", "", "Write a database-only snapshot and exit (not a complete management DR backup)")
 	rotateKey := flag.String("rotate-encryption-key", "", "Rotate credentials into a new master key file and exit (stop the server first)")
 	authorityHost := flag.String("authority-host", os.Getenv("TALOSDECK_AUTHORITY_HOST"), "Independent SSH execution authority host")
 	authorityBinary := flag.String("authority-binary", env("TALOSDECK_AUTHORITY_BINARY", "/usr/local/bin/talosdeck"), "Absolute helper binary on authority host")
@@ -83,7 +84,8 @@ func main() {
 			extraNodes = append(extraNodes, node)
 		}
 	}
-	safeMode, err := api.RecoveryRequired(*dataDir)
+	recoveryState, err := recovery.ReadState(context.Background(), store, *dataDir)
+	safeMode := recoveryState.SafeMode
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -111,24 +113,33 @@ func main() {
 		log.Fatalf("Cannot open global audit: %v", err)
 	}
 	defer globalAudit.Close()
+	authorityOptions, err := executionPolicy(*dataDir, executionauthority.SSHOptions{Host: *authorityHost, RemoteBinary: *authorityBinary, StateDir: *authorityState})
+	if err != nil {
+		log.Fatal(err)
+	}
 	var execution *executionauthority.Client
 	instanceID := uuid.NewString()
 	var epoch uint64
-	if !safeMode && *authorityHost != "" {
+	if !safeMode && authorityOptions.Host != "" {
 		acquire, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		execution, err = executionauthority.OpenSSH(acquire, executionauthority.SSHOptions{Host: *authorityHost, RemoteBinary: *authorityBinary, StateDir: *authorityState}, instanceID)
+		execution, err = executionauthority.OpenSSH(acquire, authorityOptions, instanceID)
 		cancel()
 		if err != nil {
 			log.Fatal("Cannot acquire independent execution authority: ", err)
 		}
 		defer execution.Close()
 		epoch = execution.Epoch
+		if err = recordExecutionEpoch(*dataDir, authorityOptions, epoch); err != nil {
+			execution.Close()
+			log.Fatal("Cannot persist acquired execution epoch: ", err)
+		}
 	}
 	fleetOpts := api.FleetOptions{Store: store, Auth: authMgr, Audit: globalAudit, DataDir: *dataDir, LegacyBackupDir: *backupDir, LegacyJobsDir: os.Getenv("TALOSDECK_JOBS_DIR")}
 	if execution != nil {
 		fleetOpts.ExecutionAuthority = execution
 		fleetOpts.ManagementInstanceID = instanceID
 		fleetOpts.ExecutionEpoch = epoch
+		fleetOpts.ManagementAuthorityIdentity = executionauthority.Identity(authorityOptions)
 	}
 	fleet, err := api.OpenFleet(fleetOpts)
 	if err != nil {

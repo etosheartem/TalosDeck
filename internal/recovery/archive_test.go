@@ -1,9 +1,12 @@
 package recovery
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"talosdeck/internal/clusters"
@@ -127,5 +130,157 @@ func TestRejectSymlinkAndExcludeKeyAlias(t *testing.T) {
 	os.Symlink(o.KeyPath, filepath.Join(o.DataDir, "link"))
 	if _, e = Create(ctx, o); e == nil {
 		t.Fatal("symlink accepted")
+	}
+}
+
+func TestCopiedRotatedKeyringsExcluded(t *testing.T) {
+	o, s := fixture(t)
+	s.Close()
+	key, e := os.ReadFile(o.KeyPath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = os.WriteFile(filepath.Join(o.DataDir, "old-keyring.json"), key, 0600); e != nil {
+		t.Fatal(e)
+	}
+	k, _ := readKeys(o.KeyPath)
+	k.Active = "rotated"
+	k.Keys[k.Active] = bytes.Repeat([]byte{3}, 32)
+	key, _ = json.Marshal(k)
+	os.Mkdir(filepath.Join(o.DataDir, "secrets"), 0700)
+	os.WriteFile(filepath.Join(o.DataDir, "secrets", "new-keyring"), key, 0600)
+	m, e := Create(context.Background(), o)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, entry := range m.Entries {
+		if entry.Path == "old-keyring.json" || entry.Path == "secrets/new-keyring" {
+			t.Fatal("copied keyring entered archive")
+		}
+	}
+}
+func TestRejectOutputViaSymlinkIntoData(t *testing.T) {
+	o, s := fixture(t)
+	s.Close()
+	alias := filepath.Join(filepath.Dir(o.DataDir), "alias-data")
+	if e := os.Symlink(o.DataDir, alias); e != nil {
+		t.Fatal(e)
+	}
+	o.ArchivePath = filepath.Join(alias, "backup")
+	if _, e := Create(context.Background(), o); e == nil {
+		t.Fatal("accepted backup inside data through alias")
+	}
+}
+func TestSchemaMigrationAndMismatch(t *testing.T) {
+	ctx := context.Background()
+	o, s := fixture(t)
+	s.Close()
+	db, e := sql.Open("sqlite", filepath.Join(o.DataDir, "talosdeck.db"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.Exec("PRAGMA user_version=1"); e != nil {
+		t.Fatal(e)
+	}
+	db.Close()
+	m, e := Create(ctx, o)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if m.SchemaVersion != 1 {
+		t.Fatal("lost source schema version")
+	}
+	dest := filepath.Join(filepath.Dir(o.DataDir), "restored-schema")
+	if _, e = Restore(ctx, o.ArchivePath, dest, o.KeyPath); e != nil {
+		t.Fatal(e)
+	}
+	if v, e := databaseSchema(ctx, dest); e != nil || v != 2 {
+		t.Fatalf("migration failed: %d %v", v, e)
+	}
+	// An authenticated archive may still have inconsistent metadata due to a
+	// producer bug. Reject it instead of claiming a different schema was tested.
+	raw, e := os.Open(o.ArchivePath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	reader, e := archiveReader(raw, o.KeyPath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	tr := tar.NewReader(reader)
+	bad := filepath.Join(filepath.Dir(o.DataDir), "mismatched.tdr")
+	out, e := os.Create(bad)
+	if e != nil {
+		t.Fatal(e)
+	}
+	sealed, e := archiveWriter(out, o.KeyPath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	tw := tar.NewWriter(sealed)
+	for {
+		header, e := tr.Next()
+		if e == io.EOF {
+			break
+		}
+		if e != nil {
+			t.Fatal(e)
+		}
+		payload, e := io.ReadAll(tr)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if header.Name == "manifest.json" {
+			var manifest Manifest
+			json.Unmarshal(payload, &manifest)
+			manifest.SchemaVersion = 2
+			payload, _ = json.Marshal(manifest)
+			header.Size = int64(len(payload))
+		}
+		if e = tw.WriteHeader(header); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = tw.Write(payload); e != nil {
+			t.Fatal(e)
+		}
+	}
+	tw.Close()
+	sealed.Close()
+	out.Close()
+	raw.Close()
+	if _, e = Drill(ctx, bad, o.KeyPath); e == nil {
+		t.Fatal("schema mismatch accepted")
+	}
+}
+
+func TestRestoreMarkerBoundToEncryptedDatabase(t *testing.T) {
+	ctx := context.Background()
+	o, s := fixture(t)
+	s.Close()
+	if _, e := Create(ctx, o); e != nil {
+		t.Fatal(e)
+	}
+	dest := filepath.Join(filepath.Dir(o.DataDir), "restored-marker")
+	if _, e := Restore(ctx, o.ArchivePath, dest, o.KeyPath); e != nil {
+		t.Fatal(e)
+	}
+	marker, e := os.ReadFile(filepath.Join(dest, SafeModeFile))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = os.Remove(filepath.Join(dest, SafeModeFile)); e != nil {
+		t.Fatal(e)
+	}
+	s, e = clusters.Open(filepath.Join(dest, "talosdeck.db"), o.KeyPath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	durable, e := s.GetSecret(ctx, "__fleet__", "recovery", "required")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !bytes.Equal(durable, marker) {
+		t.Fatal("durable restore marker missing or changed after file removal")
 	}
 }

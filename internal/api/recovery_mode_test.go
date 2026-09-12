@@ -78,3 +78,17 @@ func TestRecoveryGuardProtectsFleetLegacyAndTransport(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveryReconcileExceptionIsExact(t *testing.T) {
+	id := "e5a0d9ea-9b91-45c1-8f54-472eeb8c12d2"
+	for _, path := range []string{"/api/jobs/" + id + "/reconcile", "/api/provision/jobs/" + id + "/reconcile", "/api/clusters/" + id + "/jobs/" + id + "/reconcile"} {
+		if !isReadOnlyReconcilePath(path) {
+			t.Fatal("valid observation denied", path)
+		}
+	}
+	for _, path := range []string{"/api/jobs/not-uuid/reconcile", "/api/jobs/" + id + "/reconcile/", "/api/jobs/" + id + "/reconcile/delete", "/api/clusters/x/jobs/" + id + "/reconcile"} {
+		if isReadOnlyReconcilePath(path) {
+			t.Fatal("unsafe exception", path)
+		}
+	}
+}

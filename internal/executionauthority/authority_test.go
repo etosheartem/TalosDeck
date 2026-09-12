@@ -2,9 +2,12 @@ package executionauthority
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +16,11 @@ func connectFixture(t *testing.T, dir, instance string) (*Client, error) {
 	client, server := net.Pipe()
 	done := make(chan struct{})
 	go func() { defer close(done); defer server.Close(); _ = Serve(context.Background(), dir, server, server) }()
-	return openTransport(context.Background(), client, client, func() { server.Close(); <-done }, instance)
+	var expected uint64
+	if raw, err := os.ReadFile(filepath.Join(dir, "epoch")); err == nil {
+		expected, _ = strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
+	}
+	return openTransport(context.Background(), client, client, func() { server.Close(); <-done }, instance, expected)
 }
 func TestExclusiveExternalLeaseAndOldClientNeverReconnects(t *testing.T) {
 	dir := t.TempDir()
@@ -77,5 +84,45 @@ func TestSSHRejectsCommandInjection(t *testing.T) {
 	_, err := OpenSSH(context.Background(), SSHOptions{Host: "host; touch /tmp/unsafe", RemoteBinary: "/bin/helper", StateDir: "/data/authority"}, "instance")
 	if err == nil {
 		t.Fatal("unsafe host accepted")
+	}
+}
+
+func TestSupersededSnapshotCannotAcquireAfterNewHolderExits(t *testing.T) {
+	dir := t.TempDir()
+	first, err := connectFixture(t, dir, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldEpoch := first.Epoch
+	first.Close()
+	next, err := connectFixture(t, dir, "next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.Close()
+	local, remote := net.Pipe()
+	done := make(chan struct{})
+	go func() { defer close(done); defer remote.Close(); _ = Serve(context.Background(), dir, remote, remote) }()
+	stale, err := openTransport(context.Background(), local, local, func() { remote.Close(); <-done }, "returned", oldEpoch)
+	if err == nil {
+		stale.Close()
+		t.Fatal("superseded data acquired after new holder exited")
+	}
+}
+
+func TestClientRejectsHelperIgnoringExpectedEpoch(t *testing.T) {
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer server.Close()
+		var hello message
+		_ = json.NewDecoder(server).Decode(&hello)
+		_ = json.NewEncoder(server).Encode(message{Op: "acquired", Instance: hello.Instance, Epoch: 99})
+	}()
+	c, err := openTransport(context.Background(), client, client, func() { server.Close(); <-done }, "stale-instance", 42)
+	if err == nil {
+		c.Close()
+		t.Fatal("incompatible helper silently adopted a newer epoch")
 	}
 }

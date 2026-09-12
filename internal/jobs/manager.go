@@ -488,5 +488,12 @@ func (e *Execution) Checkpoint(ctx context.Context, step, message string) error 
 	if err := m.validateAuthority(ctx); err != nil {
 		return fmt.Errorf("%w: %v", ErrUncertain, err)
 	}
-	return e.Log(step, message)
+	if err := e.Log(step, message); err != nil {
+		return err
+	}
+	// Persistence can outlive a lease; admission is checked again after fsync.
+	if err := m.validateAuthority(ctx); err != nil {
+		return fmt.Errorf("%w: %v", ErrUncertain, err)
+	}
+	return nil
 }

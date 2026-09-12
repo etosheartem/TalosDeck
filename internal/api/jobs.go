@@ -78,6 +78,28 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		c.Set("Content-Disposition", `attachment; filename="job-`+job.ID+`.json"`)
 		return c.JSON(job)
 	})
+	group.Post("/:id/reconcile", func(c *fiber.Ctx) error {
+		j, err := manager.Get(c.Params("id"))
+		if err != nil {
+			return jobError(err)
+		}
+		if !auth.CanJob(roleName(c), j.Request.Kind) {
+			return fiber.NewError(403, "Operation not permitted for this role")
+		}
+		if len(c.Body()) != 0 {
+			return fiber.NewError(400, "Reconciliation accepts no client-supplied evidence")
+		}
+		if service.Provision == nil {
+			return fiber.NewError(409, "Provider reconciliation unavailable")
+		}
+		ctx, cancel := context.WithTimeout(c.UserContext(), 30*time.Second)
+		defer cancel()
+		observed, err := service.Provision.ReconcileJob(ctx, manager, j.ID)
+		if err != nil {
+			return fiber.NewError(409, "Job reconciliation requires review; no infrastructure operation was started")
+		}
+		return c.JSON(observed)
+	})
 	group.Post("/:id/stop", func(c *fiber.Ctx) error {
 		j, err := manager.Get(c.Params("id"))
 		if err != nil {

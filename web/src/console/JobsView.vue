@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RefreshCw, Play, Square, Download } from "lucide-vue-next";
 import { request as apiRequest, download } from "./client";
 import { canOperate } from "./permissions";
+import { currentUser, isAuthenticated } from "../api";
 import { t, locale } from "./i18n";
 import Modal from "./Modal.vue";
 import ResourceTable from "./ResourceTable.vue";
@@ -27,7 +28,15 @@ interface Plan {
   warnings: string[];
   kubernetesVersion: string;
 }
+interface Intent {
+ id: string; action: string; executorEpoch: number; outcome: string;
+ identity: { providerId: string; resourceId: string; generation: string; ownerId: string };
+ evidence?: { state: string; observedAt: string; source?: string };
+}
 interface Job {
+ reconciliationOutcome?: string;
+ workflowVersion?: number; planVersion?: number; stepSchemaVersion?: number;
+ intents?: Intent[];
   id: string;
   clusterId?: string;
   request: Omit<Operation, "kind"> & { kind: string };
@@ -68,6 +77,11 @@ const pollError = ref("");
 const jobList = ref<Job[]>([]);
 const selected = ref<Job | null>(null);
 const selectedID = ref("");
+// Observation does not grant mutation rights and remains available after restore.
+const canReviewReadOnly = computed(() => {
+ if (!isAuthenticated.value || !selected.value) return false;
+ return currentUser.value.role === "admin" || (currentUser.value.role === "operator" && ["talos-upgrade", "kubernetes-upgrade", "rolling-reboot", "backup-create", "backup-etcd", "etcd-backup", "diagnostics"].includes(selected.value.request.kind));
+});
 const logFilter = ref("");
 let disposed = false;
 let polling = false;
@@ -121,6 +135,8 @@ async function exportLog() {
 }
 const state = (value: string) =>
   ({
+    UNKNOWN: t("Результат неизвестен"),
+    requires_review: t("Требуется проверка"),
     queued: t("В очереди"),
     running: t("Выполняется"),
     succeeded: t("Завершено"),
@@ -250,8 +266,19 @@ async function submit() {
     if (!disposed) busy.value = false;
   }
 }
+async function reconcileJob() {
+ if (!selected.value || busy.value || !canReviewReadOnly.value) return;
+ const id = selected.value.id;
+ busy.value = true; error.value = "";
+ try {
+  const observed = await request<Job>(`/jobs/${encodeURIComponent(id)}/reconcile`, { method: "POST" });
+  if (!disposed && selectedID.value === id) selected.value = observed;
+  if (!disposed) await load();
+ } catch (e) { if (!disposed) error.value = String(e); }
+ finally { if (!disposed) busy.value = false; }
+}
 async function act(action: "stop" | "acknowledge") {
-  if (!selected.value || busy.value) return;
+  if (!selected.value || busy.value || !canOperate.value || !canReviewReadOnly.value) return;
   busy.value = true;
   error.value = "";
   try {
@@ -422,7 +449,7 @@ async function act(action: "stop" | "acknowledge") {
         ><span>{{ t("Шаг") }}: {{ state(selected.step) || "—" }}</span
         ><span class="spacer" />
         <button
-          v-if="canOperate && ['running', 'queued'].includes(selected.status)"
+          v-if="canOperate && canReviewReadOnly && ['running', 'queued'].includes(selected.status)"
           :disabled="busy || selected.stopRequested"
           @click="act('stop')"
         >
@@ -434,7 +461,7 @@ async function act(action: "stop" | "acknowledge") {
         </button>
         <button
           v-if="
-            canOperate &&
+            canOperate && canReviewReadOnly &&
             selected.status === 'interrupted' &&
             !selected.reviewed
           "
@@ -443,10 +470,28 @@ async function act(action: "stop" | "acknowledge") {
         >
           {{ t("Проверить прерывание") }}
         </button>
+        <button v-if="canReviewReadOnly && selected.intents?.length && !['queued', 'running'].includes(selected.status)" :disabled="busy" @click="reconcileJob"><RefreshCw :size="15" />{{ t("Сверить с провайдером") }}</button>
         <button :disabled="busy" @click="exportLog">
           <Download :size="15" />{{ t("Экспорт") }}
         </button>
       </div>
+      <section v-if="selected.intents?.length" class="reconciliation-evidence">
+        <h3>{{ t("Подтверждение результата") }}</h3>
+        <p>{{ t("Сверка только читает состояние провайдера. Она не повторяет команды и не снимает блокировку задания.") }}</p>
+        <p><strong>{{ state(selected.reconciliationOutcome || 'UNKNOWN') }}</strong> · {{ t("Версии workflow / plan / step") }}: <code>{{ selected.workflowVersion ?? '—' }} / {{ selected.planVersion ?? '—' }} / {{ selected.stepSchemaVersion ?? '—' }}</code></p>
+        <details v-for="intent in selected.intents" :key="intent.id" class="intent-evidence">
+          <summary><code>{{ intent.action }} · {{ intent.identity.resourceId }}</code> — {{ state(intent.outcome) }}</summary>
+          <dl>
+            <dt>{{ t("Идентификатор намерения") }}</dt><dd><code>{{ intent.id }}</code></dd>
+            <dt>{{ t("Провайдер") }}</dt><dd><code>{{ intent.identity.providerId }}</code></dd>
+            <dt>{{ t("Идентичность машины") }}</dt><dd><code>{{ intent.identity.generation }}</code></dd>
+            <dt>{{ t("Владелец ресурса") }}</dt><dd><code>{{ intent.identity.ownerId }}</code></dd>
+            <dt>{{ t("Эпоха исполнителя") }}</dt><dd>{{ intent.executorEpoch || t("Без независимого lease") }}</dd>
+            <dt>{{ t("Наблюдение") }}</dt><dd>{{ intent.evidence ? ({exists:t('Ресурс существует'),absent:t('Удаление подтверждено'),unknown:t('Результат неизвестен')}[intent.evidence.state] || intent.evidence.state) : t('Доказательств нет') }}</dd>
+            <template v-if="intent.evidence"><dt>{{ t("Проверено") }}</dt><dd>{{ date(intent.evidence.observedAt) }}</dd><dt>{{ t("Источник доказательства") }}</dt><dd>{{ intent.evidence.source === 'provider_ownership_verified' ? t('Проверена принадлежность машины') : intent.evidence.source === 'provider_delete_task_completed' ? t('Завершённое задание удаления у провайдера') : t('Доказательств нет') }}</dd></template>
+          </dl>
+        </details>
+      </section>
       <p v-if="selected.error" class="notice error">{{ selected.error }}</p>
       <p v-if="selected.stopRequested">
         {{
@@ -495,7 +540,7 @@ async function act(action: "stop" | "acknowledge") {
       </div>
     </Modal>
     <Modal
-      v-if="reviewing"
+      v-if="reviewing && canOperate && canReviewReadOnly"
       :title="t('Проверка прерванного задания')"
       @close="!busy && (reviewing = false)"
     >
@@ -517,3 +562,14 @@ async function act(action: "stop" | "acknowledge") {
     </Modal>
   </div>
 </template>
+
+<style scoped>
+.reconciliation-evidence { padding: 0 16px 16px; }
+.reconciliation-evidence h3 { font-size: 14px; margin: 0 0 8px; }
+.reconciliation-evidence p { font-size: 12px; line-height: 1.5; }
+.intent-evidence { padding: 10px 0; border-top: 1px solid var(--border); }
+.intent-evidence summary { cursor: pointer; overflow-wrap: anywhere; }
+.intent-evidence dl { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr); gap: 8px 16px; font-size: 12px; }
+.intent-evidence dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .intent-evidence dl { grid-template-columns: 1fr; gap: 4px; } .intent-evidence dd { margin-bottom: 8px; } }
+</style>

@@ -83,6 +83,9 @@ func (e *Execution) BeginIntent(ctx context.Context, id, action string, identity
 		m.storageErr = err
 		return err
 	}
+	if err := m.validateAuthority(ctx); err != nil {
+		return fmt.Errorf("%w: %v", ErrUncertain, err)
+	}
 	return nil
 }
 

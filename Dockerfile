@@ -56,7 +56,7 @@ FROM alpine:3.21.3
 
 # Install minimal certificates for TLS/mTLS gRPC connections to Talos API
 # and prepare data directories with proper permissions for unprivileged user
-RUN apk --no-cache add ca-certificates tzdata && \
+RUN apk --no-cache add ca-certificates tzdata openssh-client && \
     addgroup -S talosdeck -g 1000 && \
     adduser -S talosdeck -u 1000 -G talosdeck && \
     mkdir -p /app/data/backups && \

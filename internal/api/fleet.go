@@ -29,11 +29,13 @@ import (
 	"talosdeck/internal/operations"
 	"talosdeck/internal/proxmox"
 	"talosdeck/internal/reconcile"
+	"talosdeck/internal/recovery"
 	"talosdeck/internal/talos"
 	"talosdeck/internal/templates"
 )
 
 type FleetOptions struct {
+	ManagementAuthorityIdentity             string
 	ExecutionAuthority                      reconcile.Authority
 	ManagementInstanceID                    string
 	ExecutionEpoch                          uint64
@@ -55,6 +57,7 @@ type clusterRuntime struct {
 // handlers are published atomically; Fiber's live route tables are never mutated.
 type Fleet struct {
 	recoverySafeMode bool
+	automationPaused bool
 	options          FleetOptions
 	mu               sync.RWMutex
 	importMu         sync.Mutex
@@ -81,11 +84,23 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 	if opts.LegacyJobsDir == "" {
 		opts.LegacyJobsDir = filepath.Join(opts.DataDir, "jobs")
 	}
-	safeMode, err := RecoveryRequired(opts.DataDir)
+	recoveryState, err := recovery.ReadState(context.Background(), opts.Store, opts.DataDir)
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{options: opts, runtimes: make(map[string]*clusterRuntime), recoverySafeMode: safeMode}
+	safeMode := recoveryState.SafeMode
+	if recoveryState.ActivationEpoch > 0 {
+		if opts.ExecutionAuthority == nil || opts.ExecutionEpoch <= recoveryState.ActivationEpoch || opts.ManagementAuthorityIdentity != recoveryState.AuthorityIdentity {
+			return nil, errors.New("activated recovery requires its independent execution authority")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = opts.ExecutionAuthority.Validate(ctx, opts.ManagementInstanceID, opts.ExecutionEpoch)
+		cancel()
+		if err != nil {
+			return nil, errors.New("activated recovery execution authority unavailable")
+		}
+	}
+	f := &Fleet{options: opts, runtimes: make(map[string]*clusterRuntime), recoverySafeMode: safeMode, automationPaused: recoveryState.AutomationPaused}
 	f.downloadTickets = NewDownloadTickets(opts.Auth)
 	f.images = imagefactory.NewClient()
 	templateService, err := templates.Open(context.Background(), opts.Store)
@@ -175,6 +190,7 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	}
 	rt := &clusterRuntime{credentialsDir: dir}
 	rt.config.RecoverySafeMode = f.recoverySafeMode
+	rt.config.AutomationPaused = f.automationPaused
 	defer func() {
 		if resultErr != nil {
 			rt.close()
@@ -325,7 +341,7 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 			return nil, err
 		}
 	}
-	if !f.recoverySafeMode {
+	if !f.recoverySafeMode && !f.automationPaused {
 		if err := ops.Provision.ReconcileInterrupted(context.Background()); err != nil {
 			return nil, err
 		}
@@ -339,7 +355,7 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	rt.config.DownloadTickets = f.downloadTickets
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancel = cancel
-	if !f.recoverySafeMode {
+	if !f.recoverySafeMode && !f.automationPaused {
 		rt.wg.Add(1)
 		go func() { defer rt.wg.Done(); certMonitor.run(ctx) }()
 		rt.wg.Add(1)
@@ -354,7 +370,7 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	app := SetupServer(rt.config)
 	rt.handler = app.Handler()
 
-	if !f.recoverySafeMode {
+	if !f.recoverySafeMode && !f.automationPaused {
 		rt.wg.Add(1)
 		go func() {
 			defer rt.wg.Done()
@@ -609,7 +625,7 @@ func (f *Fleet) register(app *fiber.App) {
 		if f.options.ExecutionAuthority == nil || f.recoverySafeMode {
 			return c.Next()
 		}
-		if c.Method() == fiber.MethodGet || c.Method() == fiber.MethodHead || c.Method() == fiber.MethodOptions {
+		if c.Method() == fiber.MethodGet || c.Method() == fiber.MethodHead || c.Method() == fiber.MethodOptions || (c.Method() == fiber.MethodPost && isReadOnlyReconcilePath(c.Path())) {
 			return c.Next()
 		}
 		if c.Path() == "/api/auth/login" || c.Path() == "/api/auth/logout" || c.Path() == "/api/auth/oidc/exchange" {

@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
@@ -36,6 +38,8 @@ func client(c Config) (*minio.Client, error) {
 	return minio.New(u.Host, &minio.Options{Creds: credentials.NewStaticV4(c.AccessKey, c.SecretKey, ""), Secure: true, Region: c.Region})
 }
 
+const maxArchiveBytes int64 = 102 << 30
+
 type Receipt struct {
 	Object string `json:"object"`
 	SHA256 string `json:"sha256"`
@@ -59,11 +63,16 @@ func Upload(ctx context.Context, config Config, path string) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, err
 	}
+	if n <= 0 || n > maxArchiveBytes {
+		return Receipt{}, errors.New("invalid recovery archive size")
+	}
 	r := Receipt{Object: "management/" + uuid.NewString() + ".tdr", SHA256: hex.EncodeToString(h.Sum(nil)), Size: n}
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
 		return Receipt{}, err
 	}
-	if _, err = c.PutObject(ctx, config.Bucket, r.Object, f, n, minio.PutObjectOptions{ContentType: "application/octet-stream"}); err != nil {
+	opts := minio.PutObjectOptions{ContentType: "application/octet-stream"}
+	opts.SetMatchETagExcept("*")
+	if _, err = c.PutObject(ctx, config.Bucket, r.Object, f, n, opts); err != nil {
 		return r, errors.New("recovery upload outcome unknown; retain local archive and inspect target")
 	}
 	obj, err := c.GetObject(ctx, config.Bucket, r.Object, minio.GetObjectOptions{})
@@ -82,7 +91,7 @@ func Upload(ctx context.Context, config Config, path string) (Receipt, error) {
 // Download never overwrites an existing file. The expected checksum comes from
 // the independently retained receipt, not mutable object metadata.
 func Download(ctx context.Context, config Config, r Receipt, path string) error {
-	if r.Size <= 0 || r.Object == "" || len(r.SHA256) != 64 {
+	if !validReceipt(r) || !strings.HasPrefix(r.Object, "management/") || !sshObjectPattern.MatchString(strings.TrimPrefix(r.Object, "management/")) {
 		return errors.New("invalid recovery receipt")
 	}
 	c, err := client(config)
@@ -116,6 +125,25 @@ func Download(ctx context.Context, config Config, r Receipt, path string) error 
 	if err = f.Close(); err != nil {
 		return err
 	}
+	if err = syncDownloadParent(path); err != nil {
+		return err
+	}
 	ok = true
 	return nil
+}
+
+func validReceipt(r Receipt) bool {
+	if r.Size <= 0 || r.Size > maxArchiveBytes || len(r.SHA256) != 64 {
+		return false
+	}
+	_, e := hex.DecodeString(r.SHA256)
+	return e == nil
+}
+func syncDownloadParent(p string) error {
+	d, e := os.Open(filepath.Dir(p))
+	if e != nil {
+		return e
+	}
+	defer d.Close()
+	return d.Sync()
 }
