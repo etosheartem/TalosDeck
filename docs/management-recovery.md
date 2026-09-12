@@ -149,6 +149,42 @@ Unavailable authority fails mutation admission closed. A live but partitioned ol
 session can delay takeover until its SSH session terminates; availability is sacrificed
 rather than forcibly granting a second lease.
 
+## Authority failure model and recovery boundary
+
+The SSH authority is a safety-critical standalone dependency, not just a coordination
+convenience. Its availability determines whether new mutations can be admitted. It
+must not share rollback history with TalosDeck DATA. The current design is not a
+replicated or rollback-proof authority.
+
+| Failure | Current behavior and operational requirement |
+|---|---|
+| Authority unreachable before acquisition | A configured normal executor cannot acquire its lease and does not start serving mutations. A restored read-only safe-mode instance does not require a lease. Do not remove the saved policy to bypass the outage. |
+| Authority disappears before a guarded mutation | Validation fails closed; that guarded external call must not be sent. The client is permanently invalidated. Earlier calls may already have taken effect: retain UNKNOWN and reconcile them before a new approved operation. |
+| SSH/helper hangs or a network partition occurs | An individual validation exchange has a five-second timeout; failure invalidates the client. This is not an end-to-end takeover/RTO guarantee. A remote process may still hold the lock until its session terminates; do not force another lease or delete the lock to improve availability. |
+| Authority is restored to an older epoch | A current executor detects an epoch change, and a current saved expected epoch refuses a mismatching acquisition. However, an equally old TalosDeck copy and an equally rolled-back authority can agree. The protocol cannot detect that common rollback: fence all former executors and reconcile infrastructure before reviewed recovery. Never describe an epoch stored on a rollbackable disk as an absolute monotonic guarantee. |
+| Epoch or lock state is lost, corrupted or replaced | Active validation rejects a changed/missing epoch or replaced/missing lock inode; malformed epochs and an existing lock with a missing epoch reject acquisition. Total loss of the directory is indistinguishable from a fresh installation for a client expecting epoch zero. Some partial loss, such as a missing lock with a surviving epoch, is not a reliable global corruption detector. Do not recreate/reset files as a recovery shortcut. Fence every previous holder and review the installation identity and durable state first. |
+| Authority shares the management machine or hypervisor | Sharing the management VM/disk does not provide independent DR. A separate VM or host filesystem on the same hypervisor can survive loss of the management guest disk, but not loss or rollback of that hypervisor/storage. Record this correlated failure domain explicitly. Place authority and off-host backups in appropriate independent failure domains for the incident model being claimed. |
+
+Authority recovery is an operator procedure, not an automatic state-file reset:
+
+1. Keep infrastructure mutations disabled and preserve available state/evidence.
+2. Establish which executors or SSH sessions might still run; independently fence them.
+3. Reconcile already dispatched infrastructure requests. A new lease cannot retract them.
+4. Review authority state and the last known epochs from independent evidence. If the
+   monotonic history cannot be established, treat this as authority loss requiring a
+   deliberate re-establishment procedure; there is no supported automatic repair command.
+5. Use reviewed activation only with a verified authority and explicit expected epoch.
+   Do not decrement, guess or loop through epoch values to regain access.
+
+Before TD-31 is marked complete, fault-inject authority loss **after durable intent is
+saved but immediately before mutation admission**. Instrument the external client and
+prove zero calls for the denied mutation, persisted uncertainty where applicable, and
+no automatic retry after authority returns. Repeat at nested boundaries (VM stop to
+VM delete, and the final Kubernetes Node delete), and separately test hung transport,
+stale authority state and common rollback. Existing unit checks are not a substitute
+for this instrumented integration acceptance. The in-flight request case must be
+reported separately from the zero-new-calls guarantee.
+
 ## Reviewed manual activation
 
 After reconnecting and reviewing outcomes, stop the restored server. Use the Jobs
