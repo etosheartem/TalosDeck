@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t, locale, setLocale } from "./i18n";
 
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import {
   ChevronRight,
   RefreshCw,
@@ -45,6 +45,8 @@ import ProvidersView from "./ProvidersView.vue";
 import ProvisionView from "./ProvisionView.vue";
 import DiagnosticsView from "./DiagnosticsView.vue";
 import CertificatesView from "./CertificatesView.vue";
+import CommandPalette, { type Command } from "./CommandPalette.vue";
+import SettingsHub from "./SettingsHub.vue";
 import { certificateStatus, type CertificateReport } from "./certificates";
 const certificates = ref<CertificateReport | null>(null);
 import KubernetesView from "./KubernetesView.vue";
@@ -122,8 +124,8 @@ const active = ref(initial());
 const page = computed(() => pages.value.find((p) => p.id === active.value)!);
 const mobile = ref(false);
 const navSearch = ref("");
-const navigationSearch = ref<HTMLInputElement>();
-async function shortcut(event:KeyboardEvent) {if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();if(innerWidth<1000)mobile.value=true;await nextTick();navigationSearch.value?.focus();} }
+const paletteOpen = ref(false);
+async function shortcut(event:KeyboardEvent) {if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();paletteOpen.value=!paletteOpen.value;} }
 const interval = ref(30);
 const nodes = ref<NodeOverview[]>([]);
 const cluster = ref<ClusterInfo | null>(null);
@@ -150,6 +152,35 @@ const oidc = ref<any>(null);
 const busy = ref(false);
 const actionError = ref("");
 const toast = ref("");
+const logoutWarning = ref('');
+async function signOut() {
+ const result = await logout();
+ config.value=''; data.value=[]; alerts.value=null; paletteOpen.value=false;
+ inspected.value=null;detail.value=null;confirmation.value=null;dialog.value='';importForm.value={name:'',talosconfig:'',kubeconfig:''};token.value='';password.value='';workloadFocus.value=null;
+ logoutWarning.value=result.revoked?'':t('Локальный выход выполнен, но отзыв сеанса на сервере не подтверждён. При восстановлении связи отзовите сеансы через администратора.');
+ if(result.revoked) notify(t('Вы вышли'));
+}
+const commands = computed<Command[]>(() => {
+ const scope=clusters.value.find(c=>c.id===selectedCluster.value)?.name || t('Платформа');
+ const allowed=(id:string)=>!(['providers','config','alerts','machines','fleet-machines'].includes(id)&&!isAdmin.value)&&!(id==='updates'&&!canOperate.value);
+ const all:Command[]=pages.value.filter(p=>(p.global||!!selectedCluster.value)&&allowed(p.id)).map(p=>({id:'page-'+p.id,label:p.title,kind:t('Раздел'),context:p.global?t('Платформа'):scope,run:()=>navigate(p.id)}));
+ if(isAuthenticated.value){
+  for(const c of clusters.value) all.unshift({id:'cluster-'+c.id,label:c.name,kind:t('Кластер'),context:t('Платформа'),run:()=>{switchCluster(c.id);navigate('overview');}});
+  for(const n of nodes.value) all.push({id:'node-'+n.ip,label:n.hostname||n.ip,search:n.ip,kind:t('Нода'),context:scope,run:()=>{inspected.value=n;}});
+  for(const p of pods.value) all.push({id:'pod-'+p.namespace+'/'+p.name,label:p.name,kind:'Pod',context:`${scope} / ${p.namespace}`,run:()=>openWorkload({namespace:p.namespace,name:p.name})});
+  if(isAdmin.value) all.push({id:'import',label:t('Добавить кластер'),kind:t('Действие'),context:t('Платформа'),run:()=>{actionError.value='';dialog.value='import';}});
+  if(selectedCluster.value&&isAdmin.value) all.push({id:'worker',label:t('Добавить worker'),kind:t('Действие'),context:scope,run:()=>{dialog.value='create-worker';}});
+  if(selectedCluster.value&&canOperate.value) all.push({id:'upgrade',label:t('Обновить Talos'),kind:t('Действие'),context:scope,run:()=>{operationKind.value='talos-upgrade';navigate('updates');}});
+ }
+ return all;
+});
+const workloadFocus=ref<{namespace?:string;name?:string;node?:string}|null>(null);
+function openWorkload(focus:{namespace?:string;name?:string;node?:string}) {workloadFocus.value=focus;inspected.value=null;navigate('workloads');}
+function inspectRelatedNode(name:string, logs=false) {const node=nodes.value.find(n=>n.hostname===name||n.ip===name);if(!node){notify(t('Нода отсутствует в текущем списке. Обновите состояние кластера.'));return;}if(logs){nodeIP.value=node.ip;navigate('logs');}else inspected.value=node;}
+function relatedKubernetes(mode:string, namespace:string) {workloadFocus.value={namespace:namespace==='—'?undefined:namespace};navigate(mode);}
+function nodeStorage(node:NodeOverview) {nodeIP.value=node.ip;inspected.value=null;navigate('storage');}
+const settingsScope=computed(()=>['platform-settings','providers','users'].includes(active.value)?'platform':['cluster-settings','settings','config','alerts'].includes(active.value)?'cluster':'');
+
 const confirmation = ref<{
   title: string;
   description: string;
@@ -408,6 +439,7 @@ watch(selectedCluster, async () => {
   recentBackups.value = [];
   diagnostics.value = null;
   certificates.value = null;
+  workloadFocus.value=null; paletteOpen.value=false;
   etcd.value = null;
   nodeIP.value = "";
   data.value = [];
@@ -565,7 +597,6 @@ const protectedPage = computed(
       <label class="nav-search"
         ><Search :size="15" /><input
           v-model="navSearch"
-          ref="navigationSearch"
           :placeholder="t('Найти раздел')"
           :aria-label="t('Найти раздел')"
       /></label>
@@ -597,6 +628,7 @@ const protectedPage = computed(
                 (p) =>
                   p.group === group &&
                   (p.global || !!selectedCluster) &&
+                  (!p.hidden || !!navSearch) &&
                   (p.id !== 'providers' || isAdmin) &&
                   p.title.toLowerCase().includes(navSearch.toLowerCase()),
               )"
@@ -666,7 +698,7 @@ const protectedPage = computed(
                   cluster?.name ||
                   t("Кластер")
             }}</button
-          ><ChevronRight :size="14" /><strong>{{ page.title }}</strong>
+          ><ChevronRight :size="14" /><template v-if="settingsScope && !['platform-settings','cluster-settings'].includes(active)"><button @click="navigate(settingsScope==='platform'?'platform-settings':'cluster-settings')">{{ settingsScope==='platform'?t('Настройки платформы'):t('Настройки кластера') }}</button><ChevronRight :size="14" /></template><strong>{{ page.title }}</strong>
         </div>
         <div class="session">
           <span class="viewer-label">{{
@@ -683,12 +715,7 @@ const protectedPage = computed(
           ><button
             v-else
             @click="
-              logout().then(() => {
-                config = '';
-                data = [];
-                alerts = null;
-                notify(t('Вы вышли'));
-              })
+              signOut()
             "
           >
             <LogOut :size="15" /> {{ t("Выйти") }}
@@ -696,6 +723,7 @@ const protectedPage = computed(
         </div>
       </header>
       <main>
+        <p v-if="logoutWarning" class="notice error" role="alert">{{ logoutWarning }}</p>
         <div v-if="registryError" class="notice error" role="alert">
           {{ registryError
           }}<button @click="loadClusters">{{ t("Повторить") }}</button>
@@ -745,6 +773,7 @@ const protectedPage = computed(
               </button>
             </div>
           </div>
+          <nav v-if="settingsScope && !['platform-settings','cluster-settings'].includes(active)" class="section-tabs" :aria-label="t('Разделы настроек')"><button @click="navigate(settingsScope==='platform'?'platform-settings':'cluster-settings')">{{ t('Все настройки') }}</button><button v-for="item in pages.filter(p=>settingsScope==='platform'?['providers','users'].includes(p.id)&& (p.id!=='providers'||isAdmin):['settings','config','alerts'].includes(p.id)&&(p.id==='settings'||isAdmin))" :key="item.id" :aria-current="active===item.id?'page':undefined" @click="navigate(item.id)">{{ item.title }}</button></nav>
           <div
             v-if="
               !globalPage &&
@@ -1023,6 +1052,10 @@ const protectedPage = computed(
           <KubernetesView
             v-else-if="['workloads', 'events', 'kube-storage'].includes(active)"
             :key="selectedCluster + active"
+            :focus="workloadFocus"
+            @node="inspectRelatedNode($event)"
+            @logs="inspectRelatedNode($event,true)"
+            @related="relatedKubernetes"
             :mode="
               active === 'kube-storage'
                 ? 'storage'
@@ -1093,6 +1126,10 @@ const protectedPage = computed(
           <JobsView
             v-else-if="active === 'updates' || active === 'jobs'"
             :key="selectedCluster + active"
+            :focus="workloadFocus"
+            @node="inspectRelatedNode($event)"
+            @logs="inspectRelatedNode($event,true)"
+            @related="relatedKubernetes"
             :mode="active"
             :initial-kind="operationKind"
             @submitted="navigate('jobs')"
@@ -1105,6 +1142,7 @@ const protectedPage = computed(
             @add="dialog = 'create-worker'"
             @submitted="active === 'fleet-machines' ? (showGlobalJobs=true,navigate('clusters')) : navigate('jobs')"
           />
+          <SettingsHub v-else-if="['platform-settings','cluster-settings'].includes(active)" :global="active==='platform-settings'" @navigate="navigate" />
           <CertificatesView v-else-if="active === 'certificates'" :key="selectedCluster" />
           <DiagnosticsView
             v-else-if="active === 'diagnostics'"
@@ -1131,6 +1169,8 @@ const protectedPage = computed(
               :key="selectedCluster + nodeIP"
               :node="nodes.find((n) => n.ip === nodeIP)!"
               initial-tab="logs"
+              @workloads="openWorkload({node:nodes.find(n=>n.ip===nodeIP)?.hostname || nodeIP})"
+              @storage="nodeStorage(nodes.find(n=>n.ip===nodeIP)!)"
               @changed="refresh"
             />
             <p v-else class="footnote">{{ t("Нет доступных нод") }}</p>
@@ -1561,6 +1601,7 @@ const protectedPage = computed(
         </button>
       </div></Modal
     >
+    <CommandPalette v-if="paletteOpen" :commands="commands" :resources-unavailable="!!selectedCluster && (!refreshed || !!errors.nodes || !!errors.pods)" :scope="globalPage ? t('Платформа') : clusters.find(c=>c.id===selectedCluster)?.name || t('Кластер')" @close="paletteOpen=false" />
     <Modal
       v-if="inspected"
       :title="inspected.hostname"
@@ -1569,6 +1610,8 @@ const protectedPage = computed(
       ><NodeInspector
         :key="selectedCluster + inspected.ip"
         :node="inspected"
+        @workloads="openWorkload({node:inspected.hostname || inspected.ip})"
+        @storage="nodeStorage(inspected)"
         @changed="refresh"
     /></Modal>
     <Modal

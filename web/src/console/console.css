@@ -1302,3 +1302,8 @@ td .mono {
 .fleet-jobs > .jobs-view { padding: 0 16px 16px; }
 @media (max-width: 700px) { .panel > header { align-items: stretch; }.panel > header > .toolbar { flex-wrap: wrap; }.detail-grid { grid-template-columns: 1fr; gap: 5px; }.detail-grid dd { margin-bottom: 12px; }.section-tabs { max-width: 100%; }.section-tabs button { font-size: 11px; padding: 6px; }.machine-form { padding: 12px; } }
 .dashboard-recent{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.dashboard-recent .surface{min-width:0}@media(max-width:1200px){.dashboard-recent{grid-template-columns:1fr}}
+.command-results { max-height: min(55vh, 520px); overflow-y: auto; margin-top: 12px; }
+.command-results .issue-row { width: 100%; text-align: left; }
+.command-results [aria-selected="true"] { background: var(--surface-hover, #202a36); outline: 1px solid var(--border, #344050); outline-offset: -1px; }
+
+.command-input { width: 100%; }

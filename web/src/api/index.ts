@@ -1466,19 +1466,23 @@ export const login = async (
   }
 }
 
-export const logout = async (): Promise<void> => {
+export const logout = async (): Promise<{ revoked: boolean }> => {
+  let revoked = false
   try {
-    await fetchWithTimeout('/api/auth/logout', {
+    const response = await fetchWithTimeout('/api/auth/logout', {
       method: 'POST',
       headers: { ...getAuthHeaders() },
     })
+    const result = await response.json().catch(() => null)
+    revoked = response.ok && result?.success === true
   } catch {
-    // Ignore network failure on logout
+    // Local logout is still possible offline, but server revocation is unconfirmed.
   } finally {
     localStorage.removeItem(TOKEN_STORAGE_KEY)
     isAuthenticated.value = false
     currentUser.value = { username: 'guest', role: 'viewer' }
   }
+  return { revoked }
 }
 
 export const getMe = async (): Promise<MeResponse> => {

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { request, list } from "./client";
 import { t } from "./i18n";
 import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
-const props = defineProps<{ mode: "workloads" | "events" | "storage" }>();
+const props = defineProps<{ mode: "workloads" | "events" | "storage"; focus?: {namespace?:string;name?:string;node?:string} | null }>();
+const emit=defineEmits<{node:[name:string]; logs:[name:string]; related:[mode:string,namespace:string]}>();
+const nodeFilter=ref(props.focus?.node || '');
 const groups = ref<Record<string, any[]>>({}),
   tab = ref(
     props.mode === "workloads"
@@ -15,7 +17,7 @@ const groups = ref<Record<string, any[]>>({}),
   ),
   error = ref(""),
   busy = ref(false),
-  namespace = ref("all"),
+  namespace = ref(props.focus?.namespace || "all"),
   selected = ref<any>(null),
   inspection = ref<any>(null),
   inspectBusy = ref(false),
@@ -27,10 +29,10 @@ const tabLabels: Record<string, string> = {pods:'Pods',deployments:'Deployments'
 const namespaces = computed(() =>
   [
     ...new Set(
-      Object.values(groups.value)
+      [namespace.value==='all'?undefined:namespace.value, ...Object.values(groups.value)
         .flat()
         .map((r) => r.namespace || r.metadata?.namespace)
-        .filter(Boolean),
+        .filter(Boolean)].filter(Boolean),
     ),
   ].sort(),
 );
@@ -49,7 +51,7 @@ const rows = computed(() =>
       node: r.nodeName || r.node || r.involvedObject?.name || "—",
     }))
     .filter(
-      (r) => namespace.value === "all" || r.namespace === namespace.value,
+      (r) => (namespace.value === "all" || r.namespace === namespace.value) && (!nodeFilter.value || r.node===nodeFilter.value),
     ),
 );
 async function load() {
@@ -65,16 +67,25 @@ async function load() {
       ]);
       result = { pods: list(pods), ...workloads };
     } else result = await request(`/k8s/${props.mode}`);
-    if (live)
+    if (live) {
       groups.value = Object.fromEntries(
         Object.entries(result).filter(([, value]) => Array.isArray(value)),
       ) as Record<string, any[]>;
+      focusResource();
+    }
   } catch (e) {
     if (live) error.value = String(e);
   } finally {
     if (live) busy.value = false;
   }
 }
+let consumedFocus = "";
+function focusResource() {
+ const key=JSON.stringify(props.focus);
+ if(key===consumedFocus)return;
+ if(props.focus?.name && props.mode==='workloads') {const row=rows.value.find(r=>r.name===props.focus?.name);if(row){consumedFocus=key;inspect(row);}}
+}
+watch(()=>props.focus,()=>{consumedFocus='';namespace.value=props.focus?.namespace||'all';nodeFilter.value=props.focus?.node||'';focusResource();});
 async function inspect(row: any) {
   const id = ++generation;
   selected.value = row;
@@ -121,12 +132,13 @@ onUnmounted(() => {
     </header>
     <div class="toolbar">
       <label
-        >Namespace<select v-model="namespace">
+        >Namespace<select v-model="namespace" aria-label="Namespace">
           <option value="all">{{ t("Все") }}</option>
           <option v-for="ns in namespaces" :key="ns">{{ ns }}</option>
         </select></label
       >
     </div>
+    <p v-if="nodeFilter" class="notice">{{ t('Нода') }}: {{ nodeFilter }} <button @click="nodeFilter=''">{{ t('Сбросить фильтр') }}</button></p>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <div v-if="busy && !tabs.length" class="loading-state">
       {{ t("Загрузка…") }}
@@ -165,6 +177,7 @@ onUnmounted(() => {
         ><span>{{ selected.status }}</span
         ><span>{{ selected.node }}</span>
       </div>
+      <div class="toolbar"><button v-if="selected.node && selected.node !== '—' && mode==='workloads'" @click="emit('node',selected.node);selected=null">{{ t('Открыть ноду') }}</button><button v-if="selected.node && selected.node !== '—' && mode==='workloads'" @click="emit('logs',selected.node);selected=null">{{ t('Логи ноды') }}</button><button v-if="mode==='workloads'" @click="emit('related','events',selected.namespace);selected=null">{{ t('События namespace') }}</button><button v-if="mode==='workloads'" @click="emit('related','kube-storage',selected.namespace);selected=null">{{ t('Тома namespace') }}</button><button v-if="mode==='storage' && selected.namespace !== '—'" @click="emit('related','workloads',selected.namespace);selected=null">{{ t('Рабочие нагрузки namespace') }}</button></div>
       <p v-if="inspectError" class="notice error">{{ inspectError }}</p>
       <div v-if="inspectBusy" class="loading-state">{{ t("Загрузка…") }}</div>
       <template v-else-if="inspection">

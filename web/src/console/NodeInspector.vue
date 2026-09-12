@@ -12,7 +12,7 @@ const props = defineProps<{
   node: NodeOverview;
   initialTab?: "services" | "logs";
 }>();
-const emit = defineEmits<{ changed: [] }>();
+const emit = defineEmits<{ changed: []; workloads: []; storage: [] }>();
 const tab = ref<string>(props.initialTab || "services");
 const rows = ref<any[]>([]);
 const error = ref("");
@@ -124,6 +124,7 @@ async function restart() {
     ><span>CPU {{ node.cpuUsage ?? "—" }}%</span
     ><span>RAM {{ node.memoryUsage || "—" }}</span>
   </div>
+  <div class="toolbar"><button @click="emit('workloads')">{{ t('Рабочие нагрузки ноды') }}</button><button @click="emit('storage')">{{ t('Диски ноды') }}</button></div>
   <nav class="section-tabs">
     <button
       v-for="item in [

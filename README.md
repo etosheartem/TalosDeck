@@ -43,6 +43,7 @@ TalosDeck — панель управления Talos Linux и Kubernetes. Go-б
 TalosDeck на отдельной машине или в management-кластере.
 
 - [Сборка образа, Docker, Kubernetes и Argo CD](docs/deployment.md).
+- [Навигация, поиск и ежедневная работа](docs/interface.md).
 - [Обновления, фоновые задания и прерывания](docs/operations.md).
 - [Пользователи, роли и OIDC](docs/authentication.md).
 - [Proxmox и создание кластеров](docs/provisioning.md).

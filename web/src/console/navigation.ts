@@ -31,6 +31,7 @@ export function navigation() {
     },
     {
       id: "providers",
+      hidden: true,
       title: t("Провайдеры"),
       icon: Cloud,
       group: t("ПЛАТФОРМА"),
@@ -41,6 +42,7 @@ export function navigation() {
     },
     {
       id: "users",
+      hidden: true,
       title: t("Доступ"),
       icon: Shield,
       group: t("ПЛАТФОРМА"),
@@ -49,6 +51,7 @@ export function navigation() {
     },
     {id:'global-audit',title:t('Аудит платформы'),icon:ScrollText,group:t('ПЛАТФОРМА'),description:t('Подключения, провайдеры, пользователи и операции платформы.'),global:true},
     {id:'fleet-machines',title:t('Ресурсы провайдеров'),icon:Boxes,group:t('ПЛАТФОРМА'),description:t('Машины TalosDeck и ресурсы незавершённых операций.'),global:true},
+    {id:'platform-settings',title:t('Настройки платформы'),icon:Settings,group:t('ПЛАТФОРМА'),description:t('Подключения, пользователи и доступ к платформе.'),global:true},
     {
       id: "overview",
       title: t("Обзор"),
@@ -160,13 +163,16 @@ export function navigation() {
     },
     {
       id: "alerts",
+      hidden: true,
       title: t("Уведомления"),
       icon: Bell,
       group: t("НАБЛЮДЕНИЕ"),
       description: t("Условия оповещений и каналы доставки для кластера."),
     },
+    {id:'cluster-settings',title:t('Настройки кластера'),icon:Settings,group:t('НАСТРОЙКИ КЛАСТЕРА'),description:t('Подключение, MachineConfig и уведомления.')},
     {
       id: "config",
+      hidden: true,
       title: t("Конфигурация"),
       icon: FileCode2,
       group: t("НАСТРОЙКИ КЛАСТЕРА"),
@@ -176,12 +182,13 @@ export function navigation() {
       id: "audit",
       title: t("Аудит"),
       icon: ScrollText,
-      group: t("НАСТРОЙКИ КЛАСТЕРА"),
+      group: t("ОПЕРАЦИИ"),
       description: t("История действий и результаты операций."),
     },
     {
       id: "settings",
-      title: t("Настройки"),
+      hidden: true,
+      title: t("Подключение"),
       icon: Settings,
       group: t("НАСТРОЙКИ КЛАСТЕРА"),
       description: t("Подключение к кластеру и параметры консоли."),

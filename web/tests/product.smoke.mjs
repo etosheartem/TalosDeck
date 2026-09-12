@@ -15,6 +15,7 @@ async function contextFor(role='admin'){
    const req=route.request(),raw=new URL(req.url()).pathname;if(!raw.startsWith('/api/'))return route.continue();
    const path=raw.replace('/api/clusters/cluster-a','/api');const body=req.postDataJSON();calls.push({raw,path,method:req.method(),body});let result;
    if(path==='/api/auth/providers')result={oidc:{enabled:true,name:'Keycloak',loginUrl:'/api/auth/oidc/login'}};
+   else if(path==='/api/auth/logout')result={success:true};
    else if(path==='/api/auth/me')result={authenticated:true,user:{id:'user-current',username:role,role,provider:'local'}};
    else if(path==='/api/auth/users')result=req.method()==='GET'?{users:[{id:'user-other',username:'teammate',role:'viewer',provider:'local',disabled:false}]}:{id:'user-new'};
    else if(path.startsWith('/api/auth/users/')||path==='/api/auth/password')result={success:true};
@@ -41,7 +42,7 @@ async function contextFor(role='admin'){
    else if(path==='/api/k8s/pods')result=[{name:'api-0',namespace:'app',status:'Running',nodeName:'cp-01'}];
    else if(path==='/api/k8s/workloads')result={deployments:[{name:'api',namespace:'app',readyReplicas:1,replicas:1}],daemonsets:[],statefulsets:[],jobs:[],cronjobs:[]};
    else if(path==='/api/k8s/pods/app/api-0')result={pod:{name:'api-0'},events:[{reason:'Started',message:'Container started'}],logs:'fixture pod log',volumes:[]};
-   else if(path==='/api/k8s/events')result={events:[]};
+   else if(path==='/api/k8s/events')result={events:[{reason:'Started',message:'App started',namespace:'app',type:'Normal'}]};
    else if(path==='/api/k8s/storage')result={persistentVolumes:[],persistentVolumeClaims:[],storageClasses:[]};
    else if(path==='/api/audit')result={events:raw==='/api/audit'?[{action:'provider.create',user:'admin',status:'success',details:{providerId:'pve-a'}},{action:'users.create',user:'admin',status:'success',details:{targetId:'user-other'}}]:[{action:'node.reboot',user:'operator',status:'success',details:{node:'10.0.0.1'}}],total:raw==='/api/audit'?2:1};
    else if(path==='/api/machines')result=[{id:'machine-1',providerId:'pve-a',name:'worker-owned',role:'worker',vmid:120,address:'10.0.0.2',status:'ready',cleanupEligible:false},...(raw==='/api/machines'?[{id:'machine-failed',providerId:'pve-a',name:'cp-failed',role:'controlplane',vmid:121,status:'booting',cleanupEligible:true}]:[])];
@@ -78,8 +79,13 @@ try{
  const {context,page,calls}=await contextFor();
  await page.goto('http://127.0.0.1:5176');await page.getByRole('heading',{name:'Кластеры',exact:true}).waitFor();
  await page.getByRole('button',{name:'Production',exact:true}).click();await page.getByRole('heading',{name:'Обзор',exact:true}).waitFor();await page.waitForFunction(()=>document.querySelector('.availability-value')?.textContent.includes('1'));
- await page.keyboard.press('Control+k');assert(await page.getByLabel('Найти раздел',{exact:true}).evaluate(el=>el===document.activeElement));
- await page.getByLabel('Найти раздел',{exact:true}).fill('Провайдеры');await page.getByRole('navigation').getByRole('button',{name:'Провайдеры',exact:true}).click();await page.getByLabel('Найти раздел',{exact:true}).fill('');
+ await page.keyboard.press('Control+k');await page.getByLabel('Найти ресурс или действие',{exact:true}).fill('api-0');await page.keyboard.press('Enter');await page.getByText('fixture pod log',{exact:true}).waitFor();await page.keyboard.press('Escape');await page.keyboard.press('Control+k');await page.getByLabel('Найти ресурс или действие',{exact:true}).fill('api-0');await page.keyboard.press('Enter');await page.getByText('fixture pod log',{exact:true}).waitFor();await page.getByRole('button',{name:'События namespace',exact:true}).click();await page.getByRole('heading',{name:'События',exact:true}).waitFor();assert.equal(await page.getByLabel('Namespace',{exact:true}).inputValue(),'app');
+ await page.goto('http://127.0.0.1:5176/#platform-settings');await page.getByRole('heading',{name:'Настройки платформы',exact:true}).first().waitFor();await page.screenshot({path:`${artifacts}/platform-settings.png`,fullPage:true});
+ assert.equal(await page.getByRole('navigation',{name:'Главная навигация'}).getByRole('button',{name:'Провайдеры',exact:true}).count(),0);
+ await page.goto('http://127.0.0.1:5176/#cluster-settings');await page.getByRole('heading',{name:'Настройки кластера',exact:true}).first().waitFor();await page.screenshot({path:`${artifacts}/cluster-settings.png`,fullPage:true});
+ await page.keyboard.press('Control+k');await page.getByLabel('Найти ресурс или действие',{exact:true}).fill('cp-01');await page.screenshot({path:`${artifacts}/palette.png`,fullPage:true});await page.keyboard.press('Escape');
+ await page.keyboard.press('Control+k');assert(await page.getByLabel('Найти ресурс или действие',{exact:true}).evaluate(el=>el===document.activeElement));
+ await page.getByLabel('Найти ресурс или действие',{exact:true}).fill('Провайдеры');await page.keyboard.press('Enter');
  await page.getByRole('button',{name:'Добавить провайдера',exact:true}).click();let dialog=page.getByRole('dialog');
  await dialog.getByLabel('Имя',{exact:true}).fill('Provider B');await dialog.getByLabel('Proxmox URL').fill('https://pve-b.example:8006');await dialog.getByLabel('Нода Proxmox').fill('pve02');await dialog.getByLabel('API token').fill('PRIVATE-PROVIDER-TOKEN');await dialog.getByRole('button',{name:'Подключить',exact:true}).click();await dialog.waitFor({state:'hidden'});
  assert(calls.some(c=>c.raw==='/api/providers'&&c.method==='POST'&&c.body.config.apiToken==='PRIVATE-PROVIDER-TOKEN'));
@@ -118,10 +124,17 @@ try{
  await context.close();
  for(const role of ['viewer','operator']){
   const {context,page,calls}=await contextFor(role);await page.goto('http://127.0.0.1:5176/#global-audit');await page.getByRole('button',{name:'users.create',exact:true}).waitFor();await page.goto('http://127.0.0.1:5176/#backups');await page.getByRole('button',{name:'production-etcd.snapshot',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Создать копию',exact:true}).count(),role==='operator'?1:0);if(role==='viewer')assert(!calls.some(c=>c.path==='/api/backups/targets'));
+  await page.keyboard.press('Control+k');await page.getByLabel('Найти ресурс или действие',{exact:true}).fill('Обновить Talos');assert.equal(await page.getByRole('option',{name:'Обновить Talos',exact:false}).count(),role==='operator'?1:0);await page.keyboard.press('Escape');
   await page.goto('http://127.0.0.1:5176/#certificates');await page.getByRole('button',{name:'Expired client',exact:true}).waitFor();assert(!calls.some(c=>c.path==='/api/certificates'&&c.method!=='GET'));
   await page.goto('http://127.0.0.1:5176/#config');await page.getByRole('heading',{name:'Недостаточно прав',exact:true}).waitFor();assert.equal(await page.getByLabel('YAML patch',{exact:true}).count(),0);assert(!calls.some(c=>c.path.endsWith('/config')));
   await page.goto('http://127.0.0.1:5176/#users');await page.getByRole('heading',{name:'Моя учётная запись',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Добавить пользователя',exact:true}).count(),0);assert(!calls.some(c=>c.path==='/api/auth/users'));
   await page.goto('http://127.0.0.1:5176/#updates');if(role==='operator')await page.getByLabel('Целевая версия').waitFor();else await page.getByRole('heading',{name:'Недостаточно прав',exact:true}).waitFor();await context.close();
+ }
+ for(const status of [200,503]){
+  const {context,page}=await contextFor();await context.route('**/api/auth/logout',route=>route.fulfill({status,json:status===200?{success:true}:{error:'Unavailable'}}));
+  await page.goto('http://127.0.0.1:5176/#clusters');await page.getByRole('button',{name:'Выйти',exact:true}).click();await page.getByRole('button',{name:'Войти',exact:true}).first().waitFor();assert.equal(await page.evaluate(()=>localStorage.getItem('talosdeck_token')),null);
+  if(status===503){await page.getByRole('alert').getByText('Локальный выход выполнен',{exact:false}).waitFor();assert.equal(await page.getByText('Вы вышли',{exact:true}).count(),0);}else assert.equal(await page.getByText('Локальный выход выполнен',{exact:false}).count(),0);
+  await context.close();
  }
  assert.deepEqual(errors,[]);console.log('PASS: P1 provider/global provision, S3 credentials, schedule, confirmed restore, diagnosis jobs, pod inspector, users/revocation, viewer/operator permissions, global-cluster scopes.');console.log('Screenshots:',artifacts);
 }finally{await browser.close();await server.close();}
