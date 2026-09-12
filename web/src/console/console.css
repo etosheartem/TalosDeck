@@ -1269,3 +1269,34 @@ td .mono {
 .code-surface details > summary { padding: 12px 16px; cursor: pointer; }
 .config-history { width: 100%; font-size: 12px; text-align: left; }
 .config-history td, .config-history th { padding: 10px; overflow-wrap: anywhere; }
+.module-stack { display: grid; gap: 20px; min-width: 0; }
+.panel { min-width: 0; border: 1px solid var(--c-border); border-radius: 4px; background: var(--c-panel); }
+.panel > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; border-bottom: 1px solid var(--c-border); flex-wrap: wrap; }
+.panel > header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.panel > header p { margin: 5px 0 0; font-size: 12px; color: var(--c-dim); }
+.panel > .toolbar, .panel > .notice, .panel > .footnote { margin: 16px; }
+.panel .settings-form { padding: 16px; }
+.panel .settings-form .settings-form { padding: 0; }
+.settings-form fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 16px; min-width: 0; }
+.settings-form details { min-width: 0; }
+.settings-form details summary { padding: 10px 0; cursor: pointer; color: var(--c-dim); }
+.full-width { grid-column: 1 / -1; }
+.machine-form { padding: 16px; border: 1px solid var(--c-border); border-radius: 4px; }
+.machine-form > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.summary-strip { display: flex; flex-wrap: wrap; gap: 24px; padding: 16px; border-bottom: 1px solid var(--c-border); font-size: 12px; color: var(--c-dim); }
+.summary-strip strong { color: var(--c-fg); margin-left: 8px; }
+.inspection-copy { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.detail-grid { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 3fr); gap: 12px 24px; }
+.detail-grid dt { color: var(--c-dim); }.detail-grid dd { margin: 0; overflow-wrap: anywhere; }
+.section-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.section-tabs button[aria-selected=true] { color: var(--c-accent); background: #322b22; border-color: #725736; }
+.rail nav .group-toggle { width: 100%; min-height: 30px; margin: 12px 0 3px; padding: 4px 10px; justify-content: space-between; color: var(--c-dim); font-size: 10px; letter-spacing: 1px; background: transparent; border: 0; }
+.group-toggle[aria-expanded=true] svg { transform: rotate(90deg); }
+.breadcrumb-link { border: 0; background: transparent; color: var(--c-dim); padding: 0; font-size: 12px; }
+.oidc-login { display: block; padding: 10px; text-align: center; border: 1px solid var(--c-border); border-radius: 4px; }
+.fleet-overview > .jobs-view { margin: 24px 0 0; }
+.fleet-jobs { margin-top: 24px; border-top: 1px solid var(--c-border); }
+.fleet-jobs > summary { padding: 16px; color: var(--c-dim); cursor: pointer; }
+.fleet-jobs > .jobs-view { padding: 0 16px 16px; }
+@media (max-width: 700px) { .panel > header { align-items: stretch; }.panel > header > .toolbar { flex-wrap: wrap; }.detail-grid { grid-template-columns: 1fr; gap: 5px; }.detail-grid dd { margin-bottom: 12px; }.section-tabs { max-width: 100%; }.section-tabs button { font-size: 11px; padding: 6px; }.machine-form { padding: 12px; } }
+.dashboard-recent{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.dashboard-recent .surface{min-width:0}@media(max-width:1200px){.dashboard-recent{grid-template-columns:1fr}}

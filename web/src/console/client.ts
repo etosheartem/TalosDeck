@@ -10,26 +10,32 @@ import {
 export async function request<T = any>(
   path: string,
   init: RequestInit = {},
+  scope: "cluster" | "global" = "cluster",
 ): Promise<T> {
+  const url=scope === 'global' ? `/api${path}` : scopeURL(`/api${path}`);
+  const clusterScoped=url.startsWith('/api/clusters/');
   const controller = new AbortController();
-  const release = trackRequest(controller);
+  const release = clusterScoped ? trackRequest(controller) : () => {};
   const epoch = clusterEpoch();
   const timer = setTimeout(
     () => controller.abort(),
     init.method ? 190000 : 30000,
   );
   try {
-    const response = await fetch(scopeURL(`/api${path}`), {
-      ...init,
-      headers: {
-        ...getAuthHeaders(),
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...init.headers,
+    const response = await fetch(
+      url,
+      {
+        ...init,
+        headers: {
+          ...getAuthHeaders(),
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...init.headers,
+        },
+        signal: controller.signal,
       },
-      signal: controller.signal,
-    });
+    );
     const data = await response.json().catch(() => null);
-    if (epoch !== clusterEpoch())
+    if (clusterScoped && epoch !== clusterEpoch())
       throw new DOMException("Cluster changed", "AbortError");
     if (response.status === 401) {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -51,6 +57,33 @@ export async function request<T = any>(
 }
 export const post = (path: string, body: unknown = {}) =>
   request(path, { method: "POST", body: JSON.stringify(body) });
+export const globalRequest = <T = any>(path: string, init: RequestInit = {}) =>
+  request<T>(path, init, "global");
+export const globalPost = (path: string, body: unknown = {}) =>
+  globalRequest(path, { method: "POST", body: JSON.stringify(body) });
+export async function downloadAPI(path: string, name: string) {
+  const controller = new AbortController();
+  const release = trackRequest(controller);
+  const epoch = clusterEpoch();
+  try {
+    const response = await fetch(scopeURL(`/api${path}`), {
+      headers: getAuthHeaders(),
+      signal: controller.signal,
+    });
+    if (!response.ok)
+      throw new Error(t("Запрос завершился с ошибкой {0}", [response.status]));
+    const blob = await response.blob();
+    if (epoch !== clusterEpoch()) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } finally {
+    release();
+  }
+}
 export const list = (data: any): any[] =>
   Array.isArray(data)
     ? data
@@ -58,6 +91,8 @@ export const list = (data: any): any[] =>
 export const display = (value: unknown): string =>
   value === null || value === undefined || value === ""
     ? "—"
+    : Array.isArray(value) && value.every(item => typeof item !== 'object')
+      ? value.join(', ')
     : typeof value === "object"
       ? JSON.stringify(value)
       : String(value);

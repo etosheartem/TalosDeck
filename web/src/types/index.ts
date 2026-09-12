@@ -271,8 +271,10 @@ export interface UpdateAlertsPayload {
 
 // Authentication & Audit interfaces
 export interface UserInfo {
+  id?: string
   username: string
-  role: 'admin' | 'viewer'
+  role: 'admin' | 'operator' | 'viewer'
+  provider?: 'local' | 'oidc'
 }
 
 export interface AuthResponse {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RefreshCw, Play, Square, Download } from "lucide-vue-next";
-import { request, post, download } from "./client";
+import { request as apiRequest, download } from "./client";
+import { canOperate } from "./permissions";
 import { t, locale } from "./i18n";
 import Modal from "./Modal.vue";
 import ResourceTable from "./ResourceTable.vue";
@@ -40,7 +41,19 @@ interface Job {
   reviewed: boolean;
   events?: { time: string; step: string; message: string }[];
 }
-const props = defineProps<{ mode: "updates" | "jobs"; initialKind?: Kind }>();
+const props = defineProps<{
+  mode: "updates" | "jobs";
+  initialKind?: Kind;
+  global?: boolean;
+}>();
+const request = <T = any,>(path: string, init: RequestInit = {}) =>
+  apiRequest<T>(
+    props.global ? path.replace(/^\/jobs/, "/provision/jobs") : path,
+    init,
+    props.global ? "global" : "cluster",
+  );
+const post = (path: string, body: any = {}) =>
+  request(path, { method: "POST", body: JSON.stringify(body) });
 const emit = defineEmits<{ submitted: [id: string] }>();
 const kind = ref<Kind>(props.initialKind || "talos-upgrade");
 const version = ref("");
@@ -84,6 +97,13 @@ const title = (value: string) =>
     "rolling-reboot": t("Последовательная перезагрузка"),
     "config-apply": t("Изменить конфигурацию"),
     "config-restore": t("Восстановить конфигурацию"),
+    "cluster-create": t('Создать кластер'),
+    "worker-create": t('Добавить worker'),
+    "worker-delete": t('Удалить машину'),
+    "machine-cleanup": t('Очистить ресурсы'),
+    "backup-create": t('Создать копию'),
+    "backup-restore": t('Восстановить резервную копию'),
+    "diagnostics": t('Диагностика'),
   })[value] || value;
 async function exportLog() {
   if (!selected.value || busy.value) return;
@@ -107,6 +127,17 @@ const state = (value: string) =>
     failed: t("Ошибка"),
     interrupted: t("Прервано"),
     stopped: t("Остановлено"),
+    'verify-ready':t('Проверка готовности нод'),
+    'wait-kubernetes':t('Ожидание Kubernetes'),
+    'wait-talos':t('Ожидание Talos API'),
+    'create-vm':t('Создание машины'),
+    'boot-vm':t('Загрузка машины'),
+    'discover-address':t('Определение адреса'),
+    'generate-config':t('Подготовка конфигурации'),
+    'apply-config':t('Применение конфигурации'),
+    'bootstrap-etcd':t('Инициализация etcd'),
+    'provision-preflight':t('Проверка перед созданием'),
+    'import-cluster':t('Подключение кластера'),
   })[value] || value;
 const date = (value: string) =>
   new Date(value).toLocaleString(locale.value === "ru" ? "ru-RU" : "en-US");
@@ -244,12 +275,13 @@ async function act(action: "stop" | "acknowledge") {
       {{ t("Журнал временно недоступен. Статусы могут быть устаревшими.") }}
       {{ pollError }}
     </div>
-    <div v-if="locked" class="notice warning">
+    <div v-if="locked && mode === 'updates'" class="notice warning">
       {{
         t("Другая операция выполняется или ожидает проверки после прерывания.")
       }}
     </div>
-    <template v-if="mode === 'updates'">
+    <p v-else-if="locked" class="footnote">{{ t('Активных заданий: {0}', [jobList.filter(j=>['queued','running'].includes(j.status)).length]) }}<span v-if="jobList.some(j=>j.status==='interrupted'&&!j.reviewed)"> · {{ t('Прерванное задание требует проверки') }}</span></p>
+    <template v-if="mode === 'updates' && canOperate">
       <section class="panel operation-form">
         <header>
           <h2>{{ t("Новая операция") }}</h2>
@@ -353,7 +385,7 @@ async function act(action: "stop" | "acknowledge") {
     </template>
     <section class="panel">
       <header>
-        <h2>{{ t("Журнал заданий") }}</h2>
+        <h2>{{ props.global?t('Создание кластеров'):t("Журнал заданий") }}</h2>
         <button @click="load">
           <RefreshCw :size="15" />{{ t("Обновить") }}
         </button>
@@ -362,7 +394,7 @@ async function act(action: "stop" | "acknowledge") {
         :rows="rows"
         :columns="[
           { key: 'name', title: t('Операция') },
-          { key: 'target', title: t('Версия') },
+          ...(props.global?[]:[{ key: 'target', title: t('Версия') }]),
           { key: 'statusLabel', title: t('Состояние') },
           { key: 'user', title: t('Пользователь') },
           { key: 'created', title: t('Создано') },
@@ -387,10 +419,10 @@ async function act(action: "stop" | "acknowledge") {
       </header>
       <div class="toolbar">
         <code>{{ selected.id }}</code
-        ><span>{{ t("Шаг") }}: {{ selected.step || "—" }}</span
+        ><span>{{ t("Шаг") }}: {{ state(selected.step) || "—" }}</span
         ><span class="spacer" />
         <button
-          v-if="['running', 'queued'].includes(selected.status)"
+          v-if="canOperate && ['running', 'queued'].includes(selected.status)"
           :disabled="busy || selected.stopRequested"
           @click="act('stop')"
         >
@@ -401,7 +433,11 @@ async function act(action: "stop" | "acknowledge") {
           }}
         </button>
         <button
-          v-if="selected.status === 'interrupted' && !selected.reviewed"
+          v-if="
+            canOperate &&
+            selected.status === 'interrupted' &&
+            !selected.reviewed
+          "
           :disabled="busy"
           @click="reviewing = true"
         >

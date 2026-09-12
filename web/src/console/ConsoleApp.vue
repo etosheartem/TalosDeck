@@ -1,18 +1,8 @@
 <script setup lang="ts">
 import { t, locale, setLocale } from "./i18n";
 
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import {
-  Activity,
-  Server,
-  Boxes,
-  HardDrive,
-  FileCode2,
-  Database,
-  Archive,
-  Wrench,
-  ScrollText,
-  Settings,
   ChevronRight,
   RefreshCw,
   Menu,
@@ -32,29 +22,38 @@ import {
   getMe,
   isAuthenticated,
   currentUser,
-  createBackup,
   downloadBackup,
   deleteBackup,
   rebootNode,
   runBootstrapCheck,
+  TOKEN_STORAGE_KEY,
 } from "../api";
 import type {
   NodeOverview,
   ClusterInfo,
   K8sPod,
   EtcdClusterHealth,
-  ProxmoxStatusResponse,
 } from "../types";
-import { request, post, list, bytes, normalizeDisk } from "./client";
+import { request, post, list, normalizeDisk } from "./client";
 import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
 import NodeInspector from "./NodeInspector.vue";
 import JobsView from "./JobsView.vue";
 import ConfigView from "./ConfigView.vue";
+import SecurityView from "./SecurityView.vue";
+import ProvidersView from "./ProvidersView.vue";
+import ProvisionView from "./ProvisionView.vue";
+import DiagnosticsView from "./DiagnosticsView.vue";
+import KubernetesView from "./KubernetesView.vue";
+import MachinesView from "./MachinesView.vue";
+import BackupsView from "./BackupsView.vue";
+import { navigation } from "./navigation";
+import { isAdmin, canOperate } from "./permissions";
 import { selectedCluster, selectCluster, clusterEpoch } from "../clusterScope";
 const clusters = ref<any[]>([]);
 const registryError = ref("");
 const importing = ref(false);
+const showGlobalJobs = ref(false);
 const importForm = ref({ name: "", talosconfig: "", kubeconfig: "" });
 async function loadClusters() {
   if (!isAuthenticated.value) return;
@@ -83,123 +82,50 @@ async function importCluster() {
   }
 }
 
-const pages = computed(() => [
-  {
-    id: "overview",
-    title: t("Обзор"),
-    icon: Activity,
-    group: t("КЛАСТЕР"),
-    description: t("Доступность, ресурсы и состояние инфраструктуры."),
-  },
-  {
-    id: "nodes",
-    title: t("Ноды"),
-    icon: Server,
-    group: t("КЛАСТЕР"),
-    description: t(
-      "Машины Talos Linux. Выберите ноду для просмотра сервисов и логов.",
-    ),
-  },
-  {
-    id: "workloads",
-    title: t("Рабочие нагрузки"),
-    icon: Boxes,
-    group: t("КЛАСТЕР"),
-    description: t("Поды Kubernetes во всех пространствах имён."),
-  },
-  {
-    id: "storage",
-    title: t("Хранилище"),
-    icon: HardDrive,
-    group: t("КЛАСТЕР"),
-    description: t("Диски, разделы и точки монтирования на каждой машине."),
-  },
-  {
-    id: "config",
-    title: t("Конфигурация"),
-    icon: FileCode2,
-    group: t("УПРАВЛЕНИЕ"),
-    description: t("MachineConfig: изменения, сравнение и история ревизий."),
-  },
-  {
-    id: "etcd",
-    title: "etcd",
-    icon: Database,
-    group: t("УПРАВЛЕНИЕ"),
-    description: t("Участники, лидер и состояние распределённой базы данных."),
-  },
-  {
-    id: "backups",
-    title: t("Резервные копии"),
-    icon: Archive,
-    group: t("УПРАВЛЕНИЕ"),
-    description: t("Снимки etcd и полные резервные копии кластера."),
-  },
-  {
-    id: "maintenance",
-    title: t("Обслуживание"),
-    icon: Wrench,
-    group: t("УПРАВЛЕНИЕ"),
-    description: t(
-      "Диагностика, обслуживание машин и последовательная перезагрузка.",
-    ),
-  },
-  {
-    id: "updates",
-    title: t("Обновления"),
-    icon: RefreshCw,
-    group: t("УПРАВЛЕНИЕ"),
-    description: t("Проверка и обновление Talos Linux и Kubernetes."),
-  },
-  {
-    id: "jobs",
-    title: t("Задания"),
-    icon: ScrollText,
-    group: t("СИСТЕМА"),
-    description: t("Фоновые операции, состояние шагов и журнал выполнения."),
-  },
-  {
-    id: "audit",
-    title: t("Аудит"),
-    icon: ScrollText,
-    group: t("СИСТЕМА"),
-    description: t("История действий и результаты операций."),
-  },
-  {
-    id: "settings",
-    title: t("Настройки"),
-    icon: Settings,
-    group: t("СИСТЕМА"),
-    description: t("Интеграции, уведомления и параметры опроса."),
-  },
+const pages = computed(navigation);
+const globalPage = computed(() => Boolean(page.value.global));
+const navGroups = computed(() => [
+  ...new Set(pages.value.map((item) => item.group)),
 ]);
+const expandedGroups = ref<string[]>([]);
+function toggleGroup(group: string) {
+  expandedGroups.value = expandedGroups.value.includes(group)
+    ? expandedGroups.value.filter((g) => g !== group)
+    : [group];
+}
 const initial = () =>
   pages.value.some((p) => p.id === location.hash.slice(1))
     ? location.hash.slice(1)
-    : "overview";
+    : "clusters";
 const active = ref(initial());
 const page = computed(() => pages.value.find((p) => p.id === active.value)!);
 const mobile = ref(false);
 const navSearch = ref("");
+const navigationSearch = ref<HTMLInputElement>();
+async function shortcut(event:KeyboardEvent) {if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();if(innerWidth<1000)mobile.value=true;await nextTick();navigationSearch.value?.focus();} }
 const interval = ref(30);
 const nodes = ref<NodeOverview[]>([]);
 const cluster = ref<ClusterInfo | null>(null);
 const pods = ref<K8sPod[]>([]);
+const recentJobs = ref<any[]>([]);
+const recentBackups = ref<any[]>([]);
+const diagnostics = ref<any>(null);
+const impactedPods = computed(() => {const node=nodes.value.find(n=>n.ip===nodeIP.value);return pods.value.filter(p=>[node?.hostname,nodeIP.value].includes(p.nodeName || p.node)).length;});
 const etcd = ref<EtcdClusterHealth | null>(null);
-const pve = ref<ProxmoxStatusResponse | null>(null);
 const errors = ref<Record<string, string>>({});
 const loading = ref(false);
 const refreshed = ref("");
 const data = ref<any[]>([]);
 const sectionLoading = ref(false);
 const nodeIP = ref("");
-const namespace = ref("all");
 const role = ref("all");
 const config = ref("");
 const detail = ref<any>(null);
 const inspected = ref<NodeOverview | null>(null);
 const dialog = ref("");
 const password = ref("");
+const username = ref("admin");
+const oidc = ref<any>(null);
 const busy = ref(false);
 const actionError = ref("");
 const toast = ref("");
@@ -218,21 +144,9 @@ const chat = ref("");
 const token = ref("");
 const level = ref("WARNING");
 const checks = ref<any[]>([]);
-const worker = ref({
-  name: "",
-  vmid: undefined as number | undefined,
-  cores: 2,
-  memoryMB: 4096,
-  diskGB: 30,
-  storage: "local-lvm",
-  bridge: "vmbr0",
-  iso: "",
-  start: true,
-});
 const operationKind = ref<
   "talos-upgrade" | "kubernetes-upgrade" | "rolling-reboot"
 >("talos-upgrade");
-const backupType = ref<"full" | "etcd">("etcd");
 const ready = computed(() => nodes.value.filter((n) => n.ready).length);
 const troubled = computed(() =>
   pods.value.filter((p) => !["Running", "Succeeded"].includes(p.status)),
@@ -246,18 +160,6 @@ const nodeRows = computed(() =>
       cpu: n.cpuUsage == null ? "—" : `${n.cpuUsage.toFixed(1)}%`,
       memory: n.memoryUsage || "—",
     })),
-);
-const podRows = computed(() =>
-  pods.value
-    .filter((p) => namespace.value === "all" || p.namespace === namespace.value)
-    .map((p) => ({
-      ...p,
-      nodeName: p.nodeName || p.node,
-      ip: p.ip || p.podIp,
-    })),
-);
-const namespaces = computed(() =>
-  [...new Set(pods.value.map((p) => p.namespace))].sort(),
 );
 const issueRows = computed(() => [
   ...nodes.value
@@ -352,6 +254,10 @@ async function probe(key: string, path: string, set: (data: any) => void) {
   }
 }
 async function refresh() {
+  if (globalPage.value) {
+    await loadClusters();
+    return;
+  }
   if (loading.value || !selectedCluster.value || !isAuthenticated.value) return;
   const epoch = clusterEpoch();
   loading.value = true;
@@ -363,6 +269,9 @@ async function refresh() {
     }),
     probe("cluster", "/cluster", (v) => (cluster.value = v)),
     probe("pods", "/k8s/pods", (v) => (pods.value = list(v))),
+    probe("jobs", "/jobs", (v) => (recentJobs.value = list(v).map(job=>({...job,kind:job.request?.kind || job.kind})))),
+    probe("backups", "/backups", (v) => (recentBackups.value = list(v))),
+    probe("diagnostics", "/diagnostics", (v) => (diagnostics.value = v)),
     probe(
       "etcd",
       "/cluster/etcd",
@@ -376,7 +285,6 @@ async function refresh() {
           })),
         }),
     ),
-    probe("proxmox", "/proxmox/status", (v) => (pve.value = v)),
   ]);
   if (!disposed && epoch === clusterEpoch()) {
     refreshed.value = new Date().toLocaleTimeString("ru-RU");
@@ -388,15 +296,16 @@ function schedule() {
   if (interval.value && !disposed)
     timer = setTimeout(async () => {
       await refresh();
-      if (["storage", "backups", "audit"].includes(active.value))
-        await loadSection();
+      if (["storage", "audit"].includes(active.value)) await loadSection();
       schedule();
     }, interval.value * 1000);
 }
 async function loadSection() {
+  if (globalPage.value) return;
   if (!selectedCluster.value || !isAuthenticated.value) return;
   const id = ++generation;
   const section = active.value;
+  if (["config", "alerts"].includes(section) && !isAdmin.value) return;
   data.value = [];
   config.value = "";
   detail.value = null;
@@ -425,9 +334,8 @@ async function loadSection() {
       );
       if (id === generation) config.value = r.configYaml || r.yaml || "";
     }
-    if (section === "backups") result = await request("/backups");
     if (section === "audit") result = list(await request("/audit?limit=100"));
-    if (section === "settings") {
+    if (section === "alerts" && isAdmin.value) {
       const a = await request("/alerts/config");
       if (id === generation) {
         alerts.value = a;
@@ -449,10 +357,20 @@ function navigate(id: string) {
   mobile.value = false;
   location.hash = id;
 }
+function switchCluster(id: string) {
+  const same = selectedCluster.value === id;
+  selectCluster(id);
+  if (globalPage.value) navigate("overview");
+  if (same) {
+    refresh().then(loadSection);
+  }
+}
 const hash = () => {
   active.value = initial();
 };
 watch(active, () => {
+  expandedGroups.value = [page.value.group];
+  if (!globalPage.value && !refreshed.value) refresh();
   loadSection();
 });
 watch(nodeIP, () => {
@@ -464,8 +382,10 @@ watch(selectedCluster, async () => {
   nodes.value = [];
   cluster.value = null;
   pods.value = [];
+  recentJobs.value = [];
+  recentBackups.value = [];
+  diagnostics.value = null;
   etcd.value = null;
-  pve.value = null;
   nodeIP.value = "";
   data.value = [];
   config.value = "";
@@ -478,9 +398,7 @@ watch(selectedCluster, async () => {
   token.value = "";
   chat.value = "";
   enabled.value = false;
-  importForm.value = {name: "", talosconfig: "", kubeconfig: ""};
-  worker.value = {name: "", vmid: undefined, cores: 2, memoryMB: 4096, diskGB: 30, storage: "local-lvm", bridge: "vmbr0", iso: "", start: true};
-  namespace.value = "all";
+  importForm.value = { name: "", talosconfig: "", kubeconfig: "" };
   role.value = "all";
   actionError.value = "";
   errors.value = {};
@@ -505,6 +423,25 @@ watch(isAuthenticated, (authorized) => {
 });
 onMounted(async () => {
   window.addEventListener("hashchange", hash);
+  window.addEventListener('keydown',shortcut);
+  const code = new URLSearchParams(location.hash.slice(1)).get("oidc_code");
+  if (code) {
+    history.replaceState(
+      null,
+      "",
+      location.pathname + location.search + "#clusters",
+    );
+    try {
+      const result = await post("/auth/oidc/exchange", { code });
+      if (!result.token) throw new Error(t("Не удалось выполнить вход"));
+      localStorage.setItem(TOKEN_STORAGE_KEY, result.token);
+      isAuthenticated.value = true;
+      currentUser.value = result.user;
+    } catch (e) {
+      registryError.value = String(e);
+    }
+  }
+  void request('/auth/providers').then(result=>{if(!disposed)oidc.value=result?.oidc||null;}).catch(()=>{if(!disposed)oidc.value=null;});
   await getMe();
   if (!isAuthenticated.value) selectCluster("");
   await loadClusters();
@@ -518,11 +455,12 @@ onUnmounted(() => {
   if (timer) clearTimeout(timer);
   clearTimeout(toastTimer);
   window.removeEventListener("hashchange", hash);
+  window.removeEventListener('keydown',shortcut);
 });
 async function signIn() {
   if (
     await perform(async () => {
-      const r = await login(password.value);
+      const r = await login(password.value, username.value);
       if (!r.success) throw new Error(r.error);
     }, t("Вход выполнен"))
   ) {
@@ -531,26 +469,6 @@ async function signIn() {
     await loadClusters();
     await refresh();
     await loadSection();
-  }
-}
-function showWorker() {
-  actionError.value = "";
-  dialog.value = "worker";
-  probe(
-    "vmid",
-    "/proxmox/next-vmid",
-    (v) => (worker.value.vmid = v.vmid || v.nextVMID),
-  );
-}
-async function createWorker() {
-  if (
-    await perform(
-      () => post("/proxmox/worker", worker.value),
-      t("Рабочая машина создана"),
-    )
-  ) {
-    dialog.value = "";
-    await refresh();
   }
 }
 async function saveAlerts() {
@@ -574,16 +492,17 @@ function rollingReboot() {
 }
 const protectedPage = computed(
   () =>
-    ["config", "backups", "audit", "settings", "updates", "jobs"].includes(
-      active.value,
-    ) && !isAuthenticated.value,
+    !isAuthenticated.value ||
+    (["config", "providers", "machines", "fleet-machines", "alerts"].includes(active.value) &&
+      !isAdmin.value) ||
+    (active.value === "updates" && !canOperate.value),
 );
 </script>
 
 <template>
   <div class="console-app">
     <aside :class="['rail', { open: mobile }]">
-      <a class="brand" href="#overview" @click.prevent="navigate('overview')"
+      <a class="brand" href="#clusters" @click.prevent="navigate('clusters')"
         ><span class="brand-symbol">t<span>_</span></span>
         <div>TalosDeck<small>INFRASTRUCTURE CONSOLE</small></div></a
       ><button
@@ -600,7 +519,7 @@ const protectedPage = computed(
             :value="selectedCluster"
             :disabled="busy || importing"
             :aria-label="t('Кластер')"
-            @change="selectCluster(($event.target as HTMLSelectElement).value)"
+            @change="switchCluster(($event.target as HTMLSelectElement).value)"
           >
             <option v-if="!clusters.length" value="">
               {{ t("Нет кластеров") }}
@@ -611,7 +530,7 @@ const protectedPage = computed(
           </select></label
         >
         <button
-          v-if="isAuthenticated"
+          v-if="isAdmin"
           @click="
             dialog = 'import';
             actionError = '';
@@ -623,30 +542,54 @@ const protectedPage = computed(
       <label class="nav-search"
         ><Search :size="15" /><input
           v-model="navSearch"
+          ref="navigationSearch"
           :placeholder="t('Найти раздел')"
           :aria-label="t('Найти раздел')"
       /></label>
       <nav :aria-label="t('Главная навигация')">
-        <template
-          v-for="group in [t('КЛАСТЕР'), t('УПРАВЛЕНИЕ'), t('СИСТЕМА')]"
-          :key="group"
-          ><p class="nav-group">{{ group }}</p>
-          <button
-            v-for="item in pages.filter(
-              (p) =>
-                p.group === group &&
-                p.title.toLowerCase().includes(navSearch.toLowerCase()),
-            )"
-            :key="item.id"
-            :class="{ active: active === item.id }"
-            :aria-current="active === item.id ? 'page' : undefined"
-            @click="navigate(item.id)"
+        <template v-for="group in navGroups" :key="group"
+          ><button
+            v-if="selectedCluster || group === t('ПЛАТФОРМА')"
+            class="nav-group group-toggle"
+            :aria-expanded="
+              !!navSearch ||
+              expandedGroups.includes(group) ||
+              group === page.group ||
+              group === t('ПЛАТФОРМА')
+            "
+            @click="toggleGroup(group)"
           >
-            <component :is="item.icon" :size="17" /><span>{{ item.title }}</span
-            ><span v-if="item.id === 'nodes'" class="nav-count">{{
-              nodes.length
-            }}</span>
-          </button></template
+            {{ group }}<ChevronRight :size="12" />
+          </button>
+          <template
+            v-if="
+              navSearch ||
+              expandedGroups.includes(group) ||
+              group === page.group ||
+              group === t('ПЛАТФОРМА')
+            "
+          >
+            <button
+              v-for="item in pages.filter(
+                (p) =>
+                  p.group === group &&
+                  (p.global || !!selectedCluster) &&
+                  (p.id !== 'providers' || isAdmin) &&
+                  p.title.toLowerCase().includes(navSearch.toLowerCase()),
+              )"
+              :key="item.id"
+              :class="{ active: active === item.id }"
+              :aria-current="active === item.id ? 'page' : undefined"
+              @click="navigate(item.id)"
+            >
+              <component :is="item.icon" :size="17" /><span>{{
+                item.title
+              }}</span
+              ><span v-if="item.id === 'nodes'" class="nav-count">{{
+                nodes.length
+              }}</span>
+            </button></template
+          ></template
         >
       </nav>
       <div class="rail-footer">
@@ -668,9 +611,7 @@ const protectedPage = computed(
         >
           {{ t("Проект на GitHub") }} <ArrowUpRight :size="13" />
         </a>
-        <span class="state muted"><i />Console rebuild</span
-        ><code>UI 2 · operator-console</code
-        ><a href="https://www.talos.dev" target="_blank" rel="noopener">
+        <a href="https://www.talos.dev" target="_blank" rel="noopener">
           {{ t("Документация Talos") }} <ArrowUpRight :size="13"
         /></a>
       </div>
@@ -691,7 +632,17 @@ const protectedPage = computed(
           <Menu :size="20" />
         </button>
         <div class="breadcrumbs">
-          <Network :size="16" /><span>{{ cluster?.name || t("Кластер") }}</span
+          <Network :size="16" /><button
+            class="breadcrumb-link"
+            @click="navigate('clusters')"
+          >
+            {{
+              globalPage
+                ? "TalosDeck"
+                : clusters.find((c) => c.id === selectedCluster)?.name ||
+                  cluster?.name ||
+                  t("Кластер")
+            }}</button
           ><ChevronRight :size="14" /><strong>{{ page.title }}</strong>
         </div>
         <div class="session">
@@ -726,7 +677,7 @@ const protectedPage = computed(
           {{ registryError
           }}<button @click="loadClusters">{{ t("Повторить") }}</button>
         </div>
-        <div v-if="!selectedCluster" class="access-state">
+        <div v-if="!isAuthenticated" class="access-state">
           <h1>{{ t("Кластеры") }}</h1>
           <p>
             {{
@@ -752,7 +703,7 @@ const protectedPage = computed(
               <h1>{{ page.title }}</h1>
               <p>{{ page.description }}</p>
             </div>
-            <div class="refresh-tools">
+            <div v-if="!globalPage" class="refresh-tools">
               <span v-if="refreshed"> {{ t("Опрос") }} {{ refreshed }}</span
               ><select
                 v-model="interval"
@@ -772,7 +723,10 @@ const protectedPage = computed(
             </div>
           </div>
           <div
-            v-if="Object.keys(errors).filter((k) => k !== 'section').length"
+            v-if="
+              !globalPage &&
+              Object.keys(errors).filter((k) => k !== 'section').length
+            "
             class="notice warning"
             role="status"
           >
@@ -790,11 +744,66 @@ const protectedPage = computed(
               </details>
             </div>
           </div>
-          <div v-if="loading && !refreshed" class="loading-state">
+          <div
+            v-if="!globalPage && loading && !refreshed"
+            class="loading-state"
+          >
             <RefreshCw :size="22" class="spin" />
             {{ t("Подключение к кластеру…") }}
           </div>
-          <template v-if="active === 'overview'">
+          <section v-if="active === 'clusters'" class="panel fleet-overview">
+            <header>
+              <h2>{{ t("Подключённые кластеры") }}</h2>
+              <div class="toolbar">
+                <button @click="loadClusters">{{ t("Обновить") }}</button
+                ><button
+                  v-if="isAdmin"
+                  @click="
+                    dialog = 'import';
+                    actionError = '';
+                  "
+                >
+                  {{ t("Добавить кластер") }}</button
+                ><button
+                  v-if="isAdmin"
+                  class="primary"
+                  @click="dialog = 'create-cluster'"
+                >
+                  {{ t("Создать кластер") }}
+                </button>
+              </div>
+            </header>
+            <ResourceTable
+              :rows="clusters"
+              :empty="t('Подключите существующий кластер или создайте новый')"
+              :columns="[
+                { key: 'name', title: t('Имя') },
+                { key: 'health', title: t('Состояние') },
+                { key: 'talosVersion', title: 'Talos' },
+                { key: 'kubernetesVersion', title: 'Kubernetes' },
+                { key: 'provider', title: t('Провайдер') },
+                { key: 'endpoints', title: t('Адреса'), mono: true },
+              ]"
+              @select="switchCluster($event.id)"
+            />
+            <p class="footnote">
+              {{
+                t(
+                  "Выберите кластер, чтобы открыть ноды, операции и диагностику.",
+                )
+              }}
+            </p>
+            <details v-if="isAdmin" class="fleet-jobs" :open="showGlobalJobs" @toggle="showGlobalJobs=($event.target as HTMLDetailsElement).open"><summary>{{t('Создание кластеров')}}</summary><JobsView mode="jobs" global /></details>
+          </section>
+          <ProvidersView v-else-if="active === 'providers' && isAdmin" />
+          <SecurityView v-else-if="active === 'users'" />
+          <div v-else-if="!selectedCluster" class="access-state">
+            <h2>{{ t("Нет выбранного кластера") }}</h2>
+            <button @click="navigate('clusters')">
+              {{ t("Открыть кластеры") }}
+            </button>
+          </div>
+          <template v-else-if="active === 'overview'">
             <div class="overview-grid">
               <section class="availability">
                 <div class="section-label">{{ t("ДОСТУПНОСТЬ КЛАСТЕРА") }}</div>
@@ -907,14 +916,14 @@ const protectedPage = computed(
                 </header>
                 <div v-if="!issueRows.length" class="quiet-state">
                   <CheckCircle2 :size="28" /><strong>{{
-                    Object.keys(errors).length
+                    (loading && !refreshed) || Object.keys(errors).length
                       ? t("Проверка неполная")
                       : t("Активных проблем не обнаружено")
                   }}</strong>
                   <p>
                     {{
-                      Object.keys(errors).length
-                        ? t("Часть источников не ответила.")
+                      (loading && !refreshed) || Object.keys(errors).length
+                        ? t("Часть источников ещё не ответила.")
                         : t("По последним ответам Talos и Kubernetes.")
                     }}
                   </p>
@@ -931,6 +940,18 @@ const protectedPage = computed(
                 </button>
               </section>
             </div>
+            <div class="dashboard-recent">
+              <section class="surface"><header class="surface-heading"><h2>{{ t('Последние задания') }}</h2><button @click="navigate('jobs')">{{ t('Все') }}</button></header>
+                <ResourceTable :rows="recentJobs.slice(0,5)" :search="false" :columns="[{key:'kind',title:t('Тип')},{key:'status',title:t('Состояние')}]" @select="navigate('jobs')" />
+              </section>
+              <section class="surface"><header class="surface-heading"><h2>{{ t('Последние копии') }}</h2><button @click="navigate('backups')">{{ t('Резервные копии') }}</button></header>
+                <ResourceTable :rows="recentBackups.slice(0,3)" :search="false" :columns="[{key:'filename',title:t('Имя')},{key:'timestamp',title:t('Время')}]" @select="navigate('backups')" />
+              </section>
+              <section class="surface"><header class="surface-heading"><h2>{{ t('Последняя диагностика') }}</h2><button @click="navigate('diagnostics')">{{ t('Диагностика') }}</button></header>
+                <p class="notice">{{ diagnostics?.status && diagnostics.status !== 'unknown' ? diagnostics.checkedAt : t('Диагностика ещё не выполнялась') }} · {{ diagnostics?.status || 'unknown' }}</p>
+                <button v-for="check in (diagnostics?.checks || []).filter((c:any)=>['critical','warning'].includes(c.severity)).slice(0,5)" :key="check.id" class="issue-row" @click="navigate('diagnostics')"><AlertTriangle :size="16"/><span>{{ check.title }}<small>{{ check.node || check.component }}</small></span></button>
+              </section>
+            </div>
             <section class="surface cluster-facts">
               <div>
                 <span>API endpoint</span
@@ -945,9 +966,10 @@ const protectedPage = computed(
                 ><code>{{ cluster?.kubernetesVersion || "—" }}</code>
               </div>
               <div>
-                <span>Proxmox VE</span
+                <span>{{ t("Провайдер") }}</span
                 ><code>{{
-                  pve?.configured ? pve.node : t("Не настроен")
+                  clusters.find((c) => c.id === selectedCluster)?.provider ||
+                  "—"
                 }}</code>
               </div>
             </section>
@@ -963,8 +985,8 @@ const protectedPage = computed(
                 </select></label
               ><span class="spacer" /><button
                 class="primary"
-                :disabled="!isAuthenticated || !pve?.configured"
-                @click="showWorker"
+                :disabled="!isAdmin"
+                @click="dialog = 'create-worker'"
               >
                 <Plus :size="16" /> {{ t("Добавить worker") }}
               </button>
@@ -974,32 +996,17 @@ const protectedPage = computed(
               :columns="nodeColumns"
               @select="inspected = $event"
           /></template>
-          <template v-else-if="active === 'workloads'"
-            ><div class="toolbar">
-              <label
-                >Namespace
-                <select v-model="namespace">
-                  <option value="all">{{ t("Все пространства имён") }}</option>
-                  <option v-for="ns in namespaces" :key="ns">{{ ns }}</option>
-                </select></label
-              ><span class="spacer" /><span class="state muted"
-                >{{ troubled.length }} {{ t("требуют внимания") }}
-              </span>
-            </div>
-            <ResourceTable
-              :rows="podRows"
-              :columns="[
-                { key: 'name', title: t('Под'), mono: true },
-                { key: 'namespace', title: 'Namespace' },
-                { key: 'status', title: t('Состояние') },
-                { key: 'readyContainers', title: t('Готовность') },
-                { key: 'restarts', title: t('Рестарты') },
-                { key: 'nodeName', title: t('Нода') },
-                { key: 'ip', title: 'IP', mono: true },
-                { key: 'age', title: t('Возраст') },
-              ]"
-              @select="detail = $event"
-          /></template>
+          <KubernetesView
+            v-else-if="['workloads', 'events', 'kube-storage'].includes(active)"
+            :key="selectedCluster + active"
+            :mode="
+              active === 'kube-storage'
+                ? 'storage'
+                : active === 'events'
+                  ? 'events'
+                  : 'workloads'
+            "
+          />
           <template v-else-if="active === 'etcd'"
             ><div class="cluster-facts surface">
               <div>
@@ -1040,11 +1047,16 @@ const protectedPage = computed(
           /></template>
           <div v-else-if="protectedPage" class="access-state">
             <LogIn :size="28" />
-            <h2>{{ t("Требуется вход") }}</h2>
+            <h2>
+              {{
+                isAuthenticated ? t("Недостаточно прав") : t("Требуется вход")
+              }}
+            </h2>
             <p>
-              {{ t("Раздел «{0}» доступен администратору.", [page.title]) }}
+              {{ t("Ваша роль не разрешает управление этим разделом.") }}
             </p>
             <button
+              v-if="!isAuthenticated"
               class="primary"
               @click="
                 dialog = 'login';
@@ -1061,6 +1073,76 @@ const protectedPage = computed(
             :initial-kind="operationKind"
             @submitted="navigate('jobs')"
           />
+          <MachinesView
+            v-else-if="active === 'machines' || active === 'fleet-machines'"
+            :key="active + selectedCluster"
+            :global="active === 'fleet-machines'"
+            @add="dialog = 'create-worker'"
+            @submitted="active === 'fleet-machines' ? (showGlobalJobs=true,navigate('clusters')) : navigate('jobs')"
+          />
+          <DiagnosticsView
+            v-else-if="active === 'diagnostics'"
+            :key="selectedCluster"
+            @submitted="navigate('jobs')"
+          />
+          <section v-else-if="active === 'logs'" class="panel">
+            <header>
+              <h2>{{ t("Логи Talos") }}</h2>
+              <label
+                >{{ t("Машина")
+                }}<select v-model="nodeIP">
+                  <option v-for="node in nodes" :key="node.ip" :value="node.ip">
+                    {{ node.hostname }} · {{ node.ip }}
+                  </option>
+                </select></label
+              >
+            </header>
+            <NodeInspector
+              v-if="nodes.find((n) => n.ip === nodeIP)"
+              :key="selectedCluster + nodeIP"
+              :node="nodes.find((n) => n.ip === nodeIP)!"
+              initial-tab="logs"
+              @changed="refresh"
+            />
+            <p v-else class="footnote">{{ t("Нет доступных нод") }}</p>
+          </section>
+          <section v-else-if="active === 'settings'" class="panel">
+            <header>
+              <h2>{{ t("Подключение к кластеру") }}</h2>
+            </header>
+            <dl class="detail-grid settings-form">
+              <dt>{{ t("Имя") }}</dt>
+              <dd>
+                {{ clusters.find((c) => c.id === selectedCluster)?.name }}
+              </dd>
+              <dt>ID</dt>
+              <dd>{{ selectedCluster }}</dd>
+              <dt>Talos endpoints</dt>
+              <dd>
+                {{
+                  clusters
+                    .find((c) => c.id === selectedCluster)
+                    ?.endpoints?.join(", ") || "—"
+                }}
+              </dd>
+              <dt>{{ t("Провайдер") }}</dt>
+              <dd>
+                {{
+                  clusters.find((c) => c.id === selectedCluster)?.provider ||
+                  "—"
+                }}
+              </dd>
+            </dl>
+            <div class="toolbar">
+              <button v-if="isAdmin" @click="navigate('providers')">
+                {{ t("Открыть провайдеров") }}</button
+              ><button v-if="isAdmin" @click="navigate('alerts')">
+                {{ t("Настроить уведомления") }}</button
+              ><button @click="navigate('users')">
+                {{ t("Моя учётная запись") }}
+              </button>
+            </div>
+          </section>
           <template v-else>
             <div
               v-if="['storage', 'config', 'maintenance'].includes(active)"
@@ -1114,38 +1196,16 @@ const protectedPage = computed(
               :config="config"
               @submitted="navigate('jobs')"
             />
-            <template v-else-if="active === 'backups'"
-              ><div class="toolbar">
-                <select
-                  v-model="backupType"
-                  :aria-label="t('Тип резервной копии')"
-                >
-                  <option value="etcd">{{ t("Снимок etcd") }}</option>
-                  <option value="full">{{ t("Полная копия") }}</option></select
-                ><button
-                  class="primary"
-                  :disabled="busy"
-                  @click="
-                    perform(
-                      () => createBackup(backupType),
-                      t('Резервная копия создана'),
-                    ).then(loadSection)
-                  "
-                >
-                  <Plus :size="16" /> {{ t("Создать копию") }}
-                </button>
-              </div>
-              <ResourceTable
-                :rows="data"
-                :columns="[
-                  { key: 'filename', title: t('Файл'), mono: true },
-                  { key: 'type', title: t('Тип') },
-                  { key: 'humanSize', title: t('Размер') },
-                  { key: 'timestamp', title: t('Создано') },
-                  { key: 'node', title: t('Нода') },
-                ]"
-                @select="detail = $event"
-            /></template>
+            <BackupsView
+              v-else-if="active === 'backups'"
+              :key="selectedCluster"
+              :cluster-name="
+                clusters.find((c) => c.id === selectedCluster)?.name ||
+                cluster?.name ||
+                ''
+              "
+              @submitted="navigate('jobs')"
+            />
             <template v-else-if="active === 'audit'"
               ><ResourceTable
                 :rows="data"
@@ -1191,7 +1251,7 @@ const protectedPage = computed(
                   </div>
                   <div class="toolbar">
                     <button
-                      :disabled="!isAuthenticated || !nodeIP || busy"
+                      :disabled="!canOperate || !nodeIP || busy"
                       @click="
                         ask(
                           t('Включить обслуживание'),
@@ -1207,7 +1267,7 @@ const protectedPage = computed(
                     >
                       {{ t("Включить") }}</button
                     ><button
-                      :disabled="!isAuthenticated || !nodeIP || busy"
+                      :disabled="!canOperate || !nodeIP || busy"
                       @click="
                         ask(
                           t('Выключить обслуживание'),
@@ -1232,11 +1292,12 @@ const protectedPage = computed(
                           nodeIP || t("выбранной ноде"),
                         ])
                       }}
+                      {{ t('Подов на ноде по последнему опросу: {0}.', [impactedPods]) }}
                     </p>
                   </div>
                   <button
                     class="danger"
-                    :disabled="!isAuthenticated || !nodeIP || busy"
+                    :disabled="!canOperate || !nodeIP || busy"
                     @click="
                       ask(
                         t('Перезагрузить ноду'),
@@ -1261,7 +1322,7 @@ const protectedPage = computed(
                   </div>
                   <button
                     class="danger"
-                    :disabled="!isAuthenticated || !nodes.length || busy"
+                    :disabled="!canOperate || !nodes.length || busy"
                     @click="rollingReboot()"
                   >
                     {{ t("Перезагрузить все") }}
@@ -1278,7 +1339,7 @@ const protectedPage = computed(
                 ]"
                 @select="detail = $event"
             /></template>
-            <template v-else-if="active === 'settings'"
+            <template v-else-if="active === 'alerts'"
               ><div class="settings-grid">
                 <section class="surface">
                   <header class="surface-heading">
@@ -1332,38 +1393,6 @@ const protectedPage = computed(
                     </div>
                   </form>
                 </section>
-                <section class="surface">
-                  <header class="surface-heading">
-                    <h2>Proxmox VE</h2>
-                    <span class="state muted">{{
-                      pve?.configured ? t("Настроен") : t("Не настроен")
-                    }}</span>
-                  </header>
-                  <dl class="definition-list">
-                    <dt>{{ t("Хост") }}</dt>
-                    <dd>{{ pve?.node || "—" }}</dd>
-                    <dt>CPU</dt>
-                    <dd>
-                      {{ pve?.status?.cpuUsagePercent?.toFixed(1) ?? "—" }}%
-                    </dd>
-                    <dt>{{ t("Свободная RAM") }}</dt>
-                    <dd>{{ bytes(pve?.status?.memory?.available) }}</dd>
-                    <dt>{{ t("Свободный диск") }}</dt>
-                    <dd>{{ bytes(pve?.status?.storage?.free) }}</dd>
-                  </dl>
-                  <p class="footnote">
-                    {{
-                      t("Подключение Proxmox задаётся в конфигурации сервера.")
-                    }}
-                  </p>
-                  <button
-                    class="settings-action"
-                    :disabled="!pve?.configured"
-                    @click="showWorker"
-                  >
-                    {{ t("Добавить рабочую машину") }}
-                  </button>
-                </section>
               </div></template
             >
           </template>
@@ -1377,7 +1406,7 @@ const protectedPage = computed(
         </template>
       </main>
       <footer class="workspace-footer">
-        <span>TalosDeck <strong>Console UI 2</strong></span
+        <span>TalosDeck</span
         ><span>Talos Linux / Kubernetes</span>
       </footer>
     </div>
@@ -1391,6 +1420,28 @@ const protectedPage = computed(
         <X :size="16" />
       </button>
     </div>
+    <Modal
+      v-if="dialog === 'create-cluster' || dialog === 'create-worker'"
+      :title="
+        dialog === 'create-cluster'
+          ? t('Создать кластер')
+          : t('Добавить worker')
+      "
+      wide
+      @close="dialog = ''"
+      ><ProvisionView
+        :kind="dialog === 'create-cluster' ? 'cluster-create' : 'worker-create'"
+        :cluster-name="clusters.find((c) => c.id === selectedCluster)?.name"
+        @submitted="
+          () => {
+            const global = dialog === 'create-cluster';
+            if(global)showGlobalJobs=true;
+            dialog = '';
+            navigate(global ? 'clusters' : 'jobs');
+            loadClusters();
+          }
+        "
+    /></Modal>
     <Modal
       v-if="dialog === 'import'"
       :title="t('Добавить кластер')"
@@ -1446,12 +1497,18 @@ const protectedPage = computed(
         </button>
       </form>
     </Modal>
-    <Modal
-      v-if="dialog === 'login'"
-      :title="t('Вход администратора')"
-      @close="dialog = ''"
+    <Modal v-if="dialog === 'login'" :title="t('Вход')" @close="dialog = ''"
       ><form class="settings-form" @submit.prevent="signIn">
-        <p>{{ t("Введите пароль администратора TalosDeck.") }}</p>
+        <label
+          >{{ t("Пользователь")
+          }}<input v-model="username" autocomplete="username" required
+        /></label>
+        <a
+          v-if="oidc?.enabled"
+          class="button oidc-login"
+          :href="oidc.loginUrl"
+          >{{ t("Войти через {0}", [oidc.name || "SSO"]) }}</a
+        >
         <label>
           {{ t("Пароль") }}
           <input
@@ -1466,66 +1523,6 @@ const protectedPage = computed(
         </div>
         <button class="primary" :disabled="busy">
           {{ busy ? t("Вход…") : t("Войти") }}
-        </button>
-      </form></Modal
-    >
-    <Modal
-      v-if="dialog === 'worker'"
-      :title="t('Новая рабочая машина')"
-      @close="!busy && (dialog = '')"
-      ><form class="settings-form" @submit.prevent="createWorker">
-        <p>{{ t("Создать виртуальную машину Talos в Proxmox VE.") }}</p>
-        <div class="form-grid">
-          <label>
-            {{ t("Имя") }}
-            <input
-              v-model="worker.name"
-              required
-              pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?"
-              maxlength="63"
-              placeholder="talos-worker-3" /></label
-          ><label
-            >VMID<input
-              v-model.number="worker.vmid"
-              type="number"
-              min="100"
-              max="9999"
-              :placeholder="t('Автоматически')" /></label
-          ><label
-            >vCPU<input
-              v-model.number="worker.cores"
-              type="number"
-              min="1"
-              max="64"
-              required /></label
-          ><label
-            >RAM, MiB<input
-              v-model.number="worker.memoryMB"
-              type="number"
-              min="512"
-              required /></label
-          ><label>
-            {{ t("Диск, GiB") }}
-            <input
-              v-model.number="worker.diskGB"
-              type="number"
-              min="10"
-              required /></label
-          ><label>Storage<input v-model="worker.storage" required /></label
-          ><label>Bridge<input v-model="worker.bridge" required /></label
-          ><label
-            >ISO<input
-              v-model="worker.iso"
-              :placeholder="t('По настройке сервера')"
-          /></label>
-        </div>
-        <label class="check-label"
-          ><input v-model="worker.start" type="checkbox" />
-          {{ t("Запустить после создания") }}
-        </label>
-        <div v-if="actionError" class="notice error">{{ actionError }}</div>
-        <button class="primary" :disabled="busy || !isAuthenticated">
-          {{ busy ? t("Создание…") : t("Создать машину") }}
         </button>
       </form></Modal
     >

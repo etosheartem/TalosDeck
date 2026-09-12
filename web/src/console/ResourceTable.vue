@@ -43,7 +43,7 @@ function order(key: string) {
   sort.value = key;
 }
 const tone = (v: any) =>
-  ["Healthy", "Ready", "Running", "success", "Succeeded"].includes(v)
+  ["healthy", "ready", "running", "success", "succeeded", "complete"].includes(String(v).toLowerCase())
     ? "good"
     : [
           "Failed",
@@ -55,6 +55,7 @@ const tone = (v: any) =>
         ].includes(v)
       ? "bad"
       : "muted";
+const healthLabel = (v:any) => ({healthy:t('Исправен'),degraded:t('Деградирован'),unknown:t('Неизвестно')})[String(v).toLowerCase()] || display(v);
 </script>
 <template>
   <div class="resource-table">
@@ -107,9 +108,9 @@ const tone = (v: any) =>
               >
                 {{ display(row[col.key]) }}</button
               ><span
-                v-else-if="col.key === 'status'"
+                v-else-if="['status','health'].includes(col.key)"
                 :class="['state', tone(row[col.key])]"
-                ><i />{{ display(row[col.key]) }}</span
+                ><i />{{ col.key === 'health' ? healthLabel(row[col.key]) : display(row[col.key]) }}</span
               ><template v-else>{{ display(row[col.key]) }}</template>
             </td>
           </tr>
@@ -120,11 +121,7 @@ const tone = (v: any) =>
       <Search :size="24" /><strong>{{
         query ? t("Ничего не найдено") : empty || t("Записей пока нет")
       }}</strong
-      ><span>{{
-        query
-          ? t("Измените запрос или сбросьте фильтр.")
-          : t("Данные появятся после получения от кластера.")
-      }}</span
+      ><span v-if="query">{{ t("Измените запрос или сбросьте фильтр.") }}</span
       ><button v-if="query" @click="query = ''">
         {{ t("Сбросить поиск") }}
       </button>

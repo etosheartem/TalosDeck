@@ -3,13 +3,17 @@ import { t } from "./i18n";
 
 import { ref, watch, onUnmounted, nextTick } from "vue";
 import type { NodeOverview } from "../types";
-import { getAuthToken, isAuthenticated } from "../api";
+import { getAuthToken } from "../api";
+import { canOperate } from "./permissions";
 import { clusterWebSocket } from "../clusterScope";
 import { request, post, download, list } from "./client";
 import ResourceTable from "./ResourceTable.vue";
-const props = defineProps<{ node: NodeOverview }>();
+const props = defineProps<{
+  node: NodeOverview;
+  initialTab?: "services" | "logs";
+}>();
 const emit = defineEmits<{ changed: [] }>();
-const tab = ref("services");
+const tab = ref<string>(props.initialTab || "services");
 const rows = ref<any[]>([]);
 const error = ref("");
 const loading = ref(false);
@@ -83,7 +87,7 @@ async function load() {
     const data = await request(
       `/nodes/${encodeURIComponent(props.node.ip)}/${tab.value}`,
     );
-    if (id === generation) rows.value = list(data);
+    if (id === generation) rows.value = list(data).map(row=>tab.value==='services' && row.healthKnown===false ? {...row,healthy:t('Неизвестно')} : row);
   } catch (e) {
     if (id === generation) error.value = String(e);
   } finally {
@@ -192,7 +196,7 @@ async function restart() {
       <pre>{{ JSON.stringify(detail, null, 2) }}</pre>
       <button
         v-if="tab === 'services'"
-        :disabled="!isAuthenticated"
+        :disabled="!canOperate"
         @click="pending = detail.id"
       >
         {{ t("Перезапустить сервис") }}

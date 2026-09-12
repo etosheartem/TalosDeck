@@ -18,7 +18,7 @@ export function selectCluster(id: string) {
 export function scopeURL(path: string): string {
   if (
     !path.startsWith("/api/") ||
-    /^\/api\/(auth(?:\/|$)|clusters(?:\/|$)|healthz|readyz)/.test(path)
+    /^\/api\/(auth(?:\/|$)|clusters(?:\/|$)|providers(?:\/|$)|users(?:\/|$)|healthz|readyz)/.test(path)
   )
     return path;
   if (!selectedCluster.value) throw new Error("Select a cluster first");

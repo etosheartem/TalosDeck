@@ -1440,13 +1440,14 @@ export const getAuthHeaders = (): Record<string, string> => {
 }
 
 export const login = async (
-  password: string
+  password: string,
+  username = 'admin'
 ): Promise<{ success: boolean; user?: UserInfo; error?: string }> => {
   try {
     const res = await fetchWithTimeout('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username, password }),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {

@@ -58,6 +58,63 @@ try {
     },
   ];
   const fixtures = {
+    "/api/auth/providers": { oidc: { enabled: false } },
+    "/api/auth/users": {
+      users: [
+        {
+          id: "admin-id",
+          username: "admin",
+          role: "admin",
+          provider: "local",
+          disabled: false,
+        },
+      ],
+    },
+    "/api/providers": [
+      {
+        id: "pve-provider",
+        name: "Test Proxmox",
+        kind: "proxmox",
+        baseUrl: "https://pve.example:8006",
+        node: "pve01",
+        defaultStorage: "local-lvm",
+        defaultISO: "local:iso/talos.iso",
+        defaultBridge: "vmbr0",
+      },
+    ],
+    "/api/provision/jobs": [],
+    "/api/jobs": [],
+    "/api/machines": [],
+    "/api/k8s/workloads": {
+      deployments: [],
+      daemonsets: [],
+      statefulsets: [],
+      jobs: [],
+      cronjobs: [],
+    },
+    "/api/k8s/events": { events: [] },
+    "/api/k8s/storage": {
+      persistentVolumes: [],
+      persistentVolumeClaims: [],
+      storageClasses: [],
+    },
+    "/api/backups/targets": {
+      targets: [
+        { id: "local", name: "Local", type: "local", configured: true },
+      ],
+    },
+    "/api/backups/schedule": {
+      enabled: false,
+      intervalHours: 6,
+      retention: 30,
+      targetId: "local",
+    },
+    "/api/diagnostics": {
+      status: "healthy",
+      checkedAt: "2026-09-12T00:00:00Z",
+      checks: [],
+      summary: { critical: 0, warning: 0, info: 0 },
+    },
     "/api/nodes": nodes,
     "/api/cluster": {
       name: "production-eu-01",
@@ -163,6 +220,14 @@ try {
     if (p === "/api/clusters")
       body = { clusters: [{ id: "cluster-a", name: "production-eu-01" }] };
     if (p.endsWith("/history")) body = [];
+    if (p === "/api/provision/plan")
+      body = {
+        id: "provision-plan",
+        spec: req.postDataJSON(),
+        safetyNotes: [],
+      };
+    if (p === "/api/provision" && req.method() === "POST")
+      body = { id: "provision-job", status: "queued" };
     if (p.endsWith("/disks"))
       body = [
         {
@@ -219,7 +284,7 @@ try {
   });
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(String(e)));
-  await page.goto("http://127.0.0.1:5175");
+  await page.goto("http://127.0.0.1:5175/#overview");
   await page.getByRole("button", { name: "Открыть список нод" }).waitFor();
   await page.waitForTimeout(300);
   await page.screenshot({
@@ -271,6 +336,14 @@ try {
     "maintenance",
     "audit",
     "settings",
+    "alerts",
+    "diagnostics",
+    "events",
+    "kube-storage",
+    "machines",
+    "providers",
+    "users",
+    "clusters",
   ]) {
     await page.goto(`http://127.0.0.1:5175/#${id}`);
     await page.waitForTimeout(220);
@@ -292,6 +365,14 @@ try {
     maintenance: "Maintenance",
     audit: "Audit",
     settings: "Settings",
+    alerts: "Notifications",
+    diagnostics: "Diagnostics",
+    events: "Events",
+    "kube-storage": "Volumes",
+    machines: "Machines",
+    providers: "Providers",
+    users: "Access",
+    clusters: "Clusters",
   })) {
     await page.goto(`http://127.0.0.1:5175/#${id}`);
     await page.getByRole("heading", { name: title, exact: true }).waitFor();
@@ -341,9 +422,22 @@ try {
     .getByRole("button", { name: "Добавить worker", exact: true })
     .click();
   await page.getByLabel("Имя", { exact: true }).fill("worker-test");
-  await page.getByRole("button", { name: "Создать машину" }).click();
+  await page.getByLabel("Talos", { exact: true }).fill("1.14.0");
+  await page.getByLabel("Kubernetes", { exact: true }).fill("1.37.0");
+  await page
+    .getByLabel("Installer image", { exact: true })
+    .fill("factory.talos.dev/installer/fixture:v1.14.0");
+  await page
+    .getByRole("button", { name: "Проверить план", exact: true })
+    .click();
+  await page
+    .getByLabel("Введите имя кластера")
+    .fill("production-eu-01");
+  await page
+    .getByRole("button", { name: "Создать через задание", exact: true })
+    .click();
   await page.waitForTimeout(200);
-  assert(mutations.includes("/api/proxmox/worker"));
+  assert(mutations.includes("/api/provision"));
   await page.goto("http://127.0.0.1:5175/#maintenance");
   await page
     .getByRole("button", { name: "Перезагрузить", exact: true })
@@ -351,7 +445,7 @@ try {
   assert(!mutations.some((p) => p.endsWith("/reboot")));
   await page.getByRole("button", { name: "Отмена", exact: true }).click();
   assert(!mutations.some((p) => p.endsWith("/reboot")));
-  await page.goto("http://127.0.0.1:5175/#settings");
+  await page.goto("http://127.0.0.1:5175/#alerts");
   await page.getByRole("button", { name: "Сохранить", exact: true }).click();
   await page.waitForTimeout(100);
   assert(mutations.includes("/api/alerts/config"));
@@ -363,7 +457,7 @@ try {
   await page.keyboard.press("Escape");
   await page.goto("http://127.0.0.1:5175/#etcd");
   await page
-    .getByRole("cell", { name: '["https://10.42.0.110:2380"]', exact: true })
+    .getByRole("cell", { name: 'https://10.42.0.110:2380', exact: true })
     .waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   for (const id of ["overview", "nodes", "workloads", "storage", "settings"]) {
@@ -500,6 +594,7 @@ try {
     0,
   );
   await fleetPage.reload();
+  await fleetPage.waitForFunction(()=>document.querySelector('.cluster-picker select')?.value==='beta');
   assert.equal(
     await fleetPage.getByLabel("Кластер", { exact: true }).inputValue(),
     "beta",
@@ -507,7 +602,9 @@ try {
   await fleetPage.goto("http://127.0.0.1:5175/#config");
   await fleetPage
     .getByLabel("YAML patch", { exact: true })
-    .fill("apiVersion: v1alpha1\nkind: KubeNodeConfig\nlabels:\n  environment: updated");
+    .fill(
+      "apiVersion: v1alpha1\nkind: KubeNodeConfig\nlabels:\n  environment: updated",
+    );
   await fleetPage
     .getByRole("button", { name: "Проверить и сравнить", exact: true })
     .click();
