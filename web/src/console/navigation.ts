@@ -141,6 +141,7 @@ export function navigation() {
       group: t("НАБЛЮДЕНИЕ"),
       description: t("Проверки здоровья и рекомендации по устранению проблем."),
     },
+    { id: "certificates", title: t("Сертификаты"), icon: Shield, group: t("НАБЛЮДЕНИЕ"), description: t("Сроки действия credentials и проверка TLS endpoints.") },
     {
       id: "etcd",
       title: "etcd",

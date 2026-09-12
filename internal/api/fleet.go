@@ -20,6 +20,7 @@ import (
 	"talosdeck/internal/audit"
 	"talosdeck/internal/auth"
 	"talosdeck/internal/backup"
+	"talosdeck/internal/certificates"
 	"talosdeck/internal/clusters"
 	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
@@ -170,11 +171,27 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 			tm.ForgetNode(record.Address, record.Name)
 		}
 	}
-	km, err := k8s.NewK8sManagerFromBytes(creds.Kubeconfig)
+	km, err := k8s.NewK8sManagerFromStoredBytes(creds.Kubeconfig)
 	if err != nil {
 		return nil, err
 	}
 	rt.config.K8s = km
+	certMonitor := &certificateMonitor{inspector: &certificates.Service{
+		Talosconfig: append([]byte(nil), creds.Talosconfig...), Kubeconfig: append([]byte(nil), creds.Kubeconfig...),
+		NodeAddresses: func(ctx context.Context) ([]string, error) {
+			inventoryCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			defer cancel()
+			nodes, err := tm.ListNodes(inventoryCtx)
+			addresses := make([]string, 0, len(nodes))
+			for _, node := range nodes {
+				if node != nil && node.IP != "" {
+					addresses = append(addresses, node.IP)
+				}
+			}
+			return addresses, err
+		},
+	}}
+	rt.config.Certificates = certMonitor
 	dataDir := filepath.Join(f.options.DataDir, "clusters", cluster.ID)
 	backupDir, jobDir, auditPath := filepath.Join(dataDir, "backups"), filepath.Join(dataDir, "jobs"), filepath.Join(dataDir, "audit.log")
 	if cluster.Legacy {
@@ -253,7 +270,7 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 		am.Log(audit.AuditEvent{Action: action, User: user, Status: status, Details: map[string]any{"clusterId": cluster.ID, "provisionId": id}})
 	}}
 	ops.BackupLifecycle = &operations.BackupService{ClusterID: cluster.ID, Store: f.options.Store, Manager: bm, Operations: ops}
-	ops.Diagnostics = &operations.DiagnosticsService{ClusterID: cluster.ID, Store: f.options.Store, Talos: tm, Kubernetes: km, Backups: ops.BackupLifecycle}
+	ops.Diagnostics = &operations.DiagnosticsService{ClusterID: cluster.ID, Store: f.options.Store, Talos: tm, Kubernetes: km, Backups: ops.BackupLifecycle, Certificates: certMonitor}
 	bm.SetMaxBackups(0)
 	rt.config.Operations = ops
 	jm, err := jobs.OpenCluster(jobDir, cluster.ID, ops.Run)
@@ -281,6 +298,8 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	rt.config.DownloadTickets = f.downloadTickets
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancel = cancel
+	rt.wg.Add(1)
+	go func() { defer rt.wg.Done(); certMonitor.run(ctx) }()
 	rt.wg.Add(1)
 	go func() { defer rt.wg.Done(); ops.BackupLifecycle.Scheduler(ctx, jm) }()
 	watcher := alerts.NewWatcher(tm, svc, 30*time.Second)

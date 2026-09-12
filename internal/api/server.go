@@ -33,6 +33,7 @@ import (
 
 // ServerConfig configures the HTTP & WebSocket server.
 type ServerConfig struct {
+	Certificates    CertificateInspector
 	Fleet           *Fleet
 	ClusterName     string
 	Manager         *talos.TalosManager
@@ -132,6 +133,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	api := app.Group("/api")
 	api.Use(jobMutationGuard(cfg.Jobs))
 	RegisterJobRoutes(api, cfg.Jobs, cfg.Operations, authMgr)
+	RegisterCertificateRoutes(api, cfg.Certificates, authMgr)
 	if cfg.Operations != nil && cfg.Operations.Config != nil {
 		RegisterConfigRoutes(api, cfg.Jobs, cfg.Operations.Config, authMgr)
 	}

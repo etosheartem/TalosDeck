@@ -525,6 +525,7 @@ try {
         { ...nodes[0], hostname: "same-node", memoryUsage: `${id}-memory` },
       ];
     }
+    if (suffix === "/certificates") body = {checkedAt:'2026-09-12T00:00:00Z',status:id==='alpha'?'healthy':'unknown',summary:{healthy:id==='alpha'?1:0,warning:0,critical:0,unknown:id==='alpha'?0:1},certificates:[{id:'same-cert',name:'Same API certificate',source:'talos-server',endpoint:`${id}.example:50000`,status:id==='alpha'?'healthy':'unknown',daysRemaining:id==='alpha'?365:undefined,reason:id==='alpha'?'valid':'unavailable',verification:id==='alpha'?'verified':'unavailable',verified:id==='alpha',renewalGuidance:'Inspect endpoint'}]};
     if (suffix === "/cluster") body = { ...fixtures["/api/cluster"], name: id };
     if (suffix.endsWith("/config"))
       body = {
@@ -654,6 +655,15 @@ try {
     await fleetPage.getByText("beta-job", { exact: true }).count(),
     0,
   );
+  await fleetPage.evaluate(()=>location.hash='certificates');
+  await fleetPage.getByRole('cell',{name:'alpha.example:50000',exact:true}).waitFor();
+  await fleetPage.getByLabel('Кластер',{exact:true}).selectOption('beta');
+  await fleetPage.getByRole('cell',{name:'beta.example:50000',exact:true}).waitFor();
+  assert.equal(await fleetPage.getByText('alpha.example:50000',{exact:true}).count(),0);
+  await fleetPage.getByRole('button',{name:'Same API certificate',exact:true}).click();
+  await fleetPage.getByRole('dialog').getByText('Неизвестно',{exact:true}).waitFor();
+  await fleetPage.keyboard.press('Escape');
+  await fleetPage.getByLabel('Кластер',{exact:true}).selectOption('alpha');
   await fleetPage
     .getByRole("button", { name: "Добавить кластер", exact: true })
     .click();

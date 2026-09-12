@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"talosdeck/internal/backup"
+	"talosdeck/internal/certificates"
 	"talosdeck/internal/clusters"
 	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
@@ -39,6 +40,9 @@ type DiagnosticReport struct {
 	Summary   DiagnosticSummary `json:"summary"`
 }
 type DiagnosticsService struct {
+	Certificates interface {
+		Check(context.Context) certificates.Report
+	}
 	ClusterID  string
 	Store      ProvisionStore
 	Talos      *talos.TalosManager
@@ -96,6 +100,27 @@ func (s *DiagnosticsService) Run(ctx context.Context, e *jobs.Execution, _ jobs.
 		}
 	}
 	step := func(name string) error { return e.Checkpoint(ctx, name, "Inspecting "+name) }
+	if s.Certificates != nil {
+		if err := step("certificates"); err != nil {
+			return err
+		}
+		report := s.Certificates.Check(ctx)
+		for _, cert := range report.Certificates {
+			if cert.Status == "healthy" {
+				continue
+			}
+			severity := cert.Status
+			if severity != "critical" {
+				severity = "warning"
+			}
+			details := cert.Reason
+			if cert.Error != "" {
+				details += ": " + cert.Error
+			}
+			add(severity, "certificates", cert.Node, cert.Name, details, cert.RenewalGuidance)
+		}
+	}
+
 	if err := step("talos"); err != nil {
 		return err
 	}

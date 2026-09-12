@@ -44,6 +44,9 @@ import SecurityView from "./SecurityView.vue";
 import ProvidersView from "./ProvidersView.vue";
 import ProvisionView from "./ProvisionView.vue";
 import DiagnosticsView from "./DiagnosticsView.vue";
+import CertificatesView from "./CertificatesView.vue";
+import { certificateStatus, type CertificateReport } from "./certificates";
+const certificates = ref<CertificateReport | null>(null);
 import KubernetesView from "./KubernetesView.vue";
 import MachinesView from "./MachinesView.vue";
 import AuditView from "./AuditView.vue";
@@ -290,6 +293,7 @@ async function refresh() {
     probe("jobs", "/jobs", (v) => (recentJobs.value = list(v).map(job=>({...job,kind:job.request?.kind || job.kind})))),
     probe("backups", "/backups", (v) => (recentBackups.value = list(v))),
     probe("diagnostics", "/diagnostics", (v) => (diagnostics.value = v)),
+    probe("certificates", "/certificates", (v) => (certificates.value = v)),
     probe(
       "etcd",
       "/cluster/etcd",
@@ -403,6 +407,7 @@ watch(selectedCluster, async () => {
   recentJobs.value = [];
   recentBackups.value = [];
   diagnostics.value = null;
+  certificates.value = null;
   etcd.value = null;
   nodeIP.value = "";
   data.value = [];
@@ -970,6 +975,7 @@ const protectedPage = computed(
                 <button v-for="check in (diagnostics?.checks || []).filter((c:any)=>['critical','warning'].includes(c.severity)).slice(0,5)" :key="check.id" class="issue-row" @click="navigate('diagnostics')"><AlertTriangle :size="16"/><span>{{ check.title }}<small>{{ check.node || check.component }}</small></span></button>
               </section>
             </div>
+            <section class="surface"><header class="surface-heading"><h2>{{ t('Сертификаты') }}</h2><button @click="navigate('certificates')">{{ t('Проверить сроки') }}</button></header><p class="notice">{{ errors.certificates || !certificates?.certificates?.length ? t('Неизвестно') : certificateStatus(certificates.status) }} · {{ t('Требует внимания') }}: {{ certificates?.summary ? certificates.summary.critical + certificates.summary.warning : '—' }} · {{ t('Неизвестно') }}: {{ certificates?.summary?.unknown ?? '—' }}</p></section>
             <section class="surface cluster-facts">
               <div>
                 <span>API endpoint</span
@@ -1099,6 +1105,7 @@ const protectedPage = computed(
             @add="dialog = 'create-worker'"
             @submitted="active === 'fleet-machines' ? (showGlobalJobs=true,navigate('clusters')) : navigate('jobs')"
           />
+          <CertificatesView v-else-if="active === 'certificates'" :key="selectedCluster" />
           <DiagnosticsView
             v-else-if="active === 'diagnostics'"
             :key="selectedCluster"

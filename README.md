@@ -28,6 +28,8 @@ TalosDeck — панель управления Talos Linux и Kubernetes. Go-б
 - Диагностика здоровья и очищенный support bundle.
 - Локальные пользователи, OIDC/Keycloak, роли Viewer/Operator/Administrator,
   отзыв сессий, аудит действий и Telegram-уведомления.
+- Мониторинг сертификатов Talos/Kubernetes: сроки credentials, CA и API endpoints,
+  предупреждения за 30/14/7 дней и отдельное состояние неполной проверки.
 - Русский и английский интерфейс.
 
 Фоновые обновления используют штатный `talosctl`, включённый в Docker-образ.
@@ -45,6 +47,7 @@ TalosDeck на отдельной машине или в management-класте
 - [Пользователи, роли и OIDC](docs/authentication.md).
 - [Proxmox и создание кластеров](docs/provisioning.md).
 - [Резервные копии и восстановление](docs/backups.md).
+- [Сроки сертификатов и обновление credentials](docs/certificates.md).
 - [Объём поставки и ограничения](docs/release-notes.md).
 
 ## Первое подключение

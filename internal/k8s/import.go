@@ -17,6 +17,10 @@ import (
 // NormalizeConfig accepts only self-contained credentials. Uploaded kubeconfigs
 // must never execute programs or read arbitrary files on the management server.
 func NormalizeConfig(data []byte) ([]byte, error) {
+	return normalizeConfig(data, true)
+}
+
+func normalizeConfig(data []byte, requireCurrent bool) ([]byte, error) {
 	cfg, err := clientcmd.Load(data)
 	if err != nil || cfg.CurrentContext == "" {
 		return nil, fmt.Errorf("kubeconfig: invalid YAML or missing current-context")
@@ -62,7 +66,7 @@ func NormalizeConfig(data []byte) ([]byte, error) {
 				return nil, fmt.Errorf("kubeconfig: invalid embedded client certificate/key pair")
 			}
 			cert, err := x509.ParseCertificate(pair.Certificate[0])
-			if err != nil || time.Now().Before(cert.NotBefore) || time.Now().After(cert.NotAfter) {
+			if err != nil || (requireCurrent && (time.Now().Before(cert.NotBefore) || !time.Now().Before(cert.NotAfter))) {
 				return nil, fmt.Errorf("kubeconfig: client certificate expired or not yet valid")
 			}
 		}
@@ -75,7 +79,18 @@ func NormalizeConfig(data []byte) ([]byte, error) {
 
 // NewK8sManagerFromBytes never falls back to environment or in-cluster auth.
 func NewK8sManagerFromBytes(data []byte) (*K8sManager, error) {
-	normalized, err := NormalizeConfig(data)
+	return newK8sManagerFromBytes(data, true)
+}
+
+// NewK8sManagerFromStoredBytes preserves access to monitoring when previously
+// imported credentials expire. All structural restrictions and TLS verification
+// remain enforced; remote APIs still reject expired client certificates.
+func NewK8sManagerFromStoredBytes(data []byte) (*K8sManager, error) {
+	return newK8sManagerFromBytes(data, false)
+}
+
+func newK8sManagerFromBytes(data []byte, requireCurrent bool) (*K8sManager, error) {
+	normalized, err := normalizeConfig(data, requireCurrent)
 	if err != nil {
 		return nil, err
 	}

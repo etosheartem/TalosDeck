@@ -115,3 +115,46 @@ func TestNormalizeConfigDropsOtherContextsAndNeverFallsBack(t *testing.T) {
 		}
 	}
 }
+
+func TestStoredExpiredCredentialsRemainInspectableButCannotBeImported(t *testing.T) {
+	cfg := importFixture(t)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: time.Now().Add(-48 * time.Hour), NotAfter: time.Now().Add(-time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := cfg.AuthInfos["selected"]
+	user.Token = ""
+	user.ClientCertificateData = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	user.ClientKeyData = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	raw, err := clientcmd.Write(*cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = NewK8sManagerFromBytes(raw); err == nil {
+		t.Fatal("new import accepted expired credentials")
+	}
+	stored, err := NewK8sManagerFromStoredBytes(raw)
+	if err != nil {
+		t.Fatalf("expired stored credentials prevent monitoring: %v", err)
+	}
+	if stored.credentialConfig.Insecure {
+		t.Fatal("expired credentials disabled TLS verification")
+	}
+	user.Exec = &clientcmdapi.ExecConfig{Command: "must-not-run"}
+	raw, err = clientcmd.Write(*cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = NewK8sManagerFromStoredBytes(raw); err == nil {
+		t.Fatal("stored credentials bypassed exec protection")
+	}
+}
