@@ -34,23 +34,24 @@ import (
 
 // ServerConfig configures the HTTP & WebSocket server.
 type ServerConfig struct {
-	Health          HealthSnapshotProvider
-	AlertCenter     *alertcenter.Center
-	Certificates    CertificateInspector
-	Fleet           *Fleet
-	ClusterName     string
-	Manager         *talos.TalosManager
-	K8s             *k8s.K8sManager
-	Backup          *backup.BackupManager
-	AlertService    *alerts.TelegramService
-	AlertWatcher    *alerts.Watcher
-	Proxmox         *proxmox.Client
-	Audit           *audit.AuditManager
-	Auth            *auth.AuthManager
-	DownloadTickets *DownloadTickets
-	Jobs            *jobs.Manager
-	Operations      *operations.Service
-	Port            string
+	RecoverySafeMode bool
+	Health           HealthSnapshotProvider
+	AlertCenter      *alertcenter.Center
+	Certificates     CertificateInspector
+	Fleet            *Fleet
+	ClusterName      string
+	Manager          *talos.TalosManager
+	K8s              *k8s.K8sManager
+	Backup           *backup.BackupManager
+	AlertService     *alerts.TelegramService
+	AlertWatcher     *alerts.Watcher
+	Proxmox          *proxmox.Client
+	Audit            *audit.AuditManager
+	Auth             *auth.AuthManager
+	DownloadTickets  *DownloadTickets
+	Jobs             *jobs.Manager
+	Operations       *operations.Service
+	Port             string
 }
 
 // SetupServer initializes the Fiber app with routes and middlewares.
@@ -125,6 +126,12 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 			cfg.DownloadTickets = NewDownloadTickets(authMgr)
 		}
 	}
+	safeMode := cfg.RecoverySafeMode || (cfg.Fleet != nil && cfg.Fleet.recoverySafeMode)
+	app.Use(recoveryGuard(safeMode))
+	app.Get("/api/recovery/status", func(c *fiber.Ctx) error {
+		c.Set("Cache-Control", "no-store")
+		return c.JSON(fiber.Map{"safeMode": safeMode, "requiresReview": safeMode, "automaticResume": false})
+	})
 	app.Use(cfg.DownloadTickets.Authenticate)
 	app.Use(auditMutationGuard(auditMgr, authMgr, cfg.Fleet != nil))
 	RegisterSecurityRoutes(app, authMgr, auditMgr)

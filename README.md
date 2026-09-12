@@ -57,6 +57,7 @@ TalosDeck на отдельной машине или в management-класте
 - [Образы Talos, schematics и extensions](docs/images.md).
 - [Шаблоны и создание кластеров по ревизии](docs/templates.md).
 - [Резервные копии и восстановление](docs/backups.md).
+- [Off-host backup и безопасное восстановление TalosDeck](docs/management-recovery.md).
 - [Сроки сертификатов и обновление credentials](docs/certificates.md).
 - [Алерты, каналы и доставка уведомлений](docs/notifications.md).
 - [Оценка здоровья и покрытие проверок](docs/health.md).

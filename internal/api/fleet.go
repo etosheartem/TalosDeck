@@ -50,6 +50,7 @@ type clusterRuntime struct {
 // Fleet owns a complete set of clients, caches and journals per cluster. Runtime
 // handlers are published atomically; Fiber's live route tables are never mutated.
 type Fleet struct {
+	recoverySafeMode bool
 	options          FleetOptions
 	mu               sync.RWMutex
 	importMu         sync.Mutex
@@ -76,7 +77,11 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 	if opts.LegacyJobsDir == "" {
 		opts.LegacyJobsDir = filepath.Join(opts.DataDir, "jobs")
 	}
-	f := &Fleet{options: opts, runtimes: make(map[string]*clusterRuntime)}
+	safeMode, err := RecoveryRequired(opts.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	f := &Fleet{options: opts, runtimes: make(map[string]*clusterRuntime), recoverySafeMode: safeMode}
 	f.downloadTickets = NewDownloadTickets(opts.Auth)
 	f.images = imagefactory.NewClient()
 	templateService, err := templates.Open(context.Background(), opts.Store)
@@ -99,9 +104,11 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 			opts.Audit.Log(audit.AuditEvent{Action: "job." + j.Request.Kind, User: j.User, Status: j.Status, Details: map[string]any{"jobId": j.ID, "scope": "fleet"}})
 		})
 	}
-	if err := globalOps.Provision.ReconcileInterrupted(context.Background()); err != nil {
-		f.Close()
-		return nil, err
+	if !safeMode {
+		if err := globalOps.Provision.ReconcileInterrupted(context.Background()); err != nil {
+			f.Close()
+			return nil, err
+		}
 	}
 	list, err := opts.Store.List(context.Background())
 	if err != nil {
@@ -157,6 +164,7 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 		return nil, err
 	}
 	rt := &clusterRuntime{credentialsDir: dir}
+	rt.config.RecoverySafeMode = f.recoverySafeMode
 	defer func() {
 		if resultErr != nil {
 			rt.close()
@@ -302,8 +310,10 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 		return nil, err
 	}
 	rt.config.Jobs = jm
-	if err := ops.Provision.ReconcileInterrupted(context.Background()); err != nil {
-		return nil, err
+	if !f.recoverySafeMode {
+		if err := ops.Provision.ReconcileInterrupted(context.Background()); err != nil {
+			return nil, err
+		}
 	}
 	jm.SetCompletionHandler(func(job jobs.Job) {
 		am.Log(audit.AuditEvent{Action: "job." + job.Request.Kind, User: job.User, Status: job.Status, Details: map[string]any{"jobId": job.ID}})
@@ -314,56 +324,60 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	rt.config.DownloadTickets = f.downloadTickets
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancel = cancel
-	rt.wg.Add(1)
-	go func() { defer rt.wg.Done(); certMonitor.run(ctx) }()
-	rt.wg.Add(1)
-	go func() { defer rt.wg.Done(); ops.BackupLifecycle.Scheduler(ctx, jm) }()
-	monitor := &alertMonitor{center: center, talos: tm, kubernetes: km, certificates: certMonitor, backups: ops.BackupLifecycle, jobs: jm, store: f.options.Store, clusterID: cluster.ID}
-	rt.wg.Add(2)
-	go func() { defer rt.wg.Done(); center.Run(ctx) }()
-	go func() { defer rt.wg.Done(); monitor.run(ctx) }()
-	rt.wg.Add(1)
-	go func() { defer rt.wg.Done(); healthState.run(ctx) }()
+	if !f.recoverySafeMode {
+		rt.wg.Add(1)
+		go func() { defer rt.wg.Done(); certMonitor.run(ctx) }()
+		rt.wg.Add(1)
+		go func() { defer rt.wg.Done(); ops.BackupLifecycle.Scheduler(ctx, jm) }()
+		monitor := &alertMonitor{center: center, talos: tm, kubernetes: km, certificates: certMonitor, backups: ops.BackupLifecycle, jobs: jm, store: f.options.Store, clusterID: cluster.ID}
+		rt.wg.Add(2)
+		go func() { defer rt.wg.Done(); center.Run(ctx) }()
+		go func() { defer rt.wg.Done(); monitor.run(ctx) }()
+		rt.wg.Add(1)
+		go func() { defer rt.wg.Done(); healthState.run(ctx) }()
+	}
 	app := SetupServer(rt.config)
 	rt.handler = app.Handler()
 
-	rt.wg.Add(1)
-	go func() {
-		defer rt.wg.Done()
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		// Wait until an import is committed before observing its metadata.
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				check, cancel := context.WithTimeout(ctx, 20*time.Second)
-				info, err := tm.GetClusterInfo(check)
-				record, e := f.options.Store.Get(check, cluster.ID)
-				if e == nil {
-					record.Health = "unknown"
-					if err == nil && info != nil {
-						record.TalosVersion = info.TalosVersion
-						record.Health = "degraded"
-						version, knodes, kerr := km.UpgradeInventory(check)
-						khealthy := kerr == nil && len(knodes) == info.TotalNodes
-						for _, node := range knodes {
-							khealthy = khealthy && node.Ready
+	if !f.recoverySafeMode {
+		rt.wg.Add(1)
+		go func() {
+			defer rt.wg.Done()
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			// Wait until an import is committed before observing its metadata.
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					check, cancel := context.WithTimeout(ctx, 20*time.Second)
+					info, err := tm.GetClusterInfo(check)
+					record, e := f.options.Store.Get(check, cluster.ID)
+					if e == nil {
+						record.Health = "unknown"
+						if err == nil && info != nil {
+							record.TalosVersion = info.TalosVersion
+							record.Health = "degraded"
+							version, knodes, kerr := km.UpgradeInventory(check)
+							khealthy := kerr == nil && len(knodes) == info.TotalNodes
+							for _, node := range knodes {
+								khealthy = khealthy && node.Ready
+							}
+							if kerr == nil {
+								record.KubernetesVersion = version
+							}
+							if info.Healthy && khealthy {
+								record.Health = "healthy"
+							}
 						}
-						if kerr == nil {
-							record.KubernetesVersion = version
-						}
-						if info.Healthy && khealthy {
-							record.Health = "healthy"
-						}
+						_ = f.options.Store.Update(check, record)
 					}
-					_ = f.options.Store.Update(check, record)
+					cancel()
 				}
-				cancel()
 			}
-		}
-	}()
+		}()
+	}
 	return rt, nil
 }
 
@@ -505,6 +519,9 @@ func inspectImportedCluster(ctx context.Context, tm importTalosInspector, km imp
 }
 
 func (f *Fleet) Import(ctx context.Context, req ImportClusterRequest) (clusters.Cluster, error) {
+	if f.recoverySafeMode {
+		return clusters.Cluster{}, errors.New("restored management plane requires recovery review")
+	}
 	f.importMu.Lock()
 	defer f.importMu.Unlock()
 	f.mu.RLock()

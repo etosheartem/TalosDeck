@@ -27,6 +27,12 @@ func env(name, fallback string) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "recovery" {
+		if err := recoveryCommand(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	home, _ := os.UserHomeDir()
 	configPath := flag.String("talosconfig", env("TALOSCONFIG", filepath.Join(home, ".talos", "config")), "Legacy talosconfig to import on first startup (optional)")
 	kubeconfigPath := flag.String("kubeconfig", "", "Legacy kubeconfig (empty: KUBECONFIG or Talos-issued credentials)")
@@ -66,21 +72,29 @@ func main() {
 			extraNodes = append(extraNodes, node)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	err = api.MigrateLegacy(ctx, store, *configPath, *kubeconfigPath, extraNodes)
-	cancel()
+	safeMode, err := api.RecoveryRequired(*dataDir)
 	if err != nil {
-		log.Fatalf("Single-cluster migration could not finish: %v", err)
+		log.Fatal(err)
+	}
+	if !safeMode {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err = api.MigrateLegacy(ctx, store, *configPath, *kubeconfigPath, extraNodes)
+		cancel()
+		if err != nil {
+			log.Fatalf("Single-cluster migration could not finish: %v", err)
+		}
 	}
 	authMgr, err := auth.NewPersistentAuthManager(store, os.Getenv("TALOSDECK_ADMIN_PASSWORD"), os.Getenv("TALOSDECK_JWT_SECRET"))
 	if err != nil {
 		log.Fatalf("Cannot initialize persistent authentication: %v", err)
 	}
-	oidcCtx, oidcCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	if err := authMgr.ConfigureOIDCFromEnv(oidcCtx); err != nil {
-		log.Printf("OIDC unavailable: %v; local administrator authentication remains available", err)
+	if !safeMode {
+		oidcCtx, oidcCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := authMgr.ConfigureOIDCFromEnv(oidcCtx); err != nil {
+			log.Printf("OIDC unavailable: %v; local administrator authentication remains available", err)
+		}
+		oidcCancel()
 	}
-	oidcCancel()
 	globalAudit, err := audit.NewAuditManager(filepath.Join(*dataDir, "global-audit.log"), 1000)
 	if err != nil {
 		log.Fatalf("Cannot open global audit: %v", err)

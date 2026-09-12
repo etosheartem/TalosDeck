@@ -1,0 +1,19 @@
+[Unit]
+Description=Validate TalosDeck off-host recovery archive in isolation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=talosdeck-drill
+Group=talosdeck-drill
+UMask=0077
+ExecStart=/usr/local/bin/talosdeck recovery drill --key /etc/talosdeck-drill/master.key --target /etc/talosdeck-drill/target.json --receipt /etc/talosdeck-drill/latest-receipt.json
+TimeoutStartSec=35min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/talosdeck-drill
+StandardOutput=journal
+StandardError=journal
