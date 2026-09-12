@@ -629,6 +629,10 @@ func (f *Fleet) register(app *fiber.App) {
 				if err := f.authenticate(c); err != nil {
 					return err
 				}
+				if c.Method() != fiber.MethodGet && c.Method() != fiber.MethodHead {
+					c.Set(fiber.HeaderAllow, "GET, HEAD")
+					return fiber.ErrMethodNotAllowed
+				}
 				cluster, err := f.options.Store.Get(c.UserContext(), id)
 				if err != nil {
 					return fiber.ErrNotFound

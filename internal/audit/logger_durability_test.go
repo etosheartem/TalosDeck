@@ -128,3 +128,40 @@ func TestRecordNormalizesTypedDetailsBeforeDurableWrite(t *testing.T) {
 		t.Fatal("healthy journal reported failure")
 	}
 }
+
+func TestRepeatedStringSecretsAreRedactedDurably(t *testing.T) {
+	for _, input := range []string{
+		"Bearer alpha Bearer beta; bearer gamma",
+		"İ журнал TOKEN=alpha TOKEN=beta",
+		"token=alpha&token=beta;TOKEN=gamma",
+		"password=alpha, password=beta secret=gamma secret=delta",
+		"token= token=alpha token=",
+		"Bearer ***MASKED*** Bearer alpha",
+	} {
+		t.Run(input, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "audit.log")
+			m, err := NewAuditManager(path, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = m.Record(AuditEvent{Action: "test", Details: map[string]any{"message": input, "nested": []string{input}}}); err != nil {
+				t.Fatal(err)
+			}
+			if err = m.Close(); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{"alpha", "beta", "gamma", "delta"} {
+				if strings.Contains(string(data), secret) {
+					t.Fatalf("secret %s persisted in audit", secret)
+				}
+			}
+			if got := sanitizeStringValue(sanitizeStringValue(input)); got != sanitizeStringValue(input) {
+				t.Fatal("redaction is not idempotent")
+			}
+		})
+	}
+}

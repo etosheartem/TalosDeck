@@ -41,4 +41,9 @@ for external in (False, True):
     else:
         assert len([d for d in docs if d["kind"] == "PersistentVolumeClaim"]) == 2
 
+for options, expected in (([], ""), (["--set-json", 'trustedProxies=["192.0.2.10","198.51.100.0/24"]'], "192.0.2.10,198.51.100.0/24")):
+    deployment = next(d for d in render(*options) if d["kind"] == "Deployment")
+    environment = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert environment["TALOSDECK_TRUSTED_PROXIES"]["value"] == expected
+
 print("Helm runtime and credential-isolation checks passed")

@@ -847,9 +847,6 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 				}
 			}
 			if token == "" {
-				token = strings.TrimSpace(c.Query("token"))
-			}
-			if token == "" {
 				proto := c.Get("Sec-WebSocket-Protocol")
 				if proto != "" {
 					parts := strings.Split(proto, ",")

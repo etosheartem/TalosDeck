@@ -330,18 +330,35 @@ func isSensitiveKey(key string) bool {
 }
 
 func sanitizeStringValue(val string) string {
-	lower := strings.ToLower(val)
-	patterns := []string{"bearer ", "token=", "password=", "secret="}
-	for _, p := range patterns {
-		if idx := strings.Index(lower, p); idx != -1 {
-			end := strings.IndexAny(val[idx+len(p):], " \t\r\n,;\"'")
-			if end == -1 {
-				val = val[:idx+len(p)] + "***MASKED***"
-			} else {
-				val = val[:idx+len(p)] + "***MASKED***" + val[idx+len(p)+end:]
+	for _, pattern := range []string{"bearer ", "token=", "password=", "secret="} {
+		// Scan immutable input and advance beyond each match, including empty
+		// values. Never search replacement text: that would match forever.
+		lower := strings.Map(func(r rune) rune {
+			if r >= 'A' && r <= 'Z' {
+				return r + ('a' - 'A')
 			}
-			lower = strings.ToLower(val)
+			return r
+		}, val)
+		var out strings.Builder
+		offset := 0
+		for {
+			relative := strings.Index(lower[offset:], pattern)
+			if relative < 0 {
+				out.WriteString(val[offset:])
+				break
+			}
+			start := offset + relative + len(pattern)
+			end := strings.IndexAny(val[start:], " \t\r\n,;\"'&")
+			if end < 0 {
+				end = len(val)
+			} else {
+				end += start
+			}
+			out.WriteString(val[offset:start])
+			out.WriteString("***MASKED***")
+			offset = end
 		}
+		val = out.String()
 	}
 	return val
 }

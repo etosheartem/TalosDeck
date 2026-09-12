@@ -54,6 +54,8 @@ spec:
               value: ":8080"
             - name: TALOSDECK_RUNTIME_DIR
               value: /run/talosdeck
+            - name: TALOSDECK_TRUSTED_PROXIES
+              value: {{ join "," .Values.trustedProxies | quote }}
             - name: TALOSDECK_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:

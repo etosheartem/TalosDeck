@@ -97,6 +97,8 @@ An optional `bootstrap.existingSecret` may contain both `talosconfig` and `kubec
 
 OIDC chart settings live under `oidc`: `enabled`, `issuer`, `clientID`, `redirectURL`, `name`, `groupsClaim`, `groupRoles`. The client secret comes from `auth.existingSecret`; passwords and client secrets must not be committed in Helm values or GitOps manifests.
 
+For HTTPS terminated by a reverse proxy, configure its actual peer IPs/CIDRs in Helm `trustedProxies` or Compose `TALOSDECK_TRUSTED_PROXIES` (comma-separated). This allows TalosDeck to recognize forwarded HTTPS for `Secure` download cookies and record the forwarded client IP. The default list is empty; loopback peers are trusted. Use only the addresses of your proxy, and configure it to overwrite incoming `X-Forwarded-Proto` and client-IP headers.
+
 For encryption-key rotation, stop the application first and follow the database/key procedure in [operations](operations.md). A read-only Secret cannot be replaced by the running process: rotate using a writable private copy, update the external Secret, then restart with the matching database and updated keyring.
 
 ## API reference

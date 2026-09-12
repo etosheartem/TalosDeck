@@ -190,6 +190,11 @@ func TestFleetDispatchIsolatesIdenticalNodesJobsAndMutations(t *testing.T) {
 	}
 	f.fleet.legacyID = ids[0]
 	for _, id := range ids {
+		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+			if code, _ := fleetRequest(t, f.app, method, "/api/clusters/"+id, f.token, nil); code != 405 {
+				t.Fatalf("unsupported cluster mutation must not appear successful: %s %d", method, code)
+			}
+		}
 		for _, suffix := range []string{"nodes/10.0.0.1", "jobs/shared-job", "jobs/shared-job/export", "config/10.0.0.1/history", "backups/same-backup/download", "audit?node=same-node"} {
 			code, raw := fleetRequest(t, f.app, "GET", "/api/clusters/"+id+"/"+suffix, f.token, nil)
 			var result map[string]string
@@ -289,6 +294,13 @@ func TestFleetWebSocketDispatchAndRealChildAuthentication(t *testing.T) {
 	}
 	if err == nil || res == nil || res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("anonymous websocket bypass: response=%v err=%v", res, err)
+	}
+	conn, res, err = wsclient.DefaultDialer.Dial(path+"?token="+f.token, nil)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if err == nil || res == nil || res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("valid query token bypassed websocket authentication: status/error %v %v", res, err)
 	}
 	dialer := wsclient.Dialer{Subprotocols: []string{f.token}, HandshakeTimeout: 3 * time.Second}
 	conn, res, err = dialer.Dial(path, nil)

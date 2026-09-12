@@ -3,6 +3,8 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 imagePullSecrets: []
+# Actual reverse-proxy peer IPs/CIDRs allowed to forward HTTPS/client-IP headers.
+trustedProxies: []
 nameOverride: ""
 fullnameOverride: ""
 auth:
