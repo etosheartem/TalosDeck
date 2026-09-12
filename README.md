@@ -97,6 +97,10 @@ bun run test:ui
 `/usr/bin/chromium`) и подменённые ответы API. Он не выполняет обновления
 реального кластера.
 
+Live-тесты backup запускаются только при явном задании
+`TALOSDECK_TEST_TALOSCONFIG` и `TALOSDECK_TEST_NODE`. Обычный `go test ./...`
+не ищет credentials разработчика и не создаёт снимки его кластера.
+
 ## Структура
 
 ```text

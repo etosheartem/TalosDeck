@@ -157,7 +157,6 @@ func NewClientFromEnv() *Client {
 			"./proxmox.token",
 			"proxmox.token",
 			"/etc/talosdeck/proxmox.token",
-			"/home/artem/laba-kuber/cluster-config/proxmox.token",
 		)
 		for _, p := range tokenPaths {
 			if content, err := os.ReadFile(p); err == nil {

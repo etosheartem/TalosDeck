@@ -411,10 +411,10 @@ func TestHealthAndReadinessProbes(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// 2. Live cluster test if talosconfig exists
-	configPath := "/home/artem/laba-kuber/cluster-config/talosconfig"
-	if _, err := os.Stat(configPath); err == nil {
-		mgr, err := talos.NewTalosManager(configPath, "10.42.0.110")
+	// Live access is opt-in, even when a developer has local credentials.
+	configPath, node := os.Getenv("TALOSDECK_TEST_TALOSCONFIG"), os.Getenv("TALOSDECK_TEST_NODE")
+	if configPath != "" && node != "" {
+		mgr, err := talos.NewTalosManager(configPath, node)
 		if err == nil {
 			defer mgr.Close()
 			appLive := SetupServer(ServerConfig{

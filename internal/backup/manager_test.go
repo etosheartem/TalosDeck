@@ -119,12 +119,12 @@ func TestBackupManagerBasicOperations(t *testing.T) {
 }
 
 func TestLiveClusterBackups(t *testing.T) {
-	configPath := "/home/artem/laba-kuber/cluster-config/talosconfig"
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		t.Skip("talosconfig not found, skipping live cluster test")
+	configPath, node := os.Getenv("TALOSDECK_TEST_TALOSCONFIG"), os.Getenv("TALOSDECK_TEST_NODE")
+	if configPath == "" || node == "" {
+		t.Skip("set TALOSDECK_TEST_TALOSCONFIG and TALOSDECK_TEST_NODE to opt into live backups")
 	}
 
-	mgr, err := talos.NewTalosManager(configPath, "10.42.0.110", "10.42.0.111", "10.42.0.112")
+	mgr, err := talos.NewTalosManager(configPath, node)
 	if err != nil {
 		t.Skipf("failed to connect to Talos cluster: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestLiveClusterBackups(t *testing.T) {
 
 	// Test 1: Etcd snapshot
 	t.Log("Testing live etcd snapshot...")
-	etcdInfo, err := bm.CreateEtcdSnapshot(ctx, "10.42.0.110")
+	etcdInfo, err := bm.CreateEtcdSnapshot(ctx, node)
 	if err != nil {
 		t.Fatalf("CreateEtcdSnapshot failed: %v", err)
 	}

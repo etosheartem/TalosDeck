@@ -165,11 +165,11 @@ func TestBackupAPIEndpoints(t *testing.T) {
 }
 
 func TestBackupAPILiveCreation(t *testing.T) {
-	configPath := "/home/artem/laba-kuber/cluster-config/talosconfig"
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		t.Skip("talosconfig not found, skipping live API test")
+	configPath, node := os.Getenv("TALOSDECK_TEST_TALOSCONFIG"), os.Getenv("TALOSDECK_TEST_NODE")
+	if configPath == "" || node == "" {
+		t.Skip("set TALOSDECK_TEST_TALOSCONFIG and TALOSDECK_TEST_NODE to opt into live backups")
 	}
-	mgr, err := talos.NewTalosManager(configPath, "10.42.0.110")
+	mgr, err := talos.NewTalosManager(configPath, node)
 	if err != nil {
 		t.Skipf("failed to connect to Talos cluster: %v", err)
 	}
@@ -189,7 +189,8 @@ func TestBackupAPILiveCreation(t *testing.T) {
 	}
 
 	// Trigger full cluster backup creation via POST /api/backups/create
-	reqBody := bytes.NewBufferString(`{"type": "etcd", "node": "10.42.0.110"}`)
+	encoded, _ := json.Marshal(map[string]string{"type": "etcd", "node": node})
+	reqBody := bytes.NewBuffer(encoded)
 	req := httptest.NewRequest(http.MethodPost, "/api/backups/create", reqBody)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
