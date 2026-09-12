@@ -64,6 +64,35 @@ func (k *replacementTestKube) VerifyStaleNodeAbsent(context.Context, string, str
 	return nil
 }
 
+// Drain removes this workload from the node's current inventory. Completion
+// must still verify its original controller after a crash and refreshed preview.
+type replacementDrainedWorkload struct {
+	*replacementTestKube
+	drained  bool
+	verified k8s.ReplacementImpactReport
+}
+
+func (k *replacementDrainedWorkload) ReplacementImpact(ctx context.Context, name, uid string) (k8s.ReplacementImpactReport, error) {
+	r, err := k.replacementTestKube.ReplacementImpact(ctx, name, uid)
+	if err == nil && !k.drained {
+		r.Pods = []k8s.ReplacementPodImpact{{Namespace: "test", Name: "proof", UID: "original-pod", ControllerKind: "ReplicaSet", ControllerName: "proof", ControllerUID: "original-controller"}}
+	}
+	return r, err
+}
+
+func (k *replacementDrainedWorkload) CordonAndDrainReplacement(ctx context.Context, name, uid string, ack bool) error {
+	if err := k.replacementTestKube.CordonAndDrainReplacement(ctx, name, uid, ack); err != nil {
+		return err
+	}
+	k.drained = true
+	return nil
+}
+
+func (k *replacementDrainedWorkload) VerifyReplacementWorkloads(_ context.Context, impact k8s.ReplacementImpactReport, _ string) error {
+	k.verified = impact
+	return nil
+}
+
 type replacementTestProvider struct {
 	failCreateProvider
 	calls   *[]string
@@ -269,7 +298,9 @@ func TestReplacementUnknownImpactAndStaleApprovalBlock(t *testing.T) {
 	}
 }
 func TestReplacementResumeObservesConfiguredChildWithoutDuplicate(t *testing.T) {
-	s, _, _, spec, calls := replacementFixture(t, "reachable")
+	s, baseKube, _, spec, calls := replacementFixture(t, "reachable")
+	kube := &replacementDrainedWorkload{replacementTestKube: baseKube}
+	s.replacementKube = kube
 	create := s.replacementChildRun
 	s.replacementChildRun = func(ctx context.Context, e *jobs.Execution, r jobs.Request) error {
 		if err := create(ctx, e, r); err != nil {
@@ -296,6 +327,9 @@ func TestReplacementResumeObservesConfiguredChildWithoutDuplicate(t *testing.T) 
 	if next.ID == p.ID || next.PreviousPlanID != p.ID {
 		t.Fatal("resume reused original approval identity")
 	}
+	if len(next.Impact.Pods) != 0 {
+		t.Fatal("fixture did not remove the drained workload from refreshed inventory")
+	}
 	if e = m.Acknowledge(j.ID, "admin"); e != nil {
 		t.Fatal(e)
 	}
@@ -306,6 +340,9 @@ func TestReplacementResumeObservesConfiguredChildWithoutDuplicate(t *testing.T) 
 	result := replacementRun(t, m, r)
 	if result.Status != "succeeded" {
 		t.Fatalf("resume %+v", result)
+	}
+	if len(kube.verified.Pods) != 1 || kube.verified.Pods[0].ControllerUID != "original-controller" {
+		t.Fatal("resume completion forgot the drained workload's original controller")
 	}
 	creates := 0
 	for _, call := range *calls {

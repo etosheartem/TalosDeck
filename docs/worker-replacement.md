@@ -50,3 +50,34 @@ All routes require an explicitly selected cluster and administrator authorizatio
 - `POST /api/clusters/:cluster/replacements/:id/resume-plan`
 
 Approval includes the plan ID, old node name, impact hash, and explicit storage acknowledgement. Clients cannot submit provider evidence or substitute a different machine during continuation.
+
+
+## Lab acceptance — 2026-09-13
+
+The supported Proxmox workflow was exercised against Talos 1.14.0 and Kubernetes
+1.37.0 using dedicated, TalosDeck-owned test workers:
+
+- **Unavailable worker (C2):** stopped worker became NotReady; the workflow destroyed
+  its owned VM, proved fencing, removed the pinned Node UID and brought its replacement
+  to Ready. Affected DaemonSets passed readiness verification.
+- **Crash and continuation (final C4):** TalosDeck was killed with SIGKILL after
+  ApplyConfig, before the replacement Node's Kubernetes creation timestamp. Restart
+  retained an interrupted job; observation and explicit review preceded a new approval
+  ID. Continuation used the same VMID and machine UUID without another create, boot or
+  ApplyConfig. The original approval and duplicate submission were rejected.
+- **Workloads across drain:** a stateless ReplicaSet initially ran on the old worker.
+  Its pod moved to another worker during drain and disappeared from the refreshed
+  node impact. Offline inspection of the encrypted durable plans proved that
+  `OriginalImpact` remained unchanged in both the original and completed continuation.
+  Completion verified that original controller UID, its new Ready pod and the DaemonSets.
+- **Provider outage at execution preflight:** the Proxmox transport was disconnected
+  after planning. The plan required review without entering drain, fencing or VM creation;
+  owned inventory remained unchanged. Restoring the transport did not resume the job;
+  an explicitly confirmed new plan was needed.
+
+The provider-outage run does not prove every mid-delete or in-flight failure window.
+This lab exercised stateless workloads, not PVC data restoration or application data
+consistency. Unit/race checks cover additional identity, storage and fencing failures;
+these do not substitute for the separate authority-failure acceptance of TD-31.
+All temporary workers and the workload namespace were removed afterwards; the three
+original cluster nodes remained Ready.
