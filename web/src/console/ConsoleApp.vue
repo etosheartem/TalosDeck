@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { actionFeedback, actionName, actionState, jobFocus } from "./actionFeedback";
 import { t, locale, setLocale } from "./i18n";
 import { recoveryState, recoveryAutomationPaused } from "./recovery";
 
@@ -25,7 +26,6 @@ import {
   currentUser,
   downloadBackup,
   deleteBackup,
-  rebootNode,
   runBootstrapCheck,
   TOKEN_STORAGE_KEY,
 } from "../api";
@@ -196,6 +196,7 @@ const confirmation = ref<{
   title: string;
   description: string;
   run: () => Promise<unknown>;
+  message: string;
 } | null>(null);
 let toastTimer: ReturnType<typeof setTimeout>;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -261,6 +262,8 @@ const nodeColumns = computed(() => [
   { key: "version", title: "Talos", mono: true },
   { key: "uptime", title: t("Время работы"), mono: true },
 ]);
+watch(actionFeedback, value => { if (value) toast.value=""; });
+watch(isAuthenticated, value => { if (!value) { actionFeedback.value=null; jobFocus.value=""; } });
 function notify(message: string) {
   toast.value = message;
   clearTimeout(toastTimer);
@@ -268,7 +271,7 @@ function notify(message: string) {
 }
 async function perform(
   run: () => Promise<unknown>,
-  message = t("Операция выполнена"),
+  message: string,
 ) {
   if (busy.value) return;
   const epoch = clusterEpoch();
@@ -287,13 +290,13 @@ async function perform(
     busy.value = false;
   }
 }
-function ask(title: string, description: string, run: () => Promise<unknown>) {
+function ask(title: string, description: string, run: () => Promise<unknown>, message: string) {
   actionError.value = "";
-  confirmation.value = { title, description, run };
+  confirmation.value = { title, description, run, message: `${clusters.value.find(c => c.id === selectedCluster.value)?.name || selectedCluster.value} · ${message}` };
 }
 async function confirm() {
   const c = confirmation.value;
-  if (c && (await perform(c.run))) {
+  if (c && (await perform(c.run, c.message))) {
     confirmation.value = null;
     await loadSection();
   }
@@ -1319,6 +1322,7 @@ const protectedPage = computed(
                             post(`/nodes/${nodeIP}/maintenance`, {
                               enable: true,
                             }),
+                          t('Запрос на включение обслуживания принят: {0}', [nodeIP]),
                         )
                       "
                     >
@@ -1333,6 +1337,7 @@ const protectedPage = computed(
                             post(`/nodes/${nodeIP}/maintenance`, {
                               enable: false,
                             }),
+                          t('Запрос на выключение обслуживания принят: {0}', [nodeIP]),
                         )
                       "
                     >
@@ -1359,7 +1364,8 @@ const protectedPage = computed(
                       ask(
                         t('Перезагрузить ноду'),
                         t('Подтвердите перезагрузку {0}.', [nodeIP]),
-                        () => rebootNode(nodeIP),
+                        () => post(`/nodes/${encodeURIComponent(nodeIP)}/reboot`),
+                        t('Перезагрузка запрошена: {0}. Готовность ноды ещё не подтверждена.', [nodeIP]),
                       )
                     "
                   >
@@ -1410,6 +1416,13 @@ const protectedPage = computed(
         <span>TalosDeck</span
         ><span>Talos Linux / Kubernetes</span>
       </footer>
+    </div>
+    <div v-if="actionFeedback && isAuthenticated && (actionFeedback.global || actionFeedback.clusterId === selectedCluster)" class="notice" role="status" style="position:fixed;bottom:16px;right:16px;z-index:100;max-width:min(560px,90vw)">
+      <small>{{ t('Последний подтверждённый статус задания') }}</small><br />
+      <strong>{{ actionName(actionFeedback.kind) }} · {{ actionState(actionFeedback.status) }}</strong>
+      <p>{{ actionFeedback.global ? t('Платформа') : clusters.find(c => c.id === actionFeedback?.clusterId)?.name || actionFeedback.clusterId }}<span v-if="actionFeedback.node"> · {{ actionFeedback.node }}</span></p>
+      <button @click="jobFocus=actionFeedback.id; actionFeedback.global ? (showGlobalJobs=true,navigate('clusters')) : navigate('jobs')">{{ t('Открыть задание') }} · {{ actionFeedback.id }}</button>
+      <button :aria-label="t('Закрыть')" @click="actionFeedback=null">×</button>
     </div>
     <div v-if="toast" class="toast" role="status">
       <CheckCircle2 :size="18" />{{ toast
@@ -1573,7 +1586,7 @@ const protectedPage = computed(
         ><div class="toolbar">
           <button
             :disabled="busy"
-            @click="perform(() => downloadBackup(detail), t('Файл скачан'))"
+            @click="perform(() => downloadBackup(detail), t('Скачивание файла передано браузеру'))"
           >
             {{ t("Скачать") }}</button
           ><button
@@ -1587,6 +1600,7 @@ const protectedPage = computed(
                   await deleteBackup(detail.id);
                   detail = null;
                 },
+                t('Резервная копия удалена: {0}', [detail.filename]),
               )
             "
           >

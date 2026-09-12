@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { actionName, jobFocus } from "./actionFeedback";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RefreshCw, Play, Square, Download } from "lucide-vue-next";
 import { request as apiRequest, download } from "./client";
@@ -76,7 +77,8 @@ const error = ref("");
 const pollError = ref("");
 const jobList = ref<Job[]>([]);
 const selected = ref<Job | null>(null);
-const selectedID = ref("");
+const selectedID = ref(jobFocus.value);
+watch(jobFocus, id => { if (id && jobList.value.some(job => job.id === id)) void select(id); });
 // Observation does not grant mutation rights and remains available after restore.
 const canReviewReadOnly = computed(() => {
  if (!isAuthenticated.value || !selected.value) return false;
@@ -104,22 +106,7 @@ const locked = computed(() =>
       (j.status === "interrupted" && !j.reviewed),
   ),
 );
-const title = (value: string) =>
-  ({
-    "talos-upgrade": t("Обновление Talos"),
-    "kubernetes-upgrade": t("Обновление Kubernetes"),
-    "rolling-reboot": t("Последовательная перезагрузка"),
-    "config-apply": t("Изменить конфигурацию"),
-    "config-restore": t("Восстановить конфигурацию"),
-    "cluster-create": t('Создать кластер'),
-    "worker-replace": t("Замена worker"),
-    "worker-create": t('Добавить worker'),
-    "worker-delete": t('Удалить машину'),
-    "machine-cleanup": t('Очистить ресурсы'),
-    "backup-create": t('Создать копию'),
-    "backup-restore": t('Восстановить резервную копию'),
-    "diagnostics": t('Диагностика'),
-  })[value] || value;
+const title = actionName;
 async function exportLog() {
   if (!selected.value || busy.value) return;
   const id = selected.value.id;

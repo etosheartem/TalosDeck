@@ -1,3 +1,4 @@
+import { observeJobResponse } from './actionFeedback';
 import { t } from "./i18n";
 import { scopeURL, trackRequest, clusterEpoch } from "../clusterScope";
 import {
@@ -49,7 +50,18 @@ export async function request<T = any>(
           : data?.error ||
               t("Запрос завершился с ошибкой {0}", [response.status]),
       );
+    const jobEndpoint = /\/jobs(?:\/|$)/.test(path);
+    if (response.status === 202 || jobEndpoint) {
+      const clusterId = clusterScoped ? decodeURIComponent(url.split('/')[3]!) : '';
+      observeJobResponse(data, response.status === 202, clusterId, !clusterScoped);
+    }
     return data as T;
+  } catch (error) {
+    if (init.method && !['GET', 'HEAD'].includes(init.method.toUpperCase()) &&
+        (error instanceof TypeError || (error instanceof DOMException && error.name === 'AbortError'))) {
+      throw new Error(t('Ответ на запрос не получен. Результат неизвестен; проверьте задания и состояние цели перед повтором.'));
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
     release();
