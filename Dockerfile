@@ -18,7 +18,17 @@ RUN bun run build
 FROM golang:1.27-alpine AS backend-builder
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates git
+ARG TARGETARCH
+ARG TALOSCTL_VERSION=v1.14.0
+RUN apk add --no-cache ca-certificates git wget \
+    && case "${TARGETARCH}" in \
+         amd64) TALOSCTL_SHA256=2c147c4a99d124c95bd5c190fe054e0b3c93495f2243fd652ebd423adb8377c7 ;; \
+         arm64) TALOSCTL_SHA256=19615e1d0eb222de86ec2f1487e7d6e74f5171a9038e73aeacde8cc647e3d9e0 ;; \
+         *) echo "Unsupported target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+       esac \
+    && wget -q -O /app/talosctl "https://github.com/siderolabs/talos/releases/download/${TALOSCTL_VERSION}/talosctl-linux-${TARGETARCH}" \
+    && echo "${TALOSCTL_SHA256}  /app/talosctl" | sha256sum -c - \
+    && chmod 0755 /app/talosctl
 
 # Cache Go modules
 COPY go.mod go.sum ./
@@ -54,6 +64,7 @@ WORKDIR /app
 
 # Copy compiled binary from builder
 COPY --from=backend-builder --chown=talosdeck:talosdeck /app/talosdeck /app/talosdeck
+COPY --from=backend-builder --chown=talosdeck:talosdeck /app/talosctl /usr/local/bin/talosctl
 
 # Expose HTTP port
 EXPOSE 8080
