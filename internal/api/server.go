@@ -19,6 +19,7 @@ import (
 	"github.com/gofiber/websocket/v2"
 	"sigs.k8s.io/yaml"
 
+	"talosdeck/internal/alertcenter"
 	"talosdeck/internal/alerts"
 	"talosdeck/internal/audit"
 	"talosdeck/internal/auth"
@@ -33,6 +34,7 @@ import (
 
 // ServerConfig configures the HTTP & WebSocket server.
 type ServerConfig struct {
+	AlertCenter     *alertcenter.Center
 	Certificates    CertificateInspector
 	Fleet           *Fleet
 	ClusterName     string
@@ -376,7 +378,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 
 	watcher := cfg.AlertWatcher
 	ownsWatcher := false
-	if watcher == nil && manager != nil {
+	if watcher == nil && manager != nil && cfg.AlertCenter == nil {
 		watcher = alerts.NewWatcher(manager, alertSvc, 30*time.Second)
 		watcher.Start(context.Background())
 		ownsWatcher = true
@@ -388,7 +390,11 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 		})
 	}
 
-	RegisterAlertRoutes(api, alertSvc, watcher, authMgr, auditMgr)
+	if cfg.AlertCenter != nil {
+		RegisterAlertCenterRoutes(api, cfg.AlertCenter, authMgr, auditMgr)
+	} else {
+		RegisterAlertRoutes(api, alertSvc, watcher, authMgr, auditMgr)
+	}
 
 	proxmoxClient := cfg.Proxmox
 	if proxmoxClient == nil {

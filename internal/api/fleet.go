@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
 
+	"talosdeck/internal/alertcenter"
 	"talosdeck/internal/alerts"
 	"talosdeck/internal/audit"
 	"talosdeck/internal/auth"
@@ -261,6 +262,15 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	})
 	svc.SetClusterLabel(cluster.Name)
 	rt.config.AlertService = svc
+	center, err := alertcenter.Open(context.Background(), f.options.Store, cluster.ID, alertcenter.NewTransport())
+	if err != nil {
+		return nil, err
+	}
+	if err = center.ImportLegacyTelegram(context.Background(), providers.Telegram.BotToken, providers.Telegram.ChatID, strings.ToLower(providers.Telegram.MinLevel), providers.Telegram.Enabled); err != nil {
+		return nil, err
+	}
+	rt.config.AlertCenter = center
+
 	ops := &operations.Service{Talos: tm, Kubernetes: km, Backups: bm, CLI: operations.CLI{Path: os.Getenv("TALOSDECK_TALOSCTL")}}
 	ops.ClusterName = cluster.Name
 	ops.Config = &operations.ConfigService{ClusterID: cluster.ID, Store: f.options.Store, NodeClient: tm, Audit: func(action, user, node, status, revision string) {
@@ -283,17 +293,9 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	}
 	jm.SetCompletionHandler(func(job jobs.Job) {
 		am.Log(audit.AuditEvent{Action: "job." + job.Request.Kind, User: job.User, Status: job.Status, Details: map[string]any{"jobId": job.ID}})
-		if !svc.IsEnabled() {
-			return
-		}
-		level := alerts.LevelInfo
-		if job.Status != "succeeded" {
-			level = alerts.LevelWarning
-		}
-		notifyCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
-		defer stop()
-		_ = svc.SendAlertWithContext(notifyCtx, level, "Operation "+job.Status, "Job "+job.ID+" ("+job.Request.Kind+")")
+		observeJob(center, job)
 	})
+
 	rt.config.Auth = f.options.Auth
 	rt.config.DownloadTickets = f.downloadTickets
 	ctx, cancel := context.WithCancel(context.Background())
@@ -302,11 +304,13 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 	go func() { defer rt.wg.Done(); certMonitor.run(ctx) }()
 	rt.wg.Add(1)
 	go func() { defer rt.wg.Done(); ops.BackupLifecycle.Scheduler(ctx, jm) }()
-	watcher := alerts.NewWatcher(tm, svc, 30*time.Second)
-	rt.config.AlertWatcher = watcher
+	monitor := &alertMonitor{center: center, talos: tm, kubernetes: km, certificates: certMonitor, backups: ops.BackupLifecycle, jobs: jm, store: f.options.Store, clusterID: cluster.ID}
+	rt.wg.Add(2)
+	go func() { defer rt.wg.Done(); center.Run(ctx) }()
+	go func() { defer rt.wg.Done(); monitor.run(ctx) }()
 	app := SetupServer(rt.config)
 	rt.handler = app.Handler()
-	watcher.Start(ctx)
+
 	rt.wg.Add(1)
 	go func() {
 		defer rt.wg.Done()

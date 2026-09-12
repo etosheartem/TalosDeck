@@ -8,6 +8,10 @@ type NodeOverview struct {
 	Ready             bool             `json:"ready"`
 	Role              string           `json:"role"` // "controlplane" or "worker"
 	Uptime            string           `json:"uptime,omitempty"`
+	CPUUsageKnown     bool             `json:"cpuUsageKnown"`
+	MemoryUsageKnown  bool             `json:"memoryUsageKnown"`
+	MemoryUsedBytes   uint64           `json:"memoryUsedBytes,omitempty"`
+	MemoryTotalBytes  uint64           `json:"memoryTotalBytes,omitempty"`
 	CPUUsage          int              `json:"cpuUsage,omitempty"`
 	MemoryUsage       string           `json:"memoryUsage,omitempty"`
 	KubernetesVersion string           `json:"kubernetesVersion,omitempty"`

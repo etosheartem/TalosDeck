@@ -176,6 +176,9 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 				totalGB := float64(totalBytes) / (1024 * 1024 * 1024)
 				usedGB := float64(usedBytes) / (1024 * 1024 * 1024)
 				overview.MemoryUsage = fmt.Sprintf("%.1f / %.1f GB", usedGB, totalGB)
+				overview.MemoryUsageKnown = true
+				overview.MemoryUsedBytes = usedBytes
+				overview.MemoryTotalBytes = totalBytes
 			}
 		}
 	}
@@ -194,6 +197,7 @@ func (m *TalosManager) GetNodeStatus(ctx context.Context, nodeIP string) (*NodeO
 			// CPUStat contains counters accumulated since boot. Calculate usage from
 			// the delta between dashboard polls instead of reporting a lifetime average.
 			overview.CPUUsage = m.calculateCPUUsage(nodeIP, busy, total)
+			overview.CPUUsageKnown = true
 		}
 	}
 

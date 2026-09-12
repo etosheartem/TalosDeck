@@ -137,6 +137,7 @@ export function navigation() {
         "Безопасное обслуживание и последовательная перезагрузка нод.",
       ),
     },
+    {id:'alert-center',title:t('Оповещения'),icon:Bell,group:t('НАБЛЮДЕНИЕ'),description:t('Активные и устранённые проблемы, приостановки и доставка.')},
     {
       id: "diagnostics",
       title: t("Диагностика"),
@@ -166,7 +167,7 @@ export function navigation() {
       hidden: true,
       title: t("Уведомления"),
       icon: Bell,
-      group: t("НАБЛЮДЕНИЕ"),
+      group: t("НАСТРОЙКИ КЛАСТЕРА"),
       description: t("Условия оповещений и каналы доставки для кластера."),
     },
     {id:'cluster-settings',title:t('Настройки кластера'),icon:Settings,group:t('НАСТРОЙКИ КЛАСТЕРА'),description:t('Подключение, MachineConfig и уведомления.')},

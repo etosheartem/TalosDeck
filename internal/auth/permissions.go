@@ -34,6 +34,12 @@ func Can(role, method, path string) bool {
 	if strings.Contains(path, "/download") && (strings.Contains(path, "/backups") || strings.Contains(path, "/support")) {
 		return false
 	}
+	if strings.HasPrefix(path, "/api/notifications/") {
+		return (method == "GET" || method == "HEAD") && (path == "/api/notifications/status" || (role == "operator" && path == "/api/notifications/deliveries"))
+	}
+	if role == "operator" && (path == "/api/alerts/silences" && method == "POST" || strings.HasPrefix(path, "/api/alerts/silences/") && method == "DELETE") {
+		return true
+	}
 	if method == "GET" || method == "HEAD" {
 		for _, prefix := range []string{"/api/clusters", "/api/cluster", "/api/nodes", "/api/k8s", "/api/storage", "/api/backups", "/api/audit", "/api/jobs", "/api/alerts", "/api/diagnostics", "/api/certificates", "/api/health", "/api/events", "/api/network", "/ws/nodes", "/api/auth/me", "/api/auth/providers"} {
 			if path == prefix || strings.HasPrefix(path, prefix+"/") {

@@ -47,6 +47,10 @@ import DiagnosticsView from "./DiagnosticsView.vue";
 import CertificatesView from "./CertificatesView.vue";
 import CommandPalette, { type Command } from "./CommandPalette.vue";
 import SettingsHub from "./SettingsHub.vue";
+import AlertCenter from "./AlertCenter.vue";
+import NotificationSettings from "./NotificationSettings.vue";
+import { notificationTime, notificationLabel, type AlertSnapshot } from "./notifications";
+const notificationStatus = ref<Pick<AlertSnapshot, 'health'|'lastCheckAt'|'summary'> | null>(null);
 import { certificateStatus, type CertificateReport } from "./certificates";
 const certificates = ref<CertificateReport | null>(null);
 import KubernetesView from "./KubernetesView.vue";
@@ -155,8 +159,8 @@ const toast = ref("");
 const logoutWarning = ref('');
 async function signOut() {
  const result = await logout();
- config.value=''; data.value=[]; alerts.value=null; paletteOpen.value=false;
- inspected.value=null;detail.value=null;confirmation.value=null;dialog.value='';importForm.value={name:'',talosconfig:'',kubeconfig:''};token.value='';password.value='';workloadFocus.value=null;
+ config.value=''; data.value=[];  paletteOpen.value=false;
+ inspected.value=null;detail.value=null;confirmation.value=null;dialog.value='';importForm.value={name:'',talosconfig:'',kubeconfig:''};password.value='';workloadFocus.value=null;
  logoutWarning.value=result.revoked?'':t('Локальный выход выполнен, но отзыв сеанса на сервере не подтверждён. При восстановлении связи отзовите сеансы через администратора.');
  if(result.revoked) notify(t('Вы вышли'));
 }
@@ -190,11 +194,6 @@ let toastTimer: ReturnType<typeof setTimeout>;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let disposed = false;
 let generation = 0;
-const alerts = ref<any>(null);
-const enabled = ref(false);
-const chat = ref("");
-const token = ref("");
-const level = ref("WARNING");
 const checks = ref<any[]>([]);
 const operationKind = ref<
   "talos-upgrade" | "kubernetes-upgrade" | "rolling-reboot"
@@ -325,6 +324,7 @@ async function refresh() {
     probe("backups", "/backups", (v) => (recentBackups.value = list(v))),
     probe("diagnostics", "/diagnostics", (v) => (diagnostics.value = v)),
     probe("certificates", "/certificates", (v) => (certificates.value = v)),
+    probe("notifications", "/notifications/status", (v) => (notificationStatus.value = v)),
     probe(
       "etcd",
       "/cluster/etcd",
@@ -388,15 +388,6 @@ async function loadSection() {
       if (id === generation) config.value = r.configYaml || r.yaml || "";
     }
 
-    if (section === "alerts" && isAdmin.value) {
-      const a = await request("/alerts/config");
-      if (id === generation) {
-        alerts.value = a;
-        enabled.value = a.enabled;
-        chat.value = a.chat_id || a.chatID || "";
-        level.value = a.min_level || a.minLevel || "WARNING";
-      }
-    }
     if (id === generation && result) data.value = list(result);
   } catch (e) {
     if (id === generation)
@@ -439,6 +430,7 @@ watch(selectedCluster, async () => {
   recentBackups.value = [];
   diagnostics.value = null;
   certificates.value = null;
+  notificationStatus.value=null;
   workloadFocus.value=null; paletteOpen.value=false;
   etcd.value = null;
   nodeIP.value = "";
@@ -449,10 +441,6 @@ watch(selectedCluster, async () => {
   confirmation.value = null;
   dialog.value = "";
   checks.value = [];
-  alerts.value = null;
-  token.value = "";
-  chat.value = "";
-  enabled.value = false;
   importForm.value = { name: "", talosconfig: "", kubeconfig: "" };
   role.value = "all";
   actionError.value = "";
@@ -468,8 +456,7 @@ watch(isAuthenticated, (authorized) => {
     generation++;
     config.value = "";
     data.value = [];
-    alerts.value = null;
-    detail.value = null;
+      detail.value = null;
     inspected.value = null;
     sectionLoading.value = false;
     selectCluster("");
@@ -525,21 +512,6 @@ async function signIn() {
     await refresh();
     await loadSection();
   }
-}
-async function saveAlerts() {
-  await perform(
-    () =>
-      post("/alerts/config", {
-        enabled: enabled.value,
-        min_level: level.value,
-        ...(chat.value && !chat.value.includes("*")
-          ? { chat_id: chat.value }
-          : {}),
-        ...(token.value ? { bot_token: token.value } : {}),
-      }),
-    t("Настройки сохранены"),
-  );
-  token.value = "";
 }
 function rollingReboot() {
   operationKind.value = "rolling-reboot";
@@ -1004,6 +976,7 @@ const protectedPage = computed(
                 <button v-for="check in (diagnostics?.checks || []).filter((c:any)=>['critical','warning'].includes(c.severity)).slice(0,5)" :key="check.id" class="issue-row" @click="navigate('diagnostics')"><AlertTriangle :size="16"/><span>{{ check.title }}<small>{{ check.node || check.component }}</small></span></button>
               </section>
             </div>
+            <section class="surface"><header class="surface-heading"><h2>{{ t('Оповещения') }}</h2><button @click="navigate('alert-center')">{{ t('Центр оповещений') }}</button></header><p class="notice">{{ errors.notifications||!notificationStatus?.summary||!notificationStatus.lastCheckAt||notificationStatus.lastCheckAt.startsWith('0001-') ? t('Неизвестно'):notificationLabel(notificationStatus.health) }} · {{ t('Активно') }}: {{ notificationStatus?.summary?.active??'—' }} · {{ t('Критические') }}: {{ notificationStatus?.summary?.critical??'—' }} · {{ t('Устарело') }}: {{ notificationStatus?.summary?.stale??'—' }}</p><p class="footnote">{{ t('Последняя проверка') }}: {{ notificationTime(notificationStatus?.lastCheckAt) }}</p></section>
             <section class="surface"><header class="surface-heading"><h2>{{ t('Сертификаты') }}</h2><button @click="navigate('certificates')">{{ t('Проверить сроки') }}</button></header><p class="notice">{{ errors.certificates || !certificates?.certificates?.length ? t('Неизвестно') : certificateStatus(certificates.status) }} · {{ t('Требует внимания') }}: {{ certificates?.summary ? certificates.summary.critical + certificates.summary.warning : '—' }} · {{ t('Неизвестно') }}: {{ certificates?.summary?.unknown ?? '—' }}</p></section>
             <section class="surface cluster-facts">
               <div>
@@ -1142,6 +1115,8 @@ const protectedPage = computed(
             @add="dialog = 'create-worker'"
             @submitted="active === 'fleet-machines' ? (showGlobalJobs=true,navigate('clusters')) : navigate('jobs')"
           />
+          <AlertCenter v-else-if="active==='alert-center'" :key="selectedCluster" @node="inspectRelatedNode($event)" @logs="inspectRelatedNode($event,true)" />
+          <NotificationSettings v-else-if="active==='alerts'" :key="selectedCluster" />
           <SettingsHub v-else-if="['platform-settings','cluster-settings'].includes(active)" :global="active==='platform-settings'" @navigate="navigate" />
           <CertificatesView v-else-if="active === 'certificates'" :key="selectedCluster" />
           <DiagnosticsView
@@ -1396,62 +1371,6 @@ const protectedPage = computed(
                 ]"
                 @select="detail = $event"
             /></template>
-            <template v-else-if="active === 'alerts'"
-              ><div class="settings-grid">
-                <section class="surface">
-                  <header class="surface-heading">
-                    <h2>Telegram</h2>
-                    <span class="state muted">{{
-                      alerts?.bot_configured ? t("Настроен") : t("Не настроен")
-                    }}</span>
-                  </header>
-                  <form class="settings-form" @submit.prevent="saveAlerts">
-                    <label class="check-label"
-                      ><input v-model="enabled" type="checkbox" />
-                      {{ t("Отправлять уведомления") }} </label
-                    ><label
-                      >Bot token<input
-                        v-model="token"
-                        type="password"
-                        autocomplete="new-password"
-                        :placeholder="
-                          t('Оставьте пустым, чтобы сохранить текущий')
-                        " /></label
-                    ><label
-                      >Chat ID<input
-                        v-model="chat"
-                        :placeholder="t('Например, -1001234567890')" /></label
-                    ><label>
-                      {{ t("Минимальный уровень") }}
-                      <select v-model="level">
-                        <option>INFO</option>
-                        <option>WARNING</option>
-                        <option>CRITICAL</option>
-                      </select></label
-                    >
-                    <div class="toolbar">
-                      <button
-                        class="primary"
-                        :disabled="busy || !!errors.section"
-                      >
-                        {{ t("Сохранить") }}</button
-                      ><button
-                        type="button"
-                        :disabled="busy"
-                        @click="
-                          perform(
-                            () => post('/alerts/test', {}),
-                            t('Тестовое уведомление отправлено'),
-                          )
-                        "
-                      >
-                        {{ t("Отправить тест") }}
-                      </button>
-                    </div>
-                  </form>
-                </section>
-              </div></template
-            >
           </template>
           <div
             v-if="actionError && !dialog && !confirmation && !detail"

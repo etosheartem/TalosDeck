@@ -446,9 +446,11 @@ try {
   await page.getByRole("button", { name: "Отмена", exact: true }).click();
   assert(!mutations.some((p) => p.endsWith("/reboot")));
   await page.goto("http://127.0.0.1:5175/#alerts");
-  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await page.getByRole("button", {name:"Добавить канал",exact:true}).click();
+  const channelDialog=page.getByRole('dialog');await channelDialog.getByLabel('Имя',{exact:true}).fill('Telegram');await channelDialog.getByLabel('Bot token',{exact:true}).fill('fixture-token');await channelDialog.getByLabel('Chat ID',{exact:true}).fill('123');
+  await channelDialog.getByRole("button", { name: "Сохранить", exact: true }).click();
   await page.waitForTimeout(100);
-  assert(mutations.includes("/api/alerts/config"));
+  assert(mutations.includes("/api/notifications/channels"));
   await page.goto("http://127.0.0.1:5175/#storage");
   await page.getByRole("button", { name: "/dev/sda", exact: true }).click();
   await page
@@ -527,6 +529,7 @@ try {
         { ...nodes[0], hostname: "same-node", memoryUsage: `${id}-memory` },
       ];
     }
+    if (suffix === "/alerts") body={alerts:[{id:'same-alert',clusterId:id,ruleId:'node-not-ready',resourceId:'same-node',node:'same-node',component:'node',severity:'warning',state:'active',title:'Same alert',details:`${id}-alert-detail`,firstSeen:'2026-09-12T00:00:00Z',lastSeen:'2026-09-12T00:00:00Z',occurrences:1,observation:'known'}],summary:{active:1,critical:0,warning:1,silenced:0,stale:0},health:'degraded',lastCheckAt:'2026-09-12T00:00:00Z',total:1,nextOffset:null};
     if (suffix === "/certificates") body = {checkedAt:'2026-09-12T00:00:00Z',status:id==='alpha'?'healthy':'unknown',summary:{healthy:id==='alpha'?1:0,warning:0,critical:0,unknown:id==='alpha'?0:1},certificates:[{id:'same-cert',name:'Same API certificate',source:'talos-server',endpoint:`${id}.example:50000`,status:id==='alpha'?'healthy':'unknown',daysRemaining:id==='alpha'?365:undefined,reason:id==='alpha'?'valid':'unavailable',verification:id==='alpha'?'verified':'unavailable',verified:id==='alpha',renewalGuidance:'Inspect endpoint'}]};
     if (suffix === "/cluster") body = { ...fixtures["/api/cluster"], name: id };
     if (suffix.endsWith("/config"))
@@ -657,6 +660,7 @@ try {
     await fleetPage.getByText("beta-job", { exact: true }).count(),
     0,
   );
+  await fleetPage.evaluate(()=>location.hash='alert-center');await fleetPage.getByRole('button',{name:'Same alert',exact:true}).click();await fleetPage.getByText('alpha-alert-detail',{exact:true}).waitFor();await fleetPage.keyboard.press('Escape');await fleetPage.getByLabel('Кластер',{exact:true}).selectOption('beta');await fleetPage.getByRole('button',{name:'Same alert',exact:true}).click();await fleetPage.getByText('beta-alert-detail',{exact:true}).waitFor();assert.equal(await fleetPage.getByText('alpha-alert-detail',{exact:true}).count(),0);await fleetPage.keyboard.press('Escape');await fleetPage.getByLabel('Кластер',{exact:true}).selectOption('alpha');
   await fleetPage.evaluate(()=>location.hash='certificates');
   await fleetPage.getByRole('cell',{name:'alpha.example:50000',exact:true}).waitFor();
   await fleetPage.getByLabel('Кластер',{exact:true}).selectOption('beta');
