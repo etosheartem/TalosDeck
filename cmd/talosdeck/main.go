@@ -72,7 +72,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("Single-cluster migration could not finish: %v", err)
 	}
-	authMgr := auth.NewAuthManagerFromEnv()
+	authMgr, err := auth.NewPersistentAuthManager(store, os.Getenv("TALOSDECK_ADMIN_PASSWORD"), os.Getenv("TALOSDECK_JWT_SECRET"))
+	if err != nil {
+		log.Fatalf("Cannot initialize persistent authentication: %v", err)
+	}
+	oidcCtx, oidcCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := authMgr.ConfigureOIDCFromEnv(oidcCtx); err != nil {
+		log.Printf("OIDC unavailable: %v; local administrator authentication remains available", err)
+	}
+	oidcCancel()
 	globalAudit, err := audit.NewAuditManager(filepath.Join(*dataDir, "global-audit.log"), 1000)
 	if err != nil {
 		log.Fatalf("Cannot open global audit: %v", err)
@@ -93,7 +101,7 @@ func main() {
 		fleet.Close()
 	}()
 	addr := *port
-	if !strings.HasPrefix(addr, ":") {
+	if !strings.Contains(addr, ":") {
 		addr = ":" + addr
 	}
 	log.Printf("TalosDeck listening on %s", addr)

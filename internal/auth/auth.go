@@ -35,6 +35,8 @@ var (
 type Claims struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	UserID   string `json:"uid,omitempty"`
+	Version  uint64 `json:"version,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -46,6 +48,10 @@ type AuthManager struct {
 	leeway        time.Duration
 	revokedMu     sync.RWMutex
 	revokedTokens map[string]time.Time // key: JTI or token string, value: expiration time
+	usersMu       sync.RWMutex
+	store         SecretStore
+	state         *persistentState
+	oidc          *OIDC
 }
 
 // NewAuthManager initializes an AuthManager with given password and secret.
@@ -53,7 +59,7 @@ type AuthManager struct {
 func NewAuthManager(adminPassword, jwtSecret string) *AuthManager {
 	if adminPassword == "" {
 		adminPassword = RandomString(16)
-		log.Printf("[SECURITY WARNING] No admin password configured. Generated ephemeral admin password: %s", adminPassword)
+		log.Printf("[SECURITY] No admin password configured; ephemeral credentials are not logged. Configure TALOSDECK_ADMIN_PASSWORD.")
 	}
 	if jwtSecret == "" {
 		jwtSecret = RandomString(32)
@@ -76,7 +82,7 @@ func NewAuthManagerFromEnv() *AuthManager {
 	if adminPassword == "" {
 		envPasswordOnce.Do(func() {
 			cachedEnvPassword = RandomString(16)
-			log.Printf("[SECURITY WARNING] No TALOSDECK_ADMIN_PASSWORD set. Generated process-wide ephemeral admin password: %s", cachedEnvPassword)
+			log.Printf("[SECURITY] No TALOSDECK_ADMIN_PASSWORD set; configure credentials explicitly.")
 		})
 		adminPassword = cachedEnvPassword
 	}
@@ -106,6 +112,10 @@ func (a *AuthManager) SetLeeway(d time.Duration) {
 // VerifyPassword checks if the provided password matches the configured admin password in constant time (SEC-03).
 // Supports both bcrypt hashed passwords and constant-time string comparison.
 func (a *AuthManager) VerifyPassword(password string) bool {
+	if a.Persistent() {
+		_, err := a.verifyLocal("admin", password)
+		return err == nil
+	}
 	if password == "" || a.adminPassword == "" {
 		return false
 	}
@@ -137,6 +147,17 @@ func (a *AuthManager) GenerateToken(username, role string) (string, error) {
 			Subject:   username,
 		},
 	}
+	if a.Persistent() {
+		a.usersMu.RLock()
+		user := a.findUsernameLocked(username)
+		if user == nil || user.Disabled || user.Role != role {
+			a.usersMu.RUnlock()
+			return "", ErrInvalidCredentials
+		}
+		claims.UserID = user.ID
+		claims.Version = user.Version
+		a.usersMu.RUnlock()
+	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(a.jwtSecret)
@@ -156,6 +177,8 @@ func (a *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 
 	parseOpts := []jwt.ParserOption{
 		jwt.WithIssuer("TalosDeck"),
+		jwt.WithValidMethods([]string{"HS256"}),
+		jwt.WithExpirationRequired(),
 	}
 	if a.leeway > 0 {
 		parseOpts = append(parseOpts, jwt.WithLeeway(a.leeway))
@@ -202,6 +225,16 @@ func (a *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 	if isRevoked {
 		return nil, ErrInvalidToken
 	}
+	if a.Persistent() {
+		a.usersMu.RLock()
+		user := a.state.Users[claims.UserID]
+		revoked := a.state.Revoked[claims.ID]
+		valid := user != nil && !user.Disabled && user.Username == claims.Username && user.Role == claims.Role && user.Version == claims.Version && claims.ID != "" && revoked.IsZero()
+		a.usersMu.RUnlock()
+		if !valid {
+			return nil, ErrInvalidToken
+		}
+	}
 
 	return claims, nil
 }
@@ -216,6 +249,9 @@ func (a *AuthManager) RevokeToken(tokenString string) error {
 	claims, err := a.ValidateToken(tokenString)
 	if err != nil {
 		return err
+	}
+	if a.Persistent() {
+		return a.changeState(func(state *persistentState) error { state.Revoked[claims.ID] = claims.ExpiresAt.Time; return nil })
 	}
 
 	expiry := time.Now().Add(a.tokenTTL)
@@ -280,6 +316,9 @@ func RequireAuth(authMgr *AuthManager) fiber.Handler {
 		c.Locals("user", claims.Username)
 		c.Locals("role", claims.Role)
 		c.Locals("claims", claims)
+		if !Can(claims.Role, c.Method(), c.Path()) {
+			return fiber.ErrForbidden
+		}
 
 		return c.Next()
 	}

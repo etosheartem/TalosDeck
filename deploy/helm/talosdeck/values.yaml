@@ -1,0 +1,51 @@
+image:
+  repository: ghcr.io/etosheartem/talosdeck
+  tag: latest
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+auth:
+  # Create this Secret separately. Never commit passwords in Helm values.
+  existingSecret: talosdeck-auth
+bootstrap:
+  # Optional Secret containing BOTH talosconfig and kubeconfig.
+  existingSecret: ""
+encryption:
+  # Optional Secret containing master.key (the JSON keyring, not a password).
+  # If omitted, a separate PVC stores the generated keyring.
+  existingSecret: ""
+  existingClaim: ""
+  size: 64Mi
+  storageClass: ""
+persistence:
+  existingClaim: ""
+  size: 10Gi
+  storageClass: ""
+oidc:
+  enabled: false
+  issuer: ""
+  clientID: ""
+  redirectURL: ""
+  name: Single sign-on
+  groupsClaim: groups
+  groupRoles: {}
+service:
+  type: ClusterIP
+  port: 8080
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tlsSecret: ""
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+nodeSelector: {}
+tolerations: []
+affinity: {}

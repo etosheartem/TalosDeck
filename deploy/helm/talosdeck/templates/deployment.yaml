@@ -1,0 +1,154 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "talosdeck.fullname" . }}
+  labels:
+    {{- include "talosdeck.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "talosdeck.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "talosdeck.selectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: talosdeck
+          image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --data=/app/data
+            - --encryption-key=/app/keys/master.key
+            - --talosconfig=/etc/talosdeck/bootstrap/talosconfig
+            {{- if .Values.bootstrap.existingSecret }}
+            - --kubeconfig=/etc/talosdeck/bootstrap/kubeconfig
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: ":8080"
+            - name: TALOSDECK_RUNTIME_DIR
+              value: /run/talosdeck
+            - name: TALOSDECK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "auth.existingSecret is required" .Values.auth.existingSecret }}
+                  key: TALOSDECK_ADMIN_PASSWORD
+            - name: TALOSDECK_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: TALOSDECK_JWT_SECRET
+                  optional: true
+            {{- if .Values.oidc.enabled }}
+            - name: TALOSDECK_OIDC_ISSUER
+              value: {{ required "oidc.issuer required when OIDC enabled" .Values.oidc.issuer | quote }}
+            - name: TALOSDECK_OIDC_CLIENT_ID
+              value: {{ required "oidc.clientID required when OIDC enabled" .Values.oidc.clientID | quote }}
+            - name: TALOSDECK_OIDC_REDIRECT_URL
+              value: {{ required "oidc.redirectURL required when OIDC enabled" .Values.oidc.redirectURL | quote }}
+            - name: TALOSDECK_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: TALOSDECK_OIDC_CLIENT_SECRET
+            - name: TALOSDECK_OIDC_NAME
+              value: {{ .Values.oidc.name | quote }}
+            - name: TALOSDECK_OIDC_GROUPS_CLAIM
+              value: {{ .Values.oidc.groupsClaim | quote }}
+            - name: TALOSDECK_OIDC_GROUP_ROLES
+              value: {{ .Values.oidc.groupRoles | toJson | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: keys
+              mountPath: /app/keys
+              readOnly: {{ not (empty .Values.encryption.existingSecret) }}
+            - name: runtime
+              mountPath: /run/talosdeck
+            - name: temporary
+              mountPath: /tmp
+            {{- if .Values.bootstrap.existingSecret }}
+            - name: bootstrap
+              mountPath: /etc/talosdeck/bootstrap
+              readOnly: true
+            {{- end }}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-data" (include "talosdeck.fullname" .)) .Values.persistence.existingClaim }}
+        - name: keys
+          {{- if .Values.encryption.existingSecret }}
+          secret:
+            secretName: {{ .Values.encryption.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: master.key
+                path: master.key
+          {{- else }}
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-keys" (include "talosdeck.fullname" .)) .Values.encryption.existingClaim }}
+          {{- end }}
+        - name: runtime
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: temporary
+          emptyDir:
+            sizeLimit: 256Mi
+        {{- if .Values.bootstrap.existingSecret }}
+        - name: bootstrap
+          secret:
+            secretName: {{ .Values.bootstrap.existingSecret }}
+            defaultMode: 0440
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

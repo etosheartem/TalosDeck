@@ -166,7 +166,7 @@ func Open(dbPath, keyPath string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	if schemaVersion > 1 {
+	if schemaVersion > 2 {
 		db.Close()
 		return nil, errors.New("cluster database schema is newer than this application")
 	}
@@ -177,8 +177,11 @@ func Open(dbPath, keyPath string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS clusters(id TEXT PRIMARY KEY,name TEXT NOT NULL,identity TEXT NOT NULL UNIQUE,metadata BLOB NOT NULL,credentials BLOB NOT NULL,legacy INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS revisions(id TEXT PRIMARY KEY,cluster_id TEXT NOT NULL REFERENCES clusters(id),node TEXT NOT NULL,metadata BLOB NOT NULL,config BLOB NOT NULL);
  CREATE INDEX IF NOT EXISTS revisions_node ON revisions(cluster_id,node);
+ CREATE TABLE IF NOT EXISTS private_records(scope TEXT NOT NULL,kind TEXT NOT NULL,name TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(scope,kind,name));
+ CREATE TABLE IF NOT EXISTS settings(scope TEXT NOT NULL,kind TEXT NOT NULL,name TEXT NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(scope,kind,name));
  INSERT OR IGNORE INTO schema_migrations VALUES(1);
- PRAGMA user_version=1;
+ INSERT OR IGNORE INTO schema_migrations VALUES(2);
+ PRAGMA user_version=2;
  COMMIT;`)
 	if err != nil {
 		db.Close()
@@ -205,6 +208,10 @@ func Open(dbPath, keyPath string) (*Store, error) {
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = s.verifyPrivateRecords(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -655,6 +662,9 @@ func (s *Store) RotateKey(ctx context.Context, newKeyPath string) error {
 				return e
 			}
 		}
+	}
+	if err = s.rotatePrivateRecords(ctx, tx); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

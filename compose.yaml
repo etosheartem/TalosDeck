@@ -1,0 +1,53 @@
+services:
+  initialize-volumes:
+    image: ${TALOSDECK_IMAGE:-ghcr.io/etosheartem/talosdeck:latest}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown 1000:1000 /app/data /app/keys && chmod 0700 /app/data /app/keys"]
+    restart: "no"
+    network_mode: none
+    volumes:
+      - talosdeck-data:/app/data
+      - talosdeck-keys:/app/keys
+  talosdeck:
+    image: ${TALOSDECK_IMAGE:-ghcr.io/etosheartem/talosdeck:latest}
+    depends_on:
+      initialize-volumes:
+        condition: service_completed_successfully
+    user: "1000:1000"
+    read_only: true
+    restart: unless-stopped
+    stop_grace_period: 45s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    ports:
+      - "${TALOSDECK_BIND_ADDRESS:-127.0.0.1}:${TALOSDECK_PORT:-8080}:8080"
+    command:
+      - --data=/app/data
+      - --encryption-key=/app/keys/master.key
+      - --talosconfig=/nonexistent/bootstrap-talosconfig
+    environment:
+      PORT: ":8080"
+      TALOSDECK_RUNTIME_DIR: /run/talosdeck
+      TALOSDECK_ADMIN_PASSWORD: ${TALOSDECK_ADMIN_PASSWORD:?Set the bootstrap administrator password}
+      TALOSDECK_JWT_SECRET: ${TALOSDECK_JWT_SECRET:-}
+      TALOSDECK_OIDC_ISSUER: ${TALOSDECK_OIDC_ISSUER:-}
+      TALOSDECK_OIDC_CLIENT_ID: ${TALOSDECK_OIDC_CLIENT_ID:-}
+      TALOSDECK_OIDC_CLIENT_SECRET: ${TALOSDECK_OIDC_CLIENT_SECRET:-}
+      TALOSDECK_OIDC_REDIRECT_URL: ${TALOSDECK_OIDC_REDIRECT_URL:-}
+      TALOSDECK_OIDC_GROUP_ROLES: ${TALOSDECK_OIDC_GROUP_ROLES:-}
+    volumes:
+      - talosdeck-data:/app/data
+      - talosdeck-keys:/app/keys
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700
+      - /run/talosdeck:uid=1000,gid=1000,mode=0700
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+volumes:
+  talosdeck-data:
+  talosdeck-keys:
