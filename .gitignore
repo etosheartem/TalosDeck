@@ -13,7 +13,17 @@ data/
 
 # Environment and secrets
 .env
+.env.*
+!.env.example
 *.local
 kubeconfig
 talosconfig
 *.yaml.bak
+
+# Local test output and editor artifacts
+coverage.out
+coverage/
+playwright-report/
+test-results/
+*.log
+.DS_Store

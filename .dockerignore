@@ -8,3 +8,16 @@ bin
 *.log
 .vscode
 .DS_Store
+
+# Local runtime data and credentials must not enter build layers.
+/talosdeck
+/data
+.env
+.env.*
+!.env.example
+kubeconfig
+talosconfig
+*.local
+*.snapshot
+*.tar.gz
+*.yaml.bak
