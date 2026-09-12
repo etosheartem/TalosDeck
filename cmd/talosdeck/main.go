@@ -16,7 +16,9 @@ import (
 	"talosdeck/internal/audit"
 	"talosdeck/internal/auth"
 	"talosdeck/internal/backup"
+	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
+	"talosdeck/internal/operations"
 	"talosdeck/internal/proxmox"
 	"talosdeck/internal/talos"
 )
@@ -130,8 +132,21 @@ func main() {
 	authMgr := auth.NewAuthManagerFromEnv()
 	log.Printf("Authentication & RBAC active (configured admin role)")
 
+	ops := &operations.Service{Talos: manager, Kubernetes: k8sMgr, Backups: backupMgr, CLI: operations.CLI{Path: os.Getenv("TALOSDECK_TALOSCTL")}}
+	jobDir := os.Getenv("TALOSDECK_JOBS_DIR")
+	if jobDir == "" {
+		jobDir = "./data/jobs"
+	}
+	jobManager, err := jobs.Open(jobDir, ops.Run)
+	if err != nil {
+		log.Fatalf("Failed to open durable job journal: %v", err)
+	}
+	defer jobManager.Close()
+
 	app := api.SetupServer(api.ServerConfig{
 		Manager:      manager,
+		Jobs:         jobManager,
+		Operations:   ops,
 		K8s:          k8sMgr,
 		Backup:       backupMgr,
 		AlertService: alertSvc,
@@ -152,6 +167,7 @@ func main() {
 		cancelWatcher()
 		alertWatcher.Stop()
 		_ = app.Shutdown()
+		_ = jobManager.Close()
 		_ = manager.Close()
 		if auditMgr != nil {
 			_ = auditMgr.Close()

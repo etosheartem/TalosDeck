@@ -36,7 +36,6 @@ import {
   downloadBackup,
   deleteBackup,
   rebootNode,
-  waitForNodeReboot,
   runBootstrapCheck,
 } from "../api";
 import type {
@@ -50,6 +49,7 @@ import { request, post, list, bytes, download, normalizeDisk } from "./client";
 import ResourceTable from "./ResourceTable.vue";
 import Modal from "./Modal.vue";
 import NodeInspector from "./NodeInspector.vue";
+import JobsView from "./JobsView.vue";
 
 const pages = computed(() => [
   {
@@ -114,6 +114,8 @@ const pages = computed(() => [
       "Диагностика, обслуживание машин и последовательная перезагрузка.",
     ),
   },
+  { id: "updates", title: t("Обновления"), icon: RefreshCw, group: t("УПРАВЛЕНИЕ"), description: t("Проверка и обновление Talos Linux и Kubernetes.") },
+  { id: "jobs", title: t("Задания"), icon: ScrollText, group: t("СИСТЕМА"), description: t("Фоновые операции, состояние шагов и журнал выполнения.") },
   {
     id: "audit",
     title: t("Аудит"),
@@ -186,7 +188,7 @@ const worker = ref({
   iso: "",
   start: true,
 });
-const rolling = ref("");
+const operationKind = ref<"talos-upgrade" | "kubernetes-upgrade" | "rolling-reboot">("talos-upgrade");
 const backupType = ref<"full" | "etcd">("etcd");
 const ready = computed(() => nodes.value.filter((n) => n.ready).length);
 const troubled = computed(() =>
@@ -481,21 +483,13 @@ async function saveAlerts() {
   );
   token.value = "";
 }
-async function rollingReboot() {
-  for (const n of [
-    ...nodes.value.filter((n) => n.role === "worker"),
-    ...nodes.value.filter((n) => n.role !== "worker"),
-  ]) {
-    rolling.value = t("Перезагрузка {0}", [n.hostname]);
-    await rebootNode(n.ip);
-    await waitForNodeReboot(n.ip);
-  }
-  rolling.value = "";
-  await refresh();
+function rollingReboot() {
+ operationKind.value = "rolling-reboot";
+ navigate("updates");
 }
 const protectedPage = computed(
   () =>
-    ["config", "backups", "audit", "settings"].includes(active.value) &&
+    ["config", "backups", "audit", "settings", "updates", "jobs"].includes(active.value) &&
     !isAuthenticated.value,
 );
 </script>
@@ -916,6 +910,7 @@ const protectedPage = computed(
             {{ t("Войти") }}
           </button>
         </div>
+        <JobsView v-else-if="active === 'updates' || active === 'jobs'" :key="active" :mode="active" :initial-kind="operationKind" @submitted="navigate('jobs')" />
         <template v-else>
           <div
             v-if="['storage', 'config', 'maintenance'].includes(active)"
@@ -1160,20 +1155,13 @@ const protectedPage = computed(
                   class="danger"
                   :disabled="!isAuthenticated || !nodes.length || busy"
                   @click="
-                    ask(
-                      t('Перезагрузить кластер'),
-                      t(
-                        'Перезагрузить все ноды по очереди? Операция может занять несколько минут.',
-                      ),
-                      rollingReboot,
-                    )
+                    rollingReboot()
                   "
                 >
                   {{ t("Перезагрузить все") }}
                 </button>
               </article>
             </section>
-            <p v-if="rolling">{{ rolling }}</p>
             <ResourceTable
               v-if="checks.length"
               :rows="checks"
@@ -1385,7 +1373,6 @@ const protectedPage = computed(
       @close="!busy && (confirmation = null)"
       ><p>{{ confirmation.description }}</p>
       <div v-if="actionError" class="notice error">{{ actionError }}</div>
-      <p v-if="rolling">{{ rolling }}</p>
       <div class="dialog-actions">
         <button :disabled="busy" @click="confirmation = null">
           {{ t("Отмена") }}</button

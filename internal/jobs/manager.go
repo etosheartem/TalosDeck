@@ -1,0 +1,384 @@
+// Package jobs runs one durable cluster operation at a time. Checkpoints are
+// committed before side effects. A process restart never replays a command.
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+var ErrBusy = errors.New("another operation is running or requires review")
+var ErrStopped = errors.New("stop requested; no further steps will be started")
+var ErrNotFound = errors.New("job not found")
+
+const MaxEvents = 2000
+const MaxJobs = 100
+
+type Request struct {
+	Kind          string `json:"kind"`
+	Version       string `json:"version,omitempty"`
+	AllowDowntime bool   `json:"allowDowntime,omitempty"`
+}
+type Event struct {
+	Time    time.Time `json:"time"`
+	Step    string    `json:"step"`
+	Message string    `json:"message"`
+}
+type Job struct {
+	ID            string    `json:"id"`
+	Request       Request   `json:"request"`
+	User          string    `json:"user"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+	Step          string    `json:"step"`
+	Error         string    `json:"error,omitempty"`
+	StopRequested bool      `json:"stopRequested"`
+	Reviewed      bool      `json:"reviewed"`
+	Events        []Event   `json:"events,omitempty"`
+}
+type Runner func(context.Context, *Execution, Request) error
+
+type Manager struct {
+	mu         sync.Mutex
+	dir        string
+	lock       *os.File
+	jobs       map[string]*Job
+	active     string
+	manual     bool
+	closed     bool
+	storageErr error
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	runner     Runner
+}
+
+func Open(dir string, runner Runner) (*Manager, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("job store already in use: %w", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m := &Manager{dir: dir, lock: lock, jobs: map[string]*Job{}, ctx: ctx, cancel: cancel, runner: runner}
+	fail := func(err error) (*Manager, error) { cancel(); lock.Close(); return nil, err }
+	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return fail(err)
+	}
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fail(err)
+		}
+		var j Job
+		if err = json.Unmarshal(data, &j); err != nil {
+			return fail(fmt.Errorf("corrupt job store %s: %w", filepath.Base(path), err))
+		}
+		if _, err = uuid.Parse(j.ID); err != nil || filepath.Base(path) != j.ID+".json" {
+			return fail(errors.New("invalid job ID in store"))
+		}
+		switch j.Status {
+		case "queued", "running":
+			j.Status = "interrupted"
+			j.Error = "Server stopped before completion was verified. Inspect the cluster before acknowledging this job."
+			j.UpdatedAt = time.Now().UTC()
+		case "succeeded", "failed", "stopped", "interrupted":
+		default:
+			return fail(errors.New("invalid persisted job status"))
+		}
+		m.jobs[j.ID] = &j
+		if err = m.save(&j); err != nil {
+			return fail(err)
+		}
+	}
+	return m, nil
+}
+func (m *Manager) save(j *Job) error {
+	data, err := json.Marshal(j)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(m.dir, ".job-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(name, filepath.Join(m.dir, j.ID+".json")); err != nil {
+		return err
+	}
+	d, err := os.Open(m.dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+func clone(j *Job) Job { c := *j; c.Events = append([]Event(nil), j.Events...); return c }
+func (m *Manager) busy() bool {
+	if m.active != "" || m.manual {
+		return true
+	}
+	for _, j := range m.jobs {
+		if j.Status == "interrupted" && !j.Reviewed {
+			return true
+		}
+	}
+	return false
+}
+func (m *Manager) available() error {
+	if m.closed {
+		return errors.New("job manager is shutting down")
+	}
+	if m.storageErr != nil {
+		return fmt.Errorf("job journal unavailable: %w", m.storageErr)
+	}
+	if m.busy() {
+		return ErrBusy
+	}
+	return nil
+}
+
+// ReserveManual closes the race between legacy synchronous mutations and job submission.
+func (m *Manager) ReserveManual() (func(), error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.available(); err != nil {
+		return nil, err
+	}
+	m.manual = true
+	return func() { m.mu.Lock(); m.manual = false; m.mu.Unlock() }, nil
+}
+func (m *Manager) Submit(r Request, user string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.available(); err != nil {
+		return Job{}, err
+	}
+	if m.runner == nil {
+		return Job{}, errors.New("job runner unavailable")
+	}
+	if len(m.jobs) >= MaxJobs {
+		var oldest *Job
+		for _, j := range m.jobs {
+			if oldest == nil || j.CreatedAt.Before(oldest.CreatedAt) {
+				oldest = j
+			}
+		}
+		if err := os.Remove(filepath.Join(m.dir, oldest.ID+".json")); err != nil {
+			return Job{}, err
+		}
+		delete(m.jobs, oldest.ID)
+	}
+	now := time.Now().UTC()
+	j := &Job{ID: uuid.NewString(), Request: r, User: user, Status: "queued", CreatedAt: now, UpdatedAt: now, Events: []Event{{Time: now, Step: "queued", Message: "Job accepted"}}}
+	if err := m.save(j); err != nil {
+		return Job{}, err
+	}
+	m.jobs[j.ID] = j
+	m.active = j.ID
+	m.wg.Add(1)
+	go m.run(j.ID)
+	return clone(j), nil
+}
+func (m *Manager) run(id string) {
+	defer m.wg.Done()
+	e := &Execution{manager: m, id: id}
+	var runErr error
+	defer func() {
+		if p := recover(); p != nil {
+			runErr = fmt.Errorf("runner panic: %v", p)
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		j := m.jobs[id]
+		switch {
+		case m.ctx.Err() != nil || m.storageErr != nil:
+			j.Status = "interrupted"
+		case errors.Is(runErr, ErrStopped):
+			j.Status = "stopped"
+		case runErr != nil:
+			j.Status = "failed"
+		default:
+			j.Status = "succeeded"
+		}
+		if runErr != nil {
+			j.Error = bounded(runErr.Error())
+		}
+		j.UpdatedAt = time.Now().UTC()
+		j.Events = appendEvent(j.Events, Event{Time: j.UpdatedAt, Step: j.Status, Message: j.Error})
+		if err := m.save(j); err != nil {
+			m.storageErr = err
+			j.Status = "interrupted"
+			j.Error = "Cannot persist completion: " + err.Error()
+		}
+		m.active = ""
+	}()
+	m.mu.Lock()
+	j := m.jobs[id]
+	j.Status = "running"
+	j.UpdatedAt = time.Now().UTC()
+	r := j.Request
+	runErr = m.save(j)
+	if runErr != nil {
+		m.storageErr = runErr
+	}
+	m.mu.Unlock()
+	if runErr != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 4*time.Hour)
+	defer cancel()
+	runErr = m.runner(ctx, e, r)
+}
+func (m *Manager) List() []Job {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Job, 0, len(m.jobs))
+	for _, j := range m.jobs {
+		c := clone(j)
+		c.Events = nil
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out
+}
+func (m *Manager) Get(id string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return Job{}, ErrNotFound
+	}
+	return clone(j), nil
+}
+func (m *Manager) Stop(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if j.Status != "running" && j.Status != "queued" {
+		return errors.New("job is not running")
+	}
+	j.StopRequested = true
+	j.UpdatedAt = time.Now().UTC()
+	j.Events = appendEvent(j.Events, Event{Time: j.UpdatedAt, Step: j.Step, Message: "Stop requested; the current step will finish first"})
+	if err := m.save(j); err != nil {
+		m.storageErr = err
+		return err
+	}
+	return nil
+}
+func (m *Manager) Acknowledge(id, user string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if j.Status != "interrupted" {
+		return errors.New("only interrupted jobs require acknowledgement")
+	}
+	j.Reviewed = true
+	j.UpdatedAt = time.Now().UTC()
+	j.Events = appendEvent(j.Events, Event{Time: j.UpdatedAt, Step: "reviewed", Message: "Cluster state reviewed by " + user})
+	if err := m.save(j); err != nil {
+		m.storageErr = err
+		return err
+	}
+	return nil
+}
+func (m *Manager) Close() error {
+	m.mu.Lock()
+	m.closed = true
+	m.cancel()
+	m.mu.Unlock()
+	m.wg.Wait()
+	return m.lock.Close()
+}
+
+type Execution struct {
+	manager *Manager
+	id      string
+}
+
+func bounded(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < ' ' && r != '\t' {
+			return ' '
+		}
+		return r
+	}, s)
+	if len(s) > 4096 {
+		s = s[:4096] + "…"
+	}
+	return s
+}
+func appendEvent(events []Event, e Event) []Event {
+	events = append(events, e)
+	if len(events) > MaxEvents {
+		events = events[len(events)-MaxEvents:]
+	}
+	return events
+}
+func (e *Execution) Log(step, message string) error {
+	m := e.manager
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.storageErr != nil {
+		return m.storageErr
+	}
+	j := m.jobs[e.id]
+	j.Step = step
+	j.UpdatedAt = time.Now().UTC()
+	j.Events = appendEvent(j.Events, Event{Time: j.UpdatedAt, Step: step, Message: bounded(message)})
+	if err := m.save(j); err != nil {
+		m.storageErr = err
+		return err
+	}
+	return nil
+}
+func (e *Execution) Checkpoint(ctx context.Context, step, message string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m := e.manager
+	m.mu.Lock()
+	stop := m.jobs[e.id].StopRequested
+	m.mu.Unlock()
+	if stop {
+		return ErrStopped
+	}
+	return e.Log(step, message)
+}

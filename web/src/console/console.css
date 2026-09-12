@@ -1247,3 +1247,14 @@ td .mono {
 .language-switch select {
   width: 100%;
 }
+
+.jobs-view { display: grid; gap: 20px; min-width: 0; }
+.jobs-view .panel { min-width: 0; }
+.job-form { display: grid; gap: 16px; padding: 20px; max-width: 640px; }
+.job-form label, .job-confirm { display: grid; gap: 8px; }
+.job-form .job-check { display: flex; align-items: center; }
+.job-form p, .operation-plan p { color: var(--c-dim); line-height: 1.6; }
+.operation-plan > p, .operation-plan > details, .operation-plan > button { margin: 16px 20px; }
+.execution-log > .toolbar, .execution-log > input, .execution-log > p { margin: 16px; }
+.job-log { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 440px; min-height: 160px; margin: 16px; padding: 16px; font-size: 12px; line-height: 1.7; background: #111317; border: 1px solid var(--c-border); }
+.execution-log .toolbar code { overflow-wrap: anywhere; white-space: normal; }

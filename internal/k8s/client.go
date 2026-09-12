@@ -232,6 +232,10 @@ func NewK8sManager(kubeconfigPath string, kubeconfigBytesProvider func(ctx conte
 	// Set reasonable client timeouts
 	restConfig.Timeout = 8 * time.Second
 
+	// Bound discovery calls which do not accept a request context.
+	if restConfig.Timeout == 0 {
+		restConfig.Timeout = 15 * time.Second
+	}
 	cs, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)

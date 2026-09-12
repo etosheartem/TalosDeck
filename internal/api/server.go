@@ -23,7 +23,9 @@ import (
 	"talosdeck/internal/audit"
 	"talosdeck/internal/auth"
 	"talosdeck/internal/backup"
+	"talosdeck/internal/jobs"
 	"talosdeck/internal/k8s"
+	"talosdeck/internal/operations"
 	"talosdeck/internal/proxmox"
 	"talosdeck/internal/talos"
 	"talosdeck/web"
@@ -39,6 +41,8 @@ type ServerConfig struct {
 	Proxmox      *proxmox.Client
 	Audit        *audit.AuditManager
 	Auth         *auth.AuthManager
+	Jobs         *jobs.Manager
+	Operations   *operations.Service
 	Port         string
 }
 
@@ -100,6 +104,8 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 
 	// REST API Routes Group
 	api := app.Group("/api")
+	api.Use(jobMutationGuard(cfg.Jobs))
+	RegisterJobRoutes(api, cfg.Jobs, cfg.Operations, authMgr)
 
 	// OPS-08: Health and Readiness Probes (GET /healthz, GET /readyz, GET /api/health)
 	healthzHandler := func(c *fiber.Ctx) error {
@@ -116,6 +122,13 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 				"status": "not ready",
 				"error":  "talos manager not initialized",
 			})
+		}
+
+		// A node upgrade must not remove the management UI from Service endpoints.
+		// With the job engine enabled, readiness measures the local control plane,
+		// while managed-cluster health remains available through /api/cluster.
+		if cfg.Jobs != nil {
+			return c.JSON(fiber.Map{"status": "ok", "jobs": "available"})
 		}
 
 		ctx, cancel := context.WithTimeout(c.UserContext(), 5*time.Second)
