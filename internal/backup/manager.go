@@ -24,6 +24,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/client"
 
+	"talosdeck/internal/reconcile"
 	"talosdeck/internal/talos"
 )
 
@@ -219,18 +220,21 @@ func (m *BackupManager) GetStorageDir() string {
 }
 
 // rotateBackups removes oldest backups if total exceeds limit (BKP-07).
-func (m *BackupManager) rotateBackups(limit int) {
+func (m *BackupManager) rotateBackups(ctx context.Context, limit int) error {
 	if limit <= 0 {
-		return
+		return nil
 	}
 	backups, err := m.ListBackups()
 	if err != nil || len(backups) <= limit {
-		return
+		return err
 	}
 	// backups are sorted newest first, delete from index limit onwards
 	for i := limit; i < len(backups); i++ {
-		_ = m.DeleteBackup(backups[i].ID)
+		if err := m.DeleteBackupContext(ctx, backups[i].ID); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // CreateEtcdSnapshot triggers an etcd snapshot via the Talos SDK and saves a .snapshot file.
@@ -298,7 +302,12 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 	}
 
 	nodeCtx := client.WithNode(ctx, targetIP)
-	reader, err := talosClient.EtcdSnapshot(nodeCtx, &machine.EtcdSnapshotRequest{})
+	var reader io.ReadCloser
+	err := reconcile.Mutate(nodeCtx, "backup.etcd-snapshot", targetIP, func() error {
+		var callErr error
+		reader, callErr = talosClient.EtcdSnapshot(nodeCtx, &machine.EtcdSnapshotRequest{})
+		return callErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("talos etcd snapshot failed on %s: %w", targetIP, err)
 	}
@@ -348,12 +357,14 @@ func (m *BackupManager) CreateEtcdSnapshot(ctx context.Context, controlPlaneIP s
 		Description: fmt.Sprintf("Etcd database snapshot from control plane %s", targetIP),
 	}
 
-	if err := publishBackup(tempPath, targetPath, checksum, info); err != nil {
+	if err := reconcile.Mutate(ctx, "backup.publish-local", targetPath, func() error { return publishBackup(tempPath, targetPath, checksum, info) }); err != nil {
 		return nil, err
 	}
 
 	// Rotate backups according to retention policy
-	m.rotateBackups(m.retention())
+	if err := m.rotateBackups(ctx, m.retention()); err != nil {
+		return nil, err
+	}
 
 	return info, nil
 }
@@ -465,7 +476,12 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 	}
 
 	nodeCtx := client.WithNode(ctx, cpIP)
-	snapshotReader, err := talosClient.EtcdSnapshot(nodeCtx, &machine.EtcdSnapshotRequest{})
+	var snapshotReader io.ReadCloser
+	err = reconcile.Mutate(nodeCtx, "backup.etcd-snapshot", cpIP, func() error {
+		var callErr error
+		snapshotReader, callErr = talosClient.EtcdSnapshot(nodeCtx, &machine.EtcdSnapshotRequest{})
+		return callErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to stream etcd snapshot from %s: %w", cpIP, err)
 	}
@@ -628,12 +644,14 @@ func (m *BackupManager) CreateFullClusterBackup(ctx context.Context) (*BackupInf
 		Partial:     len(warnings) > 0,
 	}
 
-	if err := publishBackup(archiveTempPath, archivePath, checksum, info); err != nil {
+	if err := reconcile.Mutate(ctx, "backup.publish-local", archivePath, func() error { return publishBackup(archiveTempPath, archivePath, checksum, info) }); err != nil {
 		return nil, err
 	}
 
 	// Rotate backups according to retention policy
-	m.rotateBackups(m.retention())
+	if err := m.rotateBackups(ctx, m.retention()); err != nil {
+		return nil, err
+	}
 
 	return info, nil
 }
@@ -918,4 +936,9 @@ func formatSize(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// DeleteBackupContext binds local artifact deletion to a workflow journal.
+func (m *BackupManager) DeleteBackupContext(ctx context.Context, id string) error {
+	return reconcile.Mutate(ctx, "backup.delete-local", id, func() error { return m.DeleteBackup(id) })
 }

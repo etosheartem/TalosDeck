@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -22,6 +23,7 @@ import (
 	"talosdeck/internal/backup"
 	"talosdeck/internal/clusters"
 	"talosdeck/internal/jobs"
+	"talosdeck/internal/reconcile"
 )
 
 type BackupTarget struct {
@@ -105,7 +107,11 @@ func backupS3(t BackupTarget) (*minio.Client, error) {
 	if t.Bucket == "" || strings.ContainsAny(t.Bucket, "/\\") || t.AccessKey == "" || t.SecretKey == "" {
 		return nil, errors.New("bucket and credentials are required")
 	}
-	return minio.New(u.Host, &minio.Options{Creds: credentials.NewStaticV4(t.AccessKey, t.SecretKey, ""), Secure: u.Scheme == "https", Region: t.Region})
+	transport, err := minio.DefaultTransport(u.Scheme == "https")
+	if err != nil {
+		return nil, err
+	}
+	return minio.New(u.Host, &minio.Options{Creds: credentials.NewStaticV4(t.AccessKey, t.SecretKey, ""), Secure: u.Scheme == "https", Region: t.Region, MaxRetries: 1, Transport: backupMutationTransport{transport}})
 }
 
 // SaveTarget reserves the same cluster journal used by backups/restores before
@@ -304,7 +310,7 @@ func (s *BackupService) Run(ctx context.Context, e *jobs.Execution, r jobs.Reque
 		defer f.Close()
 		_, err = client.PutObject(ctx, t.Bucket, object, f, info.Size, minio.PutObjectOptions{ContentType: "application/octet-stream", UserMetadata: map[string]string{"sha256": info.Checksum}})
 		if err != nil {
-			return errors.New("S3 upload failed; verified local backup remains available")
+			return fmt.Errorf("S3 upload uncertain; verified local backup remains available: %w", err)
 		}
 		stat, err := client.StatObject(ctx, t.Bucket, object, minio.StatObjectOptions{})
 		if err != nil || stat.Size != info.Size {
@@ -349,7 +355,7 @@ func (s *BackupService) Delete(ctx context.Context, id string) error {
 			return e
 		}
 		if e = c.RemoveObject(ctx, t.Bucket, r.Object, minio.RemoveObjectOptions{}); e != nil {
-			return errors.New("remote backup deletion failed")
+			return fmt.Errorf("remote backup deletion uncertain: %w", e)
 		}
 		if e = s.Store.DeleteSecret(ctx, s.ClusterID, "remote-backup", id); e != nil {
 			return e
@@ -358,7 +364,7 @@ func (s *BackupService) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	if _, _, e := s.Manager.GetBackup(id); e == nil {
-		return s.Manager.DeleteBackup(id)
+		return s.Manager.DeleteBackupContext(ctx, id)
 	} else if err == nil {
 		return nil
 	} else {
@@ -400,7 +406,7 @@ func (s *BackupService) prune(ctx context.Context, limit int) error {
 		}
 		for _, r := range records[limit:] {
 			if err = client.RemoveObject(ctx, t.Bucket, r.Object, minio.RemoveObjectOptions{}); err != nil {
-				return errors.New("remote retention failed; local backups retained")
+				return fmt.Errorf("remote retention uncertain; local backups retained: %w", err)
 			}
 			if err = s.Store.DeleteSecret(ctx, s.ClusterID, "remote-backup", r.Info.ID); err != nil {
 				return err
@@ -421,9 +427,25 @@ func (s *BackupService) prune(ctx context.Context, limit int) error {
 		if complete <= limit {
 			continue
 		}
-		if err = s.Manager.DeleteBackup(info.ID); err != nil {
+		if err = s.Manager.DeleteBackupContext(ctx, info.ID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Each multipart request is admitted separately; read-only retries do not grant mutation rights.
+type backupMutationTransport struct{ http.RoundTripper }
+
+func (t backupMutationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodGet || req.Method == http.MethodHead {
+		return t.RoundTripper.RoundTrip(req)
+	}
+	var response *http.Response
+	err := reconcile.Mutate(req.Context(), "backup.s3-"+strings.ToLower(req.Method), req.URL.String(), func() error {
+		var err error
+		response, err = t.RoundTripper.RoundTrip(req)
+		return err
+	})
+	return response, err
 }
