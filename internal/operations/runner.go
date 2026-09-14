@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"talosdeck/internal/reconcile"
 	"time"
 )
 
@@ -122,7 +123,25 @@ func (c CLI) Run(ctx context.Context, args []string, log func(string) error) err
 		}
 		reader.Close()
 	}()
-	runErr := cmd.Run()
+	// The caller journals the logical action; validate its executor again at
+	// process launch, after all setup and persistence. Dry-run is read-only.
+	var runErr error
+	dryRun := false
+	for _, arg := range args {
+		if arg == "--dry-run" || arg == "--dry-run=true" {
+			dryRun = true
+		}
+	}
+	if !dryRun {
+		runErr = reconcile.CheckMutation(ctx)
+	}
+	if runErr == nil {
+		if dryRun {
+			runErr = cmd.Run()
+		} else {
+			runErr = reconcile.Mutate(ctx, "talosctl.command", strings.Join(args, "\x00"), cmd.Run)
+		}
+	}
 	writer.Close()
 	wg.Wait()
 	if logErr != nil {

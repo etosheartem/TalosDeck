@@ -2,6 +2,8 @@ package k8s
 
 import (
 	"context"
+	"errors"
+	"talosdeck/internal/reconcile"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,5 +36,26 @@ func TestDeleteProvisionedNodeRequiresIdentityAndUIDPrecondition(t *testing.T) {
 				t.Fatal("identity mismatch triggered deletion")
 			}
 		})
+	}
+}
+
+func TestDeleteProvisionedNodeChecksAuthorityAfterIdentityRead(t *testing.T) {
+	client := fake.NewClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: "original"}, Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.1"}}}})
+	manager := &K8sManager{clientset: client}
+	ctx := reconcile.WithMutationGuard(context.Background(), func(context.Context) error { return reconcile.ErrAuthority })
+	if err := manager.DeleteProvisionedNode(ctx, "worker", "10.0.0.1"); !errors.Is(err, reconcile.ErrAuthority) {
+		t.Fatalf("expected refused mutation, got %v", err)
+	}
+	reads := 0
+	for _, a := range client.Actions() {
+		if a.GetVerb() == "delete" {
+			t.Fatal("delete sent after authority loss")
+		}
+		if a.GetVerb() == "get" {
+			reads++
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("identity observation must remain possible: %d", reads)
 	}
 }

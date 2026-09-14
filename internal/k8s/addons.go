@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"talosdeck/internal/reconcile"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -95,7 +96,13 @@ func (m *K8sManager) InstallAddon(ctx context.Context, kind string) error {
 		if err != nil {
 			return err
 		}
-		if _, err = resource.Patch(ctx, object.GetName(), types.ApplyPatchType, encoded, metav1.PatchOptions{FieldManager: "talosdeck-provisioning"}); err != nil {
+		if err := reconcile.CheckMutation(ctx); err != nil {
+			return err
+		}
+		if err = reconcile.Mutate(ctx, "k8s.addon.apply", object.GetKind()+"/"+object.GetNamespace()+"/"+object.GetName(), func() error {
+			_, e := resource.Patch(ctx, object.GetName(), types.ApplyPatchType, encoded, metav1.PatchOptions{FieldManager: "talosdeck-provisioning"})
+			return e
+		}); err != nil {
 			return fmt.Errorf("cannot apply addon resource %s/%s", object.GetKind(), object.GetName())
 		}
 	}

@@ -187,13 +187,13 @@ func TestFenceRechecksAuthorityBetweenStopAndDelete(t *testing.T) {
 	checks := 0
 	ctx := reconcile.WithMutationGuard(context.Background(), func(context.Context) error {
 		checks++
-		if checks > 1 {
+		if f.writes > 0 {
 			return errors.New("lease lost")
 		}
 		return nil
 	})
 	evidence, err := c.DestroyOwnedForFence(ctx, f.owned)
-	if err == nil || checks != 2 || f.writes != 1 || f.running || !f.exists || evidence.Outcome != "UNKNOWN" {
+	if err == nil || checks < 2 || f.writes != 1 || f.running || !f.exists || evidence.Outcome != "UNKNOWN" {
 		t.Fatal("deletion proceeded after losing execution authority", checks, f.writes, evidence, err)
 	}
 }

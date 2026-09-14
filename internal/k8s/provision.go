@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"errors"
+	"talosdeck/internal/reconcile"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,7 +29,12 @@ func (m *K8sManager) DeleteProvisionedNode(ctx context.Context, name, address st
 		return errors.New("Kubernetes node identity changed; cleanup refused")
 	}
 	uid := node.UID
-	if err := m.clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil {
+	if err := reconcile.CheckMutation(ctx); err != nil {
+		return err
+	}
+	if err := reconcile.Mutate(ctx, "k8s.node.delete", name+"/"+string(uid), func() error {
+		return m.clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}})
+	}); err != nil {
 		return errors.New("Kubernetes node cleanup failed")
 	}
 	return nil

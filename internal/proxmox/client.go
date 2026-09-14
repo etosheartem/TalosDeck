@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"talosdeck/internal/reconcile"
 	"time"
 )
 
@@ -976,7 +977,12 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 		return nil, err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	if method != http.MethodGet && method != http.MethodHead {
+		if err := reconcile.CheckMutation(ctx); err != nil {
+			return nil, err
+		}
+	}
+	resp, err := c.dispatchRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1000,7 +1006,12 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 		if err != nil {
 			return nil, err
 		}
-		return c.httpClient.Do(retryReq)
+		if method != http.MethodGet && method != http.MethodHead {
+			if err := reconcile.CheckMutation(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return c.dispatchRequest(ctx, retryReq)
 	}
 
 	return resp, nil
@@ -1092,4 +1103,33 @@ func getEnvBool(key string, defaultVal bool) bool {
 		return val == "true" || val == "1" || val == "yes"
 	}
 	return defaultVal
+}
+
+// Each authenticated write attempt is independently journaled; transport errors
+// are returned to reconciliation and never retried here.
+func (c *Client) dispatchRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodGet || req.Method == http.MethodHead {
+		return c.httpClient.Do(req)
+	}
+	var response *http.Response
+	var statusErr error
+	err := reconcile.Mutate(ctx, "proxmox."+strings.ToLower(req.Method), req.URL.Path, func() error {
+		var err error
+		response, err = c.httpClient.Do(req)
+		if err == nil && response.StatusCode >= 400 {
+			statusErr = fmt.Errorf("provider HTTP status %d", response.StatusCode)
+			return statusErr
+		}
+		return err
+	})
+	// Preserve HTTP failures for existing response handling (including explicit
+	// authentication rejection); transport/recording failures remain errors.
+	if response != nil && statusErr != nil && err == statusErr {
+		return response, nil
+	}
+	if err != nil && response != nil {
+		response.Body.Close()
+		response = nil
+	}
+	return response, err
 }

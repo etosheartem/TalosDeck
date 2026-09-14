@@ -3,6 +3,7 @@ package talos
 import (
 	"context"
 	"fmt"
+	"talosdeck/internal/reconcile"
 
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/client"
@@ -22,7 +23,23 @@ func (m *TalosManager) ApplyNodeConfig(ctx context.Context, node string, data []
 	if c == nil {
 		return fmt.Errorf("Talos client unavailable")
 	}
-	response, err := c.ApplyConfiguration(client.WithNode(ctx, node), &machine.ApplyConfigurationRequest{Data: data, Mode: selected, DryRun: dryRun})
+	if !dryRun {
+		if err := reconcile.CheckMutation(ctx); err != nil {
+			return err
+		}
+	}
+	var response *machine.ApplyConfigurationResponse
+	apply := func() error {
+		var err error
+		response, err = c.ApplyConfiguration(client.WithNode(ctx, node), &machine.ApplyConfigurationRequest{Data: data, Mode: selected, DryRun: dryRun})
+		return err
+	}
+	var err error
+	if dryRun {
+		err = apply()
+	} else {
+		err = reconcile.Mutate(ctx, "talos.config.apply", node, apply)
+	}
 	if err != nil {
 		return fmt.Errorf("Talos rejected configuration request; inspect node diagnostics")
 	}
@@ -38,7 +55,10 @@ func (m *TalosManager) ApplyNodeConfig(ctx context.Context, node string, data []
 		}
 	}
 	if mode == "reboot" && !dryRun {
-		if err := c.Reboot(client.WithNode(ctx, node)); err != nil {
+		if err := reconcile.CheckMutation(ctx); err != nil {
+			return err
+		}
+		if err := reconcile.Mutate(ctx, "talos.reboot", node, func() error { return c.Reboot(client.WithNode(ctx, node)) }); err != nil {
 			return fmt.Errorf("configuration staged but reboot outcome is uncertain; inspect node before retrying")
 		}
 	}

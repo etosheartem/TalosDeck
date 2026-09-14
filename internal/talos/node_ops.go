@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"talosdeck/internal/reconcile"
 	"time"
 	"unicode"
 
@@ -447,7 +448,10 @@ func (m *TalosManager) RebootNode(ctx context.Context, nodeIP string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	nodeCtx := client.WithNode(reqCtx, nodeIP)
-	return talosClient.Reboot(nodeCtx)
+	if err := reconcile.CheckMutation(nodeCtx); err != nil {
+		return err
+	}
+	return reconcile.Mutate(nodeCtx, "talos.reboot", nodeIP, func() error { return talosClient.Reboot(nodeCtx) })
 }
 
 // RestartService requests a restart of the specified service on the node.
@@ -460,8 +464,10 @@ func (m *TalosManager) RestartService(ctx context.Context, nodeIP string, servic
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	nodeCtx := client.WithNode(reqCtx, nodeIP)
-	_, err := talosClient.ServiceRestart(nodeCtx, serviceID)
-	return err
+	if err := reconcile.CheckMutation(nodeCtx); err != nil {
+		return err
+	}
+	return reconcile.Mutate(nodeCtx, "talos.service.restart", nodeIP+"/"+serviceID, func() error { _, err := talosClient.ServiceRestart(nodeCtx, serviceID); return err })
 }
 
 // GetNodeDisks queries physical disks and their partition details for a given node.

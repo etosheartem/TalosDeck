@@ -117,7 +117,9 @@ func (m *K8sManager) DeleteStaleNode(ctx context.Context, name, expectedUID stri
 	if e := reconcile.CheckRequiredMutation(ctx); e != nil {
 		return e
 	}
-	return m.clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}})
+	return reconcile.Mutate(ctx, "k8s.node.delete", name+"/"+string(uid), func() error {
+		return m.clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}})
+	})
 }
 
 // CordonAndDrainReplacement pins both the Node and each evicted Pod identity.
@@ -147,7 +149,10 @@ func (m *K8sManager) CordonAndDrainReplacement(ctx context.Context, name, expect
 	if err = reconcile.CheckRequiredMutation(ctx); err != nil {
 		return err
 	}
-	if _, err = m.clientset.CoreV1().Nodes().Patch(ctx, name, types.JSONPatchType, patch, metav1.PatchOptions{}); err != nil {
+	if err = reconcile.Mutate(ctx, "k8s.node.cordon", name+"/"+expectedUID, func() error {
+		_, e := m.clientset.CoreV1().Nodes().Patch(ctx, name, types.JSONPatchType, patch, metav1.PatchOptions{})
+		return e
+	}); err != nil {
 		return err
 	}
 	return m.drainNode(ctx, name, expectedUID, ackEmptyDir)
