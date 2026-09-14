@@ -156,6 +156,11 @@ func (m *Manager) ObserveIntent(ctx context.Context, jobID, intentID string, o r
 			continue
 		}
 		i.Outcome = reconcile.Evaluate(*i, o, time.Now().UTC())
+		// Step evidence cannot establish success for a workflow/plan whose
+		// semantics this binary does not understand. Review is not migration.
+		if j.WorkflowVersion != reconcile.Version || j.PlanVersion != reconcile.Version || j.StepSchemaVersion != reconcile.Version {
+			i.Outcome = reconcile.RequiresReview
+		}
 		i.Evidence = &o
 		j.ReconciliationOutcome = i.Outcome
 		for _, other := range j.Intents {
