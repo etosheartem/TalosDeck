@@ -33,7 +33,7 @@ func (m *K8sManager) DeleteProvisionedNode(ctx context.Context, name, address st
 		return err
 	}
 	if err := reconcile.Mutate(ctx, "k8s.node.delete", name+"/"+string(uid), func() error {
-		return m.clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}})
+		return mutationResult(m.clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
 	}); err != nil {
 		return errors.New("Kubernetes node cleanup failed")
 	}

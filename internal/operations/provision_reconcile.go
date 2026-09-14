@@ -48,7 +48,7 @@ func (s *ProvisionService) ReconcileJob(ctx context.Context, m *jobs.Manager, id
 		// resource desired state. Provider existence cannot prove an eviction,
 		// reboot, configuration apply or opaque talosctl command completed.
 		if intent.Action != "create" && intent.Action != "delete" {
-			if intent.Outcome != "succeeded" {
+			if !reconcile.CommandReceipt(intent) {
 				if _, err = m.ObserveIntent(ctx, id, intent.ID, reconcile.Observation{State: "unknown", Identity: intent.Identity, ObservedAt: time.Now().UTC()}); err != nil {
 					return j, errors.New("cannot persist command review requirement")
 				}

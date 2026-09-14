@@ -1118,6 +1118,9 @@ func (c *Client) dispatchRequest(ctx context.Context, req *http.Request) (*http.
 		response, err = c.httpClient.Do(req)
 		if err == nil && response.StatusCode >= 400 {
 			statusErr = fmt.Errorf("provider HTTP status %d", response.StatusCode)
+			if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+				return reconcile.Rejected(statusErr)
+			}
 			return statusErr
 		}
 		return err

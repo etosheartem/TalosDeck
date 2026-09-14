@@ -118,7 +118,7 @@ func (m *K8sManager) DeleteStaleNode(ctx context.Context, name, expectedUID stri
 		return e
 	}
 	return reconcile.Mutate(ctx, "k8s.node.delete", name+"/"+string(uid), func() error {
-		return m.clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}})
+		return mutationResult(m.clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}))
 	})
 }
 
@@ -151,7 +151,7 @@ func (m *K8sManager) CordonAndDrainReplacement(ctx context.Context, name, expect
 	}
 	if err = reconcile.Mutate(ctx, "k8s.node.cordon", name+"/"+expectedUID, func() error {
 		_, e := m.clientset.CoreV1().Nodes().Patch(ctx, name, types.JSONPatchType, patch, metav1.PatchOptions{})
-		return e
+		return mutationResult(e)
 	}); err != nil {
 		return err
 	}

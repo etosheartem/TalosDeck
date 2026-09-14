@@ -586,7 +586,7 @@ func (m *K8sManager) SetNodeMaintenance(ctx context.Context, identifier string, 
 	}
 	if err := reconcile.Mutate(ctx, "k8s.node.maintenance", nodeName, func() error {
 		_, e := m.clientset.CoreV1().Nodes().Patch(ctx, nodeName, types.StrategicMergePatchType, patch, metav1.PatchOptions{})
-		return e
+		return mutationResult(e)
 	}); err != nil {
 		action := "uncordon"
 		if enable {
@@ -678,7 +678,9 @@ func (m *K8sManager) evictPodChecked(ctx context.Context, pod corev1.Pod, verify
 		if err := reconcile.CheckMutation(ctx); err != nil {
 			return err
 		}
-		err := reconcile.Mutate(ctx, "k8s.pod.evict", pod.Namespace+"/"+pod.Name+"/"+string(pod.UID), func() error { return m.clientset.PolicyV1().Evictions(pod.Namespace).Evict(ctx, eviction) })
+		err := reconcile.Mutate(ctx, "k8s.pod.evict", pod.Namespace+"/"+pod.Name+"/"+string(pod.UID), func() error {
+			return mutationResult(m.clientset.PolicyV1().Evictions(pod.Namespace).Evict(ctx, eviction))
+		})
 		switch {
 		case err == nil, apierrors.IsNotFound(err):
 			return nil

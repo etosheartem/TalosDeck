@@ -101,7 +101,7 @@ func (m *K8sManager) InstallAddon(ctx context.Context, kind string) error {
 		}
 		if err = reconcile.Mutate(ctx, "k8s.addon.apply", object.GetKind()+"/"+object.GetNamespace()+"/"+object.GetName(), func() error {
 			_, e := resource.Patch(ctx, object.GetName(), types.ApplyPatchType, encoded, metav1.PatchOptions{FieldManager: "talosdeck-provisioning"})
-			return e
+			return mutationResult(e)
 		}); err != nil {
 			return fmt.Errorf("cannot apply addon resource %s/%s", object.GetKind(), object.GetName())
 		}
