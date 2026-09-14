@@ -44,6 +44,17 @@ func (s *ProvisionService) ReconcileJob(ctx context.Context, m *jobs.Manager, id
 		if err := ctx.Err(); err != nil {
 			return j, err
 		}
+		// Transport command receipts describe an API acknowledgement, not a
+		// resource desired state. Provider existence cannot prove an eviction,
+		// reboot, configuration apply or opaque talosctl command completed.
+		if intent.Action != "create" && intent.Action != "delete" {
+			if intent.Outcome != "succeeded" {
+				if _, err = m.ObserveIntent(ctx, id, intent.ID, reconcile.Observation{State: "unknown", Identity: intent.Identity, ObservedAt: time.Now().UTC()}); err != nil {
+					return j, errors.New("cannot persist command review requirement")
+				}
+			}
+			continue
+		}
 		machineID := strings.TrimPrefix(intent.ID, intent.Action+":")
 		belongs := plan.Spec.MachineID == machineID || replacementOldID == machineID
 		for _, candidate := range plan.MachineIDs {
