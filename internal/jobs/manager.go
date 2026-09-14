@@ -150,6 +150,9 @@ func OpenCluster(dir, clusterID string, runner Runner) (*Manager, error) {
 			return fail(errors.New("invalid persisted job status"))
 		}
 		if j.WorkflowVersion != reconcile.Version || j.PlanVersion != reconcile.Version || j.StepSchemaVersion != reconcile.Version {
+			if err = preserveIncompatibleJournal(dir, j.ID, data); err != nil {
+				return fail(fmt.Errorf("preserve incompatible journal: %w", err))
+			}
 			j.ReconciliationOutcome = reconcile.RequiresReview
 		}
 		m.jobs[j.ID] = &j

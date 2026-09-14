@@ -79,3 +79,55 @@ func TestPersistedWorkflowUpgradeQuarantinesWithoutReplay(t *testing.T) {
 		})
 	}
 }
+
+func TestIncompatibleJournalArchivesOpaqueFieldsBeforeRewrite(t *testing.T) {
+	dir := t.TempDir()
+	id := "f43db3f9-94c5-4308-8a7e-1ac376ea2570"
+	raw := []byte(`{"id":"` + id + `","status":"running","workflowVersion":99,"planVersion":99,"stepSchemaVersion":99,"futurePlan":{"snapshot":"immutable","evidence":[1,2,3]},"intents":[]}`)
+	path := filepath.Join(dir, id+".json")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		m, err := Open(dir, func(context.Context, *Execution, Request) error { t.Error("replayed incompatible job"); return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = m.Close(); err != nil {
+			t.Fatal(err)
+		}
+		archived, err := os.ReadFile(filepath.Join(dir, "incompatible-originals", id+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(archived) != string(raw) {
+			t.Fatal("opaque original was lost or replaced on restart")
+		}
+		info, err := os.Stat(filepath.Join(dir, "incompatible-originals", id+".json"))
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatal("archive permissions", err)
+		}
+	}
+}
+
+func TestArchiveFailureLeavesOriginalJournalUntouched(t *testing.T) {
+	dir := t.TempDir()
+	id := "f43db3f9-94c5-4308-8a7e-1ac376ea2570"
+	raw := []byte(`{"id":"` + id + `","status":"running","futureEvidence":{"opaque":true}}`)
+	path := filepath.Join(dir, id+".json")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "incompatible-originals"), []byte("block archive"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Open(dir, nil)
+	if err == nil {
+		m.Close()
+		t.Fatal("opened without preserving original")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(raw) {
+		t.Fatal("failed archival rewrote original", err)
+	}
+}
