@@ -132,7 +132,25 @@ func (c CLI) Run(ctx context.Context, args []string, log func(string) error) err
 			dryRun = true
 		}
 	}
+	leaseDone := make(chan struct{})
 	if !dryRun {
+		go func() {
+			defer close(leaseDone)
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if reconcile.CheckMutation(ctx) != nil {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+		defer func() { cancel(); <-leaseDone }()
 		runErr = reconcile.CheckMutation(ctx)
 	}
 	if runErr == nil {

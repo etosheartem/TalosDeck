@@ -750,5 +750,9 @@
   "Инфраструктурная консоль": "Infrastructure console",
   "Режим TalosDeck": "TalosDeck mode",
   "Обычный режим": "Normal mode",
-  "Ограничения режима": "Mode restrictions"
+  "Ограничения режима": "Mode restrictions",
+  "Команда принята; состояние инфраструктуры проверяется отдельно": "Command acknowledged; infrastructure state requires separate verification",
+  "Запрос отклонён без изменений": "Request rejected without changes",
+  "Ответ на команду": "Command response",
+  "Доказанный отказ API": "Confirmed API rejection"
 }

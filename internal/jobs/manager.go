@@ -68,26 +68,27 @@ type Job struct {
 type Runner func(context.Context, *Execution, Request) error
 
 type Manager struct {
-	authorityMu   sync.RWMutex
-	authority     reconcile.Authority
-	instanceID    string
-	executorEpoch uint64
-	mu            sync.Mutex
-	dir           string
-	lock          *os.File
-	jobs          map[string]*Job
-	active        string
-	manual        bool
-	closed        bool
-	storageErr    error
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	runner        Runner
-	onComplete    func(Job)
-	clusterID     string
-	closeOnce     sync.Once
-	closeErr      error
+	requireAuthority bool
+	authorityMu      sync.RWMutex
+	authority        reconcile.Authority
+	instanceID       string
+	executorEpoch    uint64
+	mu               sync.Mutex
+	dir              string
+	lock             *os.File
+	jobs             map[string]*Job
+	active           string
+	manual           bool
+	closed           bool
+	storageErr       error
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	runner           Runner
+	onComplete       func(Job)
+	clusterID        string
+	closeOnce        sync.Once
+	closeErr         error
 }
 
 // SetCompletionHandler installs a bounded observer for audit/notifications.
@@ -306,7 +307,7 @@ func (m *Manager) run(id string) {
 		m.mu.Lock()
 		j := m.jobs[id]
 		for _, intent := range j.Intents {
-			if intent.Outcome != "succeeded" {
+			if intent.Outcome != "succeeded" && !reconcile.CommandReceipt(intent) {
 				runErr = ErrUncertain
 				break
 			}
@@ -358,6 +359,8 @@ func (m *Manager) run(id string) {
 		runErr = fmt.Errorf("%w: %v", ErrUncertain, runErr)
 		return
 	}
+	ctx = reconcile.WithMutationGuard(ctx, m.validateAuthority)
+	ctx = reconcile.WithMutationRecorder(ctx, e.RecordMutation)
 	runErr = m.runner(ctx, e, r)
 }
 func (m *Manager) List() []Job {
@@ -432,8 +435,9 @@ func (m *Manager) Close() error {
 }
 
 type Execution struct {
-	manager *Manager
-	id      string
+	commandMu sync.Mutex
+	manager   *Manager
+	id        string
 }
 
 var sensitiveOutput = regexp.MustCompile(`(?i)(authorization|bearer\s|password|private[ _-]?key|client[ _-]?key|client-certificate-data|\btoken\b|\bsecret\b)`)

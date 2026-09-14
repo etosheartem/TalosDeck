@@ -32,16 +32,17 @@ type Observation struct {
 	ObservedAt time.Time `json:"observedAt"`
 }
 type Intent struct {
-	ID                string       `json:"id"`
-	Action            string       `json:"action"`
-	WorkflowVersion   int          `json:"workflowVersion"`
-	PlanVersion       int          `json:"planVersion"`
-	StepSchemaVersion int          `json:"stepSchemaVersion"`
-	Identity          Identity     `json:"identity"`
-	CreatedAt         time.Time    `json:"createdAt"`
-	ExecutorEpoch     uint64       `json:"executorEpoch"`
-	Outcome           string       `json:"outcome"`
-	Evidence          *Observation `json:"evidence,omitempty"`
+	ManagementInstanceID string       `json:"managementInstanceId,omitempty"`
+	ID                   string       `json:"id"`
+	Action               string       `json:"action"`
+	WorkflowVersion      int          `json:"workflowVersion"`
+	PlanVersion          int          `json:"planVersion"`
+	StepSchemaVersion    int          `json:"stepSchemaVersion"`
+	Identity             Identity     `json:"identity"`
+	CreatedAt            time.Time    `json:"createdAt"`
+	ExecutorEpoch        uint64       `json:"executorEpoch"`
+	Outcome              string       `json:"outcome"`
+	Evidence             *Observation `json:"evidence,omitempty"`
 }
 
 func (i Intent) Compatible() bool {

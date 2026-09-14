@@ -89,6 +89,16 @@ func RegisterJobRoutes(router fiber.Router, manager *jobs.Manager, service *oper
 		if len(c.Body()) != 0 {
 			return fiber.NewError(400, "Reconciliation accepts no client-supplied evidence")
 		}
+		if len(j.Intents) == 0 {
+			return fiber.NewError(409, "Job has no durable intents; explicit review required")
+		}
+		if j.Request.ProvisionID == "" {
+			observed, err := manager.ReviewCommands(c.UserContext(), j.ID)
+			if err != nil {
+				return jobError(err)
+			}
+			return c.JSON(observed)
+		}
 		if service.Provision == nil {
 			return fiber.NewError(409, "Provider reconciliation unavailable")
 		}
@@ -147,7 +157,7 @@ func jobError(err error) error {
 
 // Protect legacy node, backup and provisioning mutations with the same cluster
 // lock as asynchronous upgrades. Reads and stop/review actions stay available.
-func jobMutationGuard(manager *jobs.Manager) fiber.Handler {
+func jobMutationGuard(manager *jobs.Manager, authentication ...*auth.AuthManager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if manager == nil || c.Method() == fiber.MethodGet || c.Method() == fiber.MethodHead || c.Method() == fiber.MethodOptions {
 			return c.Next()
@@ -164,6 +174,17 @@ func jobMutationGuard(manager *jobs.Manager) fiber.Handler {
 			return jobError(err)
 		}
 		defer release()
-		return c.Next()
+		var am *auth.AuthManager
+		if len(authentication) > 0 {
+			am = authentication[0]
+		}
+		user := auth.GetContextUser(c, am)
+		ctx, finish := manager.ManualContext(c.UserContext(), user)
+		c.SetUserContext(ctx)
+		err = c.Next()
+		if journalErr := finish(err); journalErr != nil {
+			return jobError(journalErr)
+		}
+		return err
 	}
 }

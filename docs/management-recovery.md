@@ -113,7 +113,7 @@ safe here because the drill is isolated and never executes infrastructure operat
 Forward the journal and failed-unit status to independent monitoring. Updating
 `latest-receipt.json` is a backup publication step, never a restore-drill step.
 
-## Independent execution authority (opt-in foundation)
+## Independent execution authority (required for mutations)
 
 Install the same binary on an independent trusted SSH host. Its local POSIX filesystem
 holds an exclusive process lease and a monotonic epoch, outside DATA and outside the
@@ -134,7 +134,10 @@ job checkpoint and persisted provider intent validates that lease. Disconnect po
 the client permanently; it cannot silently reconnect and reuse the old epoch.
 A new successful acquisition increments and fsyncs the authority's epoch.
 
-Enabling authority is opt-in for existing installations. Once enabled, its configuration
+Production startup now requires an independent authority for mutation admission and job execution.
+Without one, read-only access and login remain available; writes return HTTP 423.
+Existing installations must provision the SSH host before enabling infrastructure operations.
+Once enabled, its configuration
 and last acquired epoch are persisted in DATA; omitting flags on restart does not disable
 it. Acquisition requires the authority epoch to match the saved expected epoch. A stale
 copy is refused even after the newer executor has exited. A crash between remote grant
@@ -237,3 +240,31 @@ against declared 24h/30min lab targets. Image and binary were cached; target was
 same hypervisor outside the guest disk. This does not prove hypervisor-loss recovery.
 Separate process tests verified exclusive authority, returning stale executors (including
 after the newer process exited), and that omitted flags do not bypass persisted policy.
+
+### TD-31 dispatch journal (14 September 2026)
+
+Job contexts and synchronous legacy node/backup routes now persist bounded command
+intents at Talos/Kubernetes/Proxmox/S3 dispatch and before talosctl launch. Intents
+include workflow/plan/step versions, executor instance/epoch, action and a hash of
+the destination; request bodies and credentials are not included. Command ACK is
+only a receipt, never proof of infrastructure convergence. Unknown commands block
+further dispatch even if the caller tries again; typed conclusive API rejections
+(e.g. PDB 429) permit a separately journaled retry. Provider ownership reconciliation
+does not infer completion of reboot, configuration, or eviction from VM existence.
+S3 SDK retries are disabled; each multipart write has its own admission check.
+
+The production binary requires authority; low-level compatibility constructors used
+in tests/embedding do not provide fencing on their own. All clients of one deployment
+must share the same independent authority. Opaque talosctl commands are also monitored
+for lease loss and cancelled, but already accepted RPCs cannot be undone and internal
+CLI RPCs may occur before loss is detected. This is not server-side epoch enforcement.
+
+Unknown workflow versions are quarantined; their original JSON is archived atomically
+under `incompatible-originals` before rewriting the current journal. Review does not
+upgrade an incompatible workflow into an executable one.
+
+Verified on 14 September: isolated real SSH helper killed after durable UNKNOWN intent,
+zero external mutation calls; reconnect/reopen does not replay. Existing C8/C9 evidence
+remains from the earlier build. Re-running live C8 with the expanded transport journal
+and the historical-binary upgrade rehearsal are tracked separately; TD-31 is not yet
+fully accepted solely on unit and dispatch regression tests.

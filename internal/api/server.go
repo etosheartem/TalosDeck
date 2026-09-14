@@ -142,7 +142,7 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 
 	// REST API Routes Group
 	api := app.Group("/api")
-	api.Use(jobMutationGuard(cfg.Jobs))
+	api.Use(jobMutationGuard(cfg.Jobs, authMgr))
 	RegisterJobRoutes(api, cfg.Jobs, cfg.Operations, authMgr)
 	RegisterCertificateRoutes(api, cfg.Certificates, authMgr)
 	RegisterHealthScoreRoutes(api, cfg.Health, authMgr)

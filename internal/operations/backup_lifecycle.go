@@ -445,7 +445,14 @@ func (t backupMutationTransport) RoundTrip(req *http.Request) (*http.Response, e
 	err := reconcile.Mutate(req.Context(), "backup.s3-"+strings.ToLower(req.Method), req.URL.String(), func() error {
 		var err error
 		response, err = t.RoundTripper.RoundTrip(req)
+		if err == nil && response != nil && response.StatusCode >= 400 {
+			return fmt.Errorf("S3 mutation rejected with status %d", response.StatusCode)
+		}
 		return err
 	})
+	if err != nil && response != nil {
+		response.Body.Close()
+		response = nil
+	}
 	return response, err
 }

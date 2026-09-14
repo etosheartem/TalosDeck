@@ -160,7 +160,12 @@ func RegisterBackupLifecycleRoutes(router fiber.Router, s *operations.BackupServ
 			return jobError(err)
 		}
 		defer release()
-		if err = s.Delete(c.UserContext(), c.Params("id")); err != nil {
+		ctx, finish := jm.ManualContext(c.UserContext(), auth.GetContextUser(c, am))
+		err = s.Delete(ctx, c.Params("id"))
+		if journalErr := finish(err); journalErr != nil {
+			return jobError(journalErr)
+		}
+		if err != nil {
 			return fiber.NewError(422, err.Error())
 		}
 		record(c, "backup.delete", map[string]any{"backupId": c.Params("id")})

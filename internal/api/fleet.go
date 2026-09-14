@@ -35,6 +35,7 @@ import (
 )
 
 type FleetOptions struct {
+	RequireExecutionAuthority               bool
 	ManagementAuthorityIdentity             string
 	ExecutionAuthority                      reconcile.Authority
 	ManagementInstanceID                    string
@@ -118,6 +119,9 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 		return nil, err
 	}
 	f.globalJobs, f.globalOperations = globalJobs, globalOps
+	if opts.RequireExecutionAuthority {
+		globalJobs.RequireExecutionAuthority()
+	}
 	if opts.ExecutionAuthority != nil && !safeMode {
 		if err := globalJobs.SetExecutionAuthority(opts.ExecutionAuthority, opts.ManagementInstanceID, opts.ExecutionEpoch); err != nil {
 			f.Close()
@@ -336,6 +340,9 @@ func (f *Fleet) newRuntime(cluster clusters.Cluster, creds clusters.Credentials)
 		return nil, err
 	}
 	rt.config.Jobs = jm
+	if f.options.RequireExecutionAuthority {
+		jm.RequireExecutionAuthority()
+	}
 	if f.options.ExecutionAuthority != nil && !f.recoverySafeMode {
 		if err := jm.SetExecutionAuthority(f.options.ExecutionAuthority, f.options.ManagementInstanceID, f.options.ExecutionEpoch); err != nil {
 			return nil, err
@@ -622,6 +629,9 @@ func (f *Fleet) Import(ctx context.Context, req ImportClusterRequest) (clusters.
 
 func (f *Fleet) register(app *fiber.App) {
 	app.Use(func(c *fiber.Ctx) error {
+		if f.options.ExecutionAuthority == nil && f.options.RequireExecutionAuthority && !f.recoverySafeMode && c.Method() != fiber.MethodGet && c.Method() != fiber.MethodHead && c.Method() != fiber.MethodOptions && !strings.HasPrefix(c.Path(), "/api/auth/") && !isReadOnlyReconcilePath(c.Path()) {
+			return fiber.NewError(423, "Independent execution authority is required; configure authority before infrastructure mutations")
+		}
 		if f.options.ExecutionAuthority == nil || f.recoverySafeMode {
 			return c.Next()
 		}

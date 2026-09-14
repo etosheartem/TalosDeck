@@ -233,15 +233,21 @@ func (s *ProvisionService) configureMachines(ctx context.Context, e *jobs.Execut
 			bootstrap.Close()
 			return err
 		}
-		response, applyErr := bootstrap.ApplyConfiguration(ctx, &machine.ApplyConfigurationRequest{Data: plan.Configs[i], Mode: machine.ApplyConfigurationRequest_AUTO})
-		bootstrap.Close()
-		if applyErr != nil || response == nil || len(response.Messages) != 1 {
-			return fmt.Errorf("%w: machine configuration application not confirmed", jobs.ErrUncertain)
-		}
-		for _, message := range response.Messages {
-			if message == nil || (message.Metadata != nil && message.Metadata.Error != "") {
+		applyErr := reconcile.Mutate(ctx, "talos.apply-config", record.ID, func() error {
+			response, err := bootstrap.ApplyConfiguration(ctx, &machine.ApplyConfigurationRequest{Data: plan.Configs[i], Mode: machine.ApplyConfigurationRequest_AUTO})
+			if err != nil || response == nil || len(response.Messages) != 1 {
 				return jobs.ErrUncertain
 			}
+			for _, message := range response.Messages {
+				if message == nil || (message.Metadata != nil && message.Metadata.Error != "") {
+					return jobs.ErrUncertain
+				}
+			}
+			return nil
+		})
+		bootstrap.Close()
+		if applyErr != nil {
+			return applyErr
 		}
 		record.Address = machineFinalAddress(plan.Spec.Machines[i], record)
 		record.Status = "config-applied"
@@ -294,7 +300,7 @@ func (s *ProvisionService) verifyConfiguredMachines(ctx context.Context, e *jobs
 		if err := e.Checkpoint(ctx, "bootstrap-etcd", "Bootstrapping the new cluster exactly once"); err != nil {
 			return err
 		}
-		if err := talosClient.Bootstrap(client.WithNode(ctx, cp), &machine.BootstrapRequest{}); err != nil {
+		if err := reconcile.Mutate(ctx, "talos.bootstrap", plan.ID, func() error { return talosClient.Bootstrap(client.WithNode(ctx, cp), &machine.BootstrapRequest{}) }); err != nil {
 			return fmt.Errorf("%w: bootstrap outcome not confirmed", jobs.ErrUncertain)
 		}
 		if err := e.Checkpoint(ctx, "wait-kubernetes", "Waiting for Kubernetes client credentials"); err != nil {
@@ -327,12 +333,11 @@ func (s *ProvisionService) verifyConfiguredMachines(ctx context.Context, e *jobs
 			if err := e.Checkpoint(ctx, "install-addon", "Installing bundled "+addon); err != nil {
 				return err
 			}
-			if err := s.poll(ctx, 5*time.Minute, func(c context.Context) bool {
-				check, cancel := context.WithTimeout(c, 30*time.Second)
-				defer cancel()
-				return kube.InstallAddon(check, addon) == nil
-			}); err != nil {
-				return fmt.Errorf("addon %s could not be applied; inspect the retained cluster", addon)
+			check, cancel := context.WithTimeout(ctx, 30*time.Second)
+			installErr := kube.InstallAddon(check, addon)
+			cancel()
+			if installErr != nil {
+				return fmt.Errorf("%w: addon application outcome not confirmed; inspect retained cluster", jobs.ErrUncertain)
 			}
 			if err := s.poll(ctx, 15*time.Minute, func(c context.Context) bool {
 				check, cancel := context.WithTimeout(c, 10*time.Second)

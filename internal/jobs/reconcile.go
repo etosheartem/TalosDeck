@@ -29,6 +29,9 @@ func (m *Manager) validateAuthority(ctx context.Context) error {
 	defer m.authorityMu.RUnlock()
 	// Configuration is immutable once installed, and installed before submission.
 	if m.authority == nil {
+		if m.requireAuthority {
+			return reconcile.ErrAuthority
+		}
 		return nil
 	} // Legacy callers; not distributed fencing.
 	check, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -94,7 +97,7 @@ func (e *Execution) BeginIntent(ctx context.Context, id, action string, identity
 	if m.storageErr != nil {
 		return m.storageErr
 	}
-	if !identity.Valid() || len(id) == 0 || len(id) > 128 || (action != "create" && action != "delete") {
+	if !identity.Valid() || len(id) == 0 || len(id) > 128 || (action != "create" && action != "delete" && action != "command") {
 		return errors.New("invalid durable intent")
 	}
 	if len(j.Intents) >= 256 {
@@ -116,7 +119,7 @@ func (e *Execution) BeginIntent(ctx context.Context, id, action string, identity
 	if err := m.validateAuthority(ctx); err != nil {
 		return fmt.Errorf("%w: %v", ErrUncertain, err)
 	}
-	j.Intents = append(j.Intents, reconcile.Intent{ID: id, Action: action, Identity: identity, WorkflowVersion: 1, PlanVersion: 1, StepSchemaVersion: 1, CreatedAt: time.Now().UTC(), ExecutorEpoch: m.executorEpoch, Outcome: reconcile.Unknown})
+	j.Intents = append(j.Intents, reconcile.Intent{ID: id, Action: action, ManagementInstanceID: m.instanceID, Identity: identity, WorkflowVersion: 1, PlanVersion: 1, StepSchemaVersion: 1, CreatedAt: time.Now().UTC(), ExecutorEpoch: m.executorEpoch, Outcome: reconcile.Unknown})
 	j.ReconciliationOutcome = reconcile.Unknown
 	if err := m.save(j); err != nil {
 		m.storageErr = err
@@ -181,4 +184,11 @@ func (m *Manager) ObserveIntent(ctx context.Context, jobID, intentID string, o r
 // ObserveIntent attaches a bounded observation to this execution's intent.
 func (e *Execution) ObserveIntent(ctx context.Context, intentID string, o reconcile.Observation) (string, error) {
 	return e.manager.ObserveIntent(ctx, e.id, intentID, o)
+}
+
+// RequireExecutionAuthority disables unfenced legacy admission in production.
+func (m *Manager) RequireExecutionAuthority() {
+	m.authorityMu.Lock()
+	defer m.authorityMu.Unlock()
+	m.requireAuthority = true
 }

@@ -4,6 +4,15 @@ TalosDeck — один контейнер с API, встроенным инте�
 
 SQLite и файловые jobs требуют **одной реплики**. Helm использует `Recreate`; несколько процессов не должны открывать общую БД.
 
+## Право выполнения изменений
+
+После обновления TD-31 production binary допускает инфраструктурные изменения только
+с независимым SSH execution authority. Без него доступны чтение и вход, mutations
+возвращают HTTP 423. Перед обновлением рабочей установки подготовьте authority,
+SSH key/known_hosts и постоянный state вне management VM по
+[инструкции восстановления](management-recovery.md#independent-execution-authority-required-for-mutations).
+Не запускайте одновременно прежний unfenced binary и новый executor.
+
 ## Образ
 
 Из корня репозитория, заменив namespace для своего fork:

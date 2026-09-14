@@ -134,7 +134,7 @@ func main() {
 			log.Fatal("Cannot persist acquired execution epoch: ", err)
 		}
 	}
-	fleetOpts := api.FleetOptions{Store: store, Auth: authMgr, Audit: globalAudit, DataDir: *dataDir, LegacyBackupDir: *backupDir, LegacyJobsDir: os.Getenv("TALOSDECK_JOBS_DIR")}
+	fleetOpts := api.FleetOptions{RequireExecutionAuthority: true, Store: store, Auth: authMgr, Audit: globalAudit, DataDir: *dataDir, LegacyBackupDir: *backupDir, LegacyJobsDir: os.Getenv("TALOSDECK_JOBS_DIR")}
 	if execution != nil {
 		fleetOpts.ExecutionAuthority = execution
 		fleetOpts.ManagementInstanceID = instanceID

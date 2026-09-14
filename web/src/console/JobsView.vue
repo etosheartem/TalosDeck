@@ -475,8 +475,8 @@ async function act(action: "stop" | "acknowledge") {
             <dt>{{ t("Идентичность машины") }}</dt><dd><code>{{ intent.identity.generation }}</code></dd>
             <dt>{{ t("Владелец ресурса") }}</dt><dd><code>{{ intent.identity.ownerId }}</code></dd>
             <dt>{{ t("Эпоха исполнителя") }}</dt><dd>{{ intent.executorEpoch || t("Без независимого lease") }}</dd>
-            <dt>{{ t("Наблюдение") }}</dt><dd>{{ intent.evidence ? ({exists:t('Ресурс существует'),absent:t('Удаление подтверждено'),unknown:t('Результат неизвестен')}[intent.evidence.state] || intent.evidence.state) : t('Доказательств нет') }}</dd>
-            <template v-if="intent.evidence"><dt>{{ t("Проверено") }}</dt><dd>{{ date(intent.evidence.observedAt) }}</dd><dt>{{ t("Источник доказательства") }}</dt><dd>{{ intent.evidence.source === 'provider_ownership_verified' ? t('Проверена принадлежность машины') : intent.evidence.source === 'provider_delete_task_completed' ? t('Завершённое задание удаления у провайдера') : t('Доказательств нет') }}</dd></template>
+            <dt>{{ t("Наблюдение") }}</dt><dd>{{ intent.evidence ? ({exists:t('Ресурс существует'),absent:t('Удаление подтверждено'),unknown:t('Результат неизвестен'),acknowledged:t('Команда принята; состояние инфраструктуры проверяется отдельно'),rejected:t('Запрос отклонён без изменений')}[intent.evidence.state] || intent.evidence.state) : t('Доказательств нет') }}</dd>
+            <template v-if="intent.evidence"><dt>{{ t("Проверено") }}</dt><dd>{{ date(intent.evidence.observedAt) }}</dd><dt>{{ t("Источник доказательства") }}</dt><dd>{{ intent.evidence.source === 'command_acknowledged' ? t('Ответ на команду') : intent.evidence.source === 'command_rejected' ? t('Доказанный отказ API') : intent.evidence.source === 'provider_ownership_verified' ? t('Проверена принадлежность машины') : intent.evidence.source === 'provider_delete_task_completed' ? t('Завершённое задание удаления у провайдера') : t('Доказательств нет') }}</dd></template>
           </dl>
         </details>
       </section>
