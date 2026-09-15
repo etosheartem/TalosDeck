@@ -131,7 +131,11 @@ func SetupServer(cfg ServerConfig) *fiber.App {
 	app.Use(recoveryGuard(safeMode))
 	app.Get("/api/recovery/status", func(c *fiber.Ctx) error {
 		c.Set("Cache-Control", "no-store")
-		return c.JSON(fiber.Map{"safeMode": safeMode, "requiresReview": safeMode, "automaticResume": false, "automationPaused": cfg.AutomationPaused || (cfg.Fleet != nil && cfg.Fleet.automationPaused)})
+		paused := cfg.AutomationPaused || (cfg.Fleet != nil && cfg.Fleet.automationPaused)
+		// A recorded resume decision does not start automation in this process; the
+		// console must show a restart is still required rather than a resumed state.
+		return c.JSON(fiber.Map{"safeMode": safeMode, "requiresReview": safeMode, "automaticResume": false, "automationPaused": paused,
+			"automationResumeRecorded": paused && cfg.Fleet != nil && cfg.Fleet.automationResumeRecorded()})
 	})
 	app.Use(cfg.DownloadTickets.Authenticate)
 	app.Use(auditMutationGuard(auditMgr, authMgr, cfg.Fleet != nil))

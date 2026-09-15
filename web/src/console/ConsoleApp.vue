@@ -44,6 +44,7 @@ import WorkerReplacementView from "./WorkerReplacementView.vue";
 import ConfigView from "./ConfigView.vue";
 import SecurityView from "./SecurityView.vue";
 import ProvidersView from "./ProvidersView.vue";
+import RecoveryView from "./RecoveryView.vue";
 import ProvisionView from "./ProvisionView.vue";
 import DiagnosticsView from "./DiagnosticsView.vue";
 import CertificatesView from "./CertificatesView.vue";
@@ -190,7 +191,7 @@ function openWorkload(focus:{namespace?:string;name?:string;node?:string}) {work
 function inspectRelatedNode(name:string, logs=false) {const node=nodes.value.find(n=>n.hostname===name||n.ip===name);if(!node){notify(t('Нода отсутствует в текущем списке. Обновите состояние кластера.'));return;}if(logs){nodeIP.value=node.ip;navigate('logs');}else inspected.value=node;}
 function relatedKubernetes(mode:string, namespace:string) {workloadFocus.value={namespace:namespace==='—'?undefined:namespace};navigate(mode);}
 function nodeStorage(node:NodeOverview) {nodeIP.value=node.ip;inspected.value=null;navigate('storage');}
-const settingsScope=computed(()=>['platform-settings','providers','users'].includes(active.value)?'platform':['cluster-settings','settings','config','alerts'].includes(active.value)?'cluster':'');
+const settingsScope=computed(()=>['platform-settings','providers','users','recovery-protection'].includes(active.value)?'platform':['cluster-settings','settings','config','alerts'].includes(active.value)?'cluster':'');
 
 const confirmation = ref<{
   title: string;
@@ -774,7 +775,7 @@ const protectedPage = computed(
               </button>
             </div>
           </div>
-          <nav v-if="settingsScope && !['platform-settings','cluster-settings'].includes(active)" class="section-tabs" :aria-label="t('Разделы настроек')"><button @click="navigate(settingsScope==='platform'?'platform-settings':'cluster-settings')">{{ t('Все настройки') }}</button><button v-for="item in pages.filter(p=>settingsScope==='platform'?['providers','users'].includes(p.id)&& (p.id!=='providers'||isAdmin):['settings','config','alerts'].includes(p.id)&&(p.id==='settings'||isAdmin))" :key="item.id" :aria-current="active===item.id?'page':undefined" @click="navigate(item.id)">{{ item.title }}</button></nav>
+          <nav v-if="settingsScope && !['platform-settings','cluster-settings'].includes(active)" class="section-tabs" :aria-label="t('Разделы настроек')"><button @click="navigate(settingsScope==='platform'?'platform-settings':'cluster-settings')">{{ t('Все настройки') }}</button><button v-for="item in pages.filter(p=>settingsScope==='platform'?['providers','users','recovery-protection'].includes(p.id)&& (p.id==='users'||isAdmin):['settings','config','alerts'].includes(p.id)&&(p.id==='settings'||isAdmin))" :key="item.id" :aria-current="active===item.id?'page':undefined" @click="navigate(item.id)">{{ item.title }}</button></nav>
           <div
             v-if="
               !globalPage &&
@@ -849,6 +850,7 @@ const protectedPage = computed(
             <details v-if="isAdmin" class="fleet-jobs" :open="showGlobalJobs" @toggle="showGlobalJobs=($event.target as HTMLDetailsElement).open"><summary>{{t('Создание кластеров')}}</summary><JobsView mode="jobs" global /></details>
           </section>
           <ProvidersView v-else-if="active === 'providers' && isAdmin" />
+          <RecoveryView v-else-if="active === 'recovery-protection' && isAdmin" />
           <SecurityView v-else-if="active === 'users'" />
           <div v-else-if="!selectedCluster" class="access-state">
             <h2>{{ t("Нет выбранного кластера") }}</h2>

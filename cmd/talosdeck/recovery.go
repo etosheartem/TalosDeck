@@ -9,11 +9,31 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"talosdeck/internal/drtarget"
 	"talosdeck/internal/recovery"
 )
+
+// targetLocator identifies the archive without exposing target credentials.
+func targetLocator(config drtarget.Config, object string) string {
+	if object == "" {
+		return ""
+	}
+	if config.Type == "ssh" {
+		return "ssh://" + config.Host + "/" + strings.TrimPrefix(config.Directory, "/") + "/" + object
+	}
+	return "s3://" + config.Bucket + "/" + object
+}
+
+// recordObservation must never turn a completed recovery operation into a failure.
+// A history directory that cannot be written is reported and the command result stands.
+func recordObservation(dir string, r recovery.Record) {
+	if err := recovery.Append(dir, r); err != nil {
+		fmt.Fprintln(os.Stderr, "recovery history not recorded:", err)
+	}
+}
 
 func recoveryCommand(args []string) error {
 	if len(args) > 0 && args[0] == "activate" {
@@ -27,6 +47,7 @@ func recoveryCommand(args []string) error {
 	key := fs.String("key", "", "independently supplied master keyring")
 	target := fs.String("target", "", "independent S3 (HTTPS) or SSH target JSON file")
 	receiptPath := fs.String("receipt", "", "receipt output (backup) or input (restore/drill)")
+	historyDir := fs.String("history", "", "append the observation to this recovery history directory (read by the console)")
 	completeData := fs.Bool("confirm-complete-data-directory", false, "confirm all durable journals/backups/config artifacts are under DATA; external deployment secrets are retained independently")
 	timeout := fs.Duration("timeout", 30*time.Minute, "operation deadline")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -90,8 +111,12 @@ func recoveryCommand(args []string) error {
 		}
 		manifest, err := recovery.Create(ctx, recovery.Options{DataDir: *data, KeyPath: *key, ArchivePath: archive, ApplicationVersion: version})
 		if err != nil {
+			recordObservation(*historyDir, recovery.Record{Kind: "backup", Outcome: "failed", Error: err.Error()})
 			return err
 		}
+		// Create validated integrity, decryption and schema on a separate copy
+		// before any transfer; the archive is not yet off-host at this point.
+		validatedAt := time.Now().UTC()
 		var receipt drtarget.Receipt
 		if config.Type == "ssh" {
 			receipt, err = drtarget.SSHUpload(ctx, config.Host, config.Directory, archive)
@@ -101,6 +126,15 @@ func recoveryCommand(args []string) error {
 			return errors.New("unsupported recovery target type")
 		}
 		if err != nil {
+			// An upload that left a locator behind has an unproven outcome: the
+			// object may exist and may be complete. Never record that as failed.
+			outcome := "failed"
+			if receipt.Object != "" {
+				outcome = "unknown"
+			}
+			recordObservation(*historyDir, recovery.Record{Kind: "backup", Outcome: outcome, BackupCreatedAt: manifest.CreatedAt,
+				DecryptVerifiedAt: &validatedAt, SchemaVerifiedAt: &validatedAt, SchemaVersion: manifest.SchemaVersion,
+				ApplicationVersion: manifest.ApplicationVersion, Target: targetLocator(config, receipt.Object), Error: err.Error()})
 			if receipt.Object != "" {
 				if writeErr := json.NewEncoder(out).Encode(struct {
 					Receipt  drtarget.Receipt `json:"receipt"`
@@ -120,11 +154,12 @@ func recoveryCommand(args []string) error {
 			}
 			return err
 		}
+		uploadedAt := time.Now().UTC()
 		record := struct {
 			Receipt    drtarget.Receipt  `json:"receipt"`
 			Manifest   recovery.Manifest `json:"manifest"`
 			UploadedAt time.Time         `json:"uploadedAt"`
-		}{receipt, manifest, time.Now().UTC()}
+		}{receipt, manifest, uploadedAt}
 		if err = json.NewEncoder(out).Encode(record); err != nil {
 			return err
 		}
@@ -141,6 +176,12 @@ func recoveryCommand(args []string) error {
 			return err
 		}
 		complete = true
+		// The transfer was read back from the target, so the checksum is proven
+		// there; decryption and schema were proven locally before the upload.
+		recordObservation(*historyDir, recovery.Record{Kind: "backup", Outcome: "succeeded", BackupCreatedAt: manifest.CreatedAt,
+			UploadedAt: &uploadedAt, ChecksumVerifiedAt: &uploadedAt, DecryptVerifiedAt: &validatedAt, SchemaVerifiedAt: &validatedAt,
+			SchemaVersion: manifest.SchemaVersion, ApplicationVersion: manifest.ApplicationVersion,
+			Target: targetLocator(config, receipt.Object), SizeBytes: receipt.Size})
 		fmt.Println("Off-host target upload read-back verified; retain receipt and master key separately. Target failure-domain independence must be verified by the operator.")
 		return nil
 	}
@@ -161,7 +202,9 @@ func recoveryCommand(args []string) error {
 	} else {
 		return errors.New("unsupported recovery target type")
 	}
+	locator := targetLocator(config, record.Receipt.Object)
 	if err != nil {
+		recordObservation(*historyDir, recovery.Record{Kind: args[0], Outcome: "failed", Target: locator, Error: err.Error()})
 		return err
 	}
 	started := time.Now()
@@ -172,8 +215,22 @@ func recoveryCommand(args []string) error {
 		manifest, err = recovery.Drill(ctx, archive, *key)
 	}
 	if err != nil {
+		recordObservation(*historyDir, recovery.Record{Kind: args[0], Outcome: "failed", BackupCreatedAt: manifest.CreatedAt,
+			Target: locator, DurationSeconds: time.Since(started).Seconds(), Error: err.Error()})
 		return err
 	}
+	// Every entry checksum, the archive key and the schema were proven on this copy.
+	// The verification copy is discarded (drill) or published as a new data directory
+	// (restore); neither becomes a backup, and neither changes BackupCreatedAt.
+	checkedAt := time.Now().UTC()
+	observation := recovery.Record{Kind: args[0], Outcome: "succeeded", BackupCreatedAt: manifest.CreatedAt,
+		ChecksumVerifiedAt: &checkedAt, DecryptVerifiedAt: &checkedAt, SchemaVerifiedAt: &checkedAt,
+		SchemaVersion: manifest.SchemaVersion, ApplicationVersion: manifest.ApplicationVersion,
+		Target: locator, SizeBytes: record.Receipt.Size, DurationSeconds: time.Since(started).Seconds()}
+	if args[0] == "drill" {
+		observation.RestoreTestedAt = &checkedAt
+	}
+	recordObservation(*historyDir, observation)
 	return json.NewEncoder(os.Stdout).Encode(struct {
 		Operation         string            `json:"operation"`
 		Manifest          recovery.Manifest `json:"manifest"`

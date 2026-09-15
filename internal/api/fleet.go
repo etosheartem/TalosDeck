@@ -44,6 +44,9 @@ type FleetOptions struct {
 	Store                                   *clusters.Store
 	Auth                                    *auth.AuthManager
 	DataDir, LegacyBackupDir, LegacyJobsDir string
+	// RecoveryHistoryDir is appended to by the offline recovery CLI and only read
+	// here. Empty disables the history view instead of implying there is none.
+	RecoveryHistoryDir string
 }
 
 type clusterRuntime struct {
@@ -59,6 +62,9 @@ type clusterRuntime struct {
 type Fleet struct {
 	recoverySafeMode bool
 	automationPaused bool
+	// automationResumePending records a resume decision taken in this process. It
+	// never starts automation here: the wiring happens at startup.
+	automationResumePending bool
 	options          FleetOptions
 	mu               sync.RWMutex
 	importMu         sync.Mutex
@@ -84,6 +90,9 @@ func OpenFleet(opts FleetOptions) (*Fleet, error) {
 	}
 	if opts.LegacyJobsDir == "" {
 		opts.LegacyJobsDir = filepath.Join(opts.DataDir, "jobs")
+	}
+	if opts.RecoveryHistoryDir == "" {
+		opts.RecoveryHistoryDir = filepath.Join(opts.DataDir, "recovery-history")
 	}
 	recoveryState, err := recovery.ReadState(context.Background(), opts.Store, opts.DataDir)
 	if err != nil {
@@ -689,6 +698,7 @@ func (f *Fleet) register(app *fiber.App) {
 			return c.JSON(fiber.Map{"events": f.options.Audit.GetEvents(limit, c.Query("action"), c.Query("search")), "total": f.options.Audit.TotalCount()})
 		})
 	}
+	f.registerRecoveryProtection(app)
 	RegisterImageRoutes(global, f.images, f.options.Auth)
 	RegisterTemplateRoutes(global, f.templates, f.globalOperations.Provision, f.options.Auth)
 	RegisterProviderRoutes(global, f.options.Store, f.options.Auth)

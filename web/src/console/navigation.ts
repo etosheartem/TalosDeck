@@ -53,6 +53,7 @@ export function navigation() {
     {id:'fleet-machines',title:t('Ресурсы провайдеров'),icon:Boxes,group:t('Платформа'),description:t('Машины TalosDeck и ресурсы незавершённых операций.'),global:true},
     {id:'templates',title:t('Шаблоны кластеров'),icon:Boxes,group:t('Платформа'),description:t('Повторяемые конфигурации и неизменяемые ревизии кластеров.'),global:true},
     {id:'images',title:t('Образы Talos'),icon:Archive,group:t('Платформа'),description:t('Image Factory: версии, расширения и воспроизводимые образы.'),global:true},
+    {id:'recovery-protection',hidden:true,title:t('Восстановление TalosDeck'),icon:Archive,group:t('Платформа'),description:t('Защита панели управления: копии, проверки и режим автоматизации.'),global:true},
     {id:'platform-settings',title:t('Настройки платформы'),icon:Settings,group:t('Платформа'),description:t('Подключения, пользователи и доступ к платформе.'),global:true},
     {
       id: "overview",

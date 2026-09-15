@@ -46,7 +46,8 @@ mid-write to obtain a backup.
 ```sh
 talosdeck recovery backup --data /srv/talosdeck/data --confirm-complete-data-directory \
   --key /secure/talosdeck/master.key --target /secure/dr-target.json \
-  --receipt /secure/receipts/backup-2026-09-13.json
+  --receipt /secure/receipts/backup-2026-09-13.json \
+  --history /var/lib/talosdeck-recovery-history
 ```
 
 The command uploads a uniquely named encrypted archive and reads it back to verify its
@@ -81,7 +82,8 @@ Run this read-only command periodically from a machine with independently suppli
 
 ```sh
 talosdeck recovery drill --key /secure/talosdeck/master.key \
-  --target /secure/dr-target.json --receipt /secure/receipts/backup-2026-09-13.json
+  --target /secure/dr-target.json --receipt /secure/receipts/backup-2026-09-13.json \
+  --history /var/lib/talosdeck-recovery-history
 ```
 
 It downloads, decrypts, validates integrity/schema and performs supported migrations in
@@ -112,6 +114,51 @@ The timer defaults to daily; change OnCalendar for your policy. Persistent catch
 safe here because the drill is isolated and never executes infrastructure operations.
 Forward the journal and failed-unit status to independent monitoring. Updating
 `latest-receipt.json` is a backup publication step, never a restore-drill step.
+
+## Protection history and the console view
+
+`--history DIR` appends one immutable JSON observation per recovery command. Each
+record stores the archive creation time from the manifest and the times of the checks
+that actually passed: upload, checksum, decryption, schema and restore drill. TalosDeck
+only reads this directory (`--recovery-history`, default `DATA/recovery-history`) and
+shows it under **Settings → Platform → TalosDeck recovery** for administrators.
+
+```sh
+groupadd -f talosdeck-recovery
+usermod -aG talosdeck-recovery talosdeck
+usermod -aG talosdeck-recovery talosdeck-drill
+install -d -o talosdeck -g talosdeck-recovery -m 2770 /var/lib/talosdeck-recovery-history
+```
+
+Both accounts share the directory through that group and add it to `ReadWritePaths=`
+in the drill unit; leave the rest of the drill isolation unchanged. Records are written
+`0640` explicitly, so the drill unit keeps its restrictive `UMask=0077`. They contain
+timestamps, versions and the archive locator — never keys, credentials or archive
+content. The history is evidence,
+not a backup: it is capped at the most recent records, oldest first, and losing it does
+not lose a copy. An unconfigured or empty history proves nothing about whether copies
+exist — the console says so instead of reporting a healthy state.
+
+The measured RPO is computed only from the creation time of the newest archive proven
+to be off-host. A drill or a restore never sets that time, never shortens the RPO and
+never extends the source copy's retention: a verification copy does not become a new
+backup or a new last-good copy. An upload whose response was lost is recorded as
+`unknown`, never as a backup and never as a failure, and the console requires the
+operator to inspect the target.
+
+## Resuming automation after a restore
+
+Activation enables manual operations only. Schedules, certificate and health collectors,
+alert evaluation and background notification delivery stay paused until an administrator
+records an explicit decision in **Settings → Platform → TalosDeck recovery**, with a
+reason that is written to the audit log.
+
+That decision does not start anything in the running process: automation is wired at
+startup, so the console keeps reporting automation as paused and a restart as required
+until TalosDeck is restarted. Interrupted jobs are never continued by the resume; they
+stay under review. The decision is bound to this restore's sentinel and activation
+epoch, so a later restore starts paused again even though the old decision is still in
+the restored database.
 
 ## Independent execution authority (required for mutations)
 

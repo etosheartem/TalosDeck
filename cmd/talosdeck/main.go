@@ -52,6 +52,7 @@ func main() {
 	nodesFlag := flag.String("nodes", "", "Additional node addresses for legacy migration")
 	dbBackup := flag.String("backup-database", "", "Write a database-only snapshot and exit (not a complete management DR backup)")
 	rotateKey := flag.String("rotate-encryption-key", "", "Rotate credentials into a new master key file and exit (stop the server first)")
+	historyDir := flag.String("recovery-history", env("TALOSDECK_RECOVERY_HISTORY_DIR", ""), "Recovery history directory written by the offline recovery CLI (default: DATA/recovery-history, read-only here)")
 	authorityHost := flag.String("authority-host", os.Getenv("TALOSDECK_AUTHORITY_HOST"), "Independent SSH execution authority host")
 	authorityBinary := flag.String("authority-binary", env("TALOSDECK_AUTHORITY_BINARY", "/usr/local/bin/talosdeck"), "Absolute helper binary on authority host")
 	authorityState := flag.String("authority-state", env("TALOSDECK_AUTHORITY_STATE", "/var/lib/talosdeck-authority"), "Independent authority state directory")
@@ -134,7 +135,7 @@ func main() {
 			log.Fatal("Cannot persist acquired execution epoch: ", err)
 		}
 	}
-	fleetOpts := api.FleetOptions{RequireExecutionAuthority: true, Store: store, Auth: authMgr, Audit: globalAudit, DataDir: *dataDir, LegacyBackupDir: *backupDir, LegacyJobsDir: os.Getenv("TALOSDECK_JOBS_DIR")}
+	fleetOpts := api.FleetOptions{RequireExecutionAuthority: true, Store: store, Auth: authMgr, Audit: globalAudit, DataDir: *dataDir, RecoveryHistoryDir: *historyDir, LegacyBackupDir: *backupDir, LegacyJobsDir: os.Getenv("TALOSDECK_JOBS_DIR")}
 	if execution != nil {
 		fleetOpts.ExecutionAuthority = execution
 		fleetOpts.ManagementInstanceID = instanceID

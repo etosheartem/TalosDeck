@@ -105,6 +105,9 @@ func ReadState(ctx context.Context, s *clusters.Store, dataDir string) (State, e
 	state.SafeMode = false
 	state.ActivationEpoch = receipt.Epoch
 	state.AuthorityIdentity = receipt.AuthorityIdentity
+	if automationResumed(ctx, s, digest, receipt.Epoch) {
+		state.AutomationPaused = false
+	}
 	return state, nil
 }
 

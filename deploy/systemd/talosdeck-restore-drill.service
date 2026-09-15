@@ -8,12 +8,14 @@ Type=oneshot
 User=talosdeck-drill
 Group=talosdeck-drill
 UMask=0077
-ExecStart=/usr/local/bin/talosdeck recovery drill --key /etc/talosdeck-drill/master.key --target /etc/talosdeck-drill/target.json --receipt /etc/talosdeck-drill/latest-receipt.json
+ExecStart=/usr/local/bin/talosdeck recovery drill --key /etc/talosdeck-drill/master.key --target /etc/talosdeck-drill/target.json --receipt /etc/talosdeck-drill/latest-receipt.json --history /var/lib/talosdeck-recovery-history
 TimeoutStartSec=35min
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadOnlyPaths=/etc/talosdeck-drill
+# Observations only. TalosDeck reads this directory; the drill never touches DATA.
+ReadWritePaths=/var/lib/talosdeck-recovery-history
 StandardOutput=journal
 StandardError=journal
